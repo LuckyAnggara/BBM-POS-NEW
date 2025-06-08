@@ -1,5 +1,5 @@
 
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc } from "firebase/firestore";
 import { db } from "./config";
 import type { UserData } from "@/contexts/auth-context";
 import type { Branch } from "@/contexts/branch-context";
@@ -53,6 +53,33 @@ export async function createBranch(name: string): Promise<Branch | { error: stri
   }
 }
 
+export async function updateBranch(branchId: string, newName: string): Promise<void | { error: string }> {
+  if (!branchId) return { error: "ID Cabang tidak valid." };
+  if (!newName.trim()) return { error: "Nama cabang baru tidak boleh kosong." };
+  try {
+    const branchRef = doc(db, "branches", branchId);
+    await updateDoc(branchRef, {
+      name: newName.trim(),
+    });
+  } catch (error: any) {
+    console.error("Error updating branch:", error);
+    return { error: error.message || "Gagal memperbarui cabang." };
+  }
+}
+
+export async function deleteBranch(branchId: string): Promise<void | { error: string }> {
+  if (!branchId) return { error: "ID Cabang tidak valid." };
+  try {
+    const branchRef = doc(db, "branches", branchId);
+    await deleteDoc(branchRef);
+  } catch (error: any) {
+    console.error("Error deleting branch:", error);
+    // Consider implications: users assigned to this branch might need handling.
+    return { error: error.message || "Gagal menghapus cabang." };
+  }
+}
+
+
 export async function getBranches(): Promise<Branch[]> {
   try {
     const querySnapshot = await getDocs(collection(db, "branches"));
@@ -60,6 +87,8 @@ export async function getBranches(): Promise<Branch[]> {
     querySnapshot.forEach((doc) => {
       branches.push({ id: doc.id, ...doc.data() } as Branch);
     });
+    // Sort branches by name for consistent display
+    branches.sort((a, b) => a.name.localeCompare(b.name));
     return branches;
   } catch (error) {
     console.error("Error fetching branches:", error);
