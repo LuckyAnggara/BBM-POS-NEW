@@ -96,7 +96,7 @@ export default function AppSidebarNav() {
                   <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
                     {item.subItems.map(subItem => (
                        <SidebarMenuSubItem key={subItem.href}>
-                         <Link href={isNavItemDisabled ? "#" : subItem.href}>
+                         <Link href={isNavItemDisabled ? "#" : subItem.href} asChild>
                            <SidebarMenuSubButton
                               isActive={ (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isNavItemDisabled}
                               aria-disabled={isNavItemDisabled}
