@@ -8,16 +8,34 @@ import { useAuth } from "@/contexts/auth-context";
 import { useBranch } from "@/contexts/branch-context";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
-import { PlusCircle, Eye } from "lucide-react";
+import { PlusCircle, Eye, CheckCircle, XCircle, MoreHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { PurchaseOrder, PurchaseOrderStatus } from "@/lib/firebase/firestore";
-import { getPurchaseOrdersByBranch } from "@/lib/firebase/firestore";
+import { getPurchaseOrdersByBranch, updatePurchaseOrderStatus } from "@/lib/firebase/firestore";
 import Link from "next/link";
 import { Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function PurchaseOrdersPage() {
   const { currentUser } = useAuth();
@@ -26,6 +44,10 @@ export default function PurchaseOrdersPage() {
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loadingPOs, setLoadingPOs] = useState(true);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [poToUpdate, setPoToUpdate] = useState<{ id: string; newStatus: PurchaseOrderStatus; poNumber: string } | null>(null);
+
 
   const fetchPurchaseOrders = useCallback(async () => {
     if (!selectedBranch) {
@@ -49,6 +71,27 @@ export default function PurchaseOrdersPage() {
     fetchPurchaseOrders();
   }, [fetchPurchaseOrders]);
 
+  const handleUpdateStatus = async () => {
+    if (!poToUpdate) return;
+    setIsUpdatingStatus(true);
+    const result = await updatePurchaseOrderStatus(poToUpdate.id, poToUpdate.newStatus);
+    if (result && "error" in result) {
+      toast({ title: "Gagal Update Status", description: result.error, variant: "destructive" });
+    } else {
+      toast({ title: "Status Diperbarui", description: `Status PO ${poToUpdate.poNumber} telah diubah menjadi ${getStatusText(poToUpdate.newStatus)}.` });
+      await fetchPurchaseOrders();
+    }
+    setIsUpdatingStatus(false);
+    setShowConfirmDialog(false);
+    setPoToUpdate(null);
+  };
+
+  const openConfirmDialog = (poId: string, poNumber: string, newStatus: PurchaseOrderStatus) => {
+    setPoToUpdate({ id: poId, newStatus, poNumber });
+    setShowConfirmDialog(true);
+  };
+
+
   const formatDate = (timestamp: Timestamp | Date | undefined) => {
     if (!timestamp) return "N/A";
     const date = timestamp instanceof Timestamp ? timestamp.toDate() : timestamp;
@@ -63,13 +106,14 @@ export default function PurchaseOrdersPage() {
     switch (status) {
       case 'draft': return 'secondary';
       case 'ordered': return 'default';
-      case 'partially_received': return 'outline'; 
-      case 'fully_received': return 'default'; 
+      case 'partially_received': return 'outline';
+      case 'fully_received': return 'default';
       case 'cancelled': return 'destructive';
       default: return 'secondary';
     }
   };
-   const getStatusText = (status: PurchaseOrderStatus) => {
+   const getStatusText = (status: PurchaseOrderStatus | undefined) => {
+    if (!status) return "N/A";
     switch (status) {
       case 'draft': return 'Draft';
       case 'ordered': return 'Dipesan';
@@ -123,11 +167,11 @@ export default function PurchaseOrdersPage() {
                   <TableRow>
                     <TableHead className="text-xs">No. PO</TableHead>
                     <TableHead className="text-xs hidden sm:table-cell">Pemasok</TableHead>
-                    <TableHead className="text-xs">Tanggal Pesan</TableHead>
+                    <TableHead className="text-xs">Tgl Pesan</TableHead>
                     <TableHead className="text-xs hidden md:table-cell">Est. Terima</TableHead>
                     <TableHead className="text-xs text-center">Status</TableHead>
                     <TableHead className="text-right text-xs">Total</TableHead>
-                    <TableHead className="text-right text-xs">Aksi</TableHead>
+                    <TableHead className="text-center text-xs w-[80px]">Aksi</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -138,8 +182,8 @@ export default function PurchaseOrdersPage() {
                       <TableCell className="py-2 text-xs">{formatDate(po.orderDate)}</TableCell>
                       <TableCell className="py-2 text-xs hidden md:table-cell">{po.expectedDeliveryDate ? formatDate(po.expectedDeliveryDate) : '-'}</TableCell>
                       <TableCell className="py-2 text-xs text-center">
-                        <Badge 
-                          variant={getStatusBadgeVariant(po.status)} 
+                        <Badge
+                          variant={getStatusBadgeVariant(po.status)}
                           className={cn(po.status === 'fully_received' && "bg-green-600 text-white hover:bg-green-700",
                                        po.status === 'ordered' && "bg-blue-500 text-white hover:bg-blue-600",
                                        po.status === 'partially_received' && "bg-yellow-500 text-white hover:bg-yellow-600"
@@ -149,14 +193,43 @@ export default function PurchaseOrdersPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right py-2 text-xs">{formatCurrency(po.totalAmount)}</TableCell>
-                      <TableCell className="text-right py-2">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" asChild title="Lihat Detail PO">
-                          <Link href={`/purchase-orders/${po.id}`}>
-                            <Eye className="h-3.5 w-3.5" />
-                            <span className="sr-only">Lihat Detail</span>
-                          </Link>
-                        </Button>
-                        {/* Edit/Delete actions can be added here later */}
+                      <TableCell className="text-center py-1.5">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7">
+                              <MoreHorizontal className="h-4 w-4" />
+                              <span className="sr-only">Aksi</span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem asChild className="text-xs cursor-pointer">
+                              <Link href={`/purchase-orders/${po.id}`}>
+                                <Eye className="mr-2 h-3.5 w-3.5" />
+                                Lihat Detail
+                              </Link>
+                            </DropdownMenuItem>
+                            {po.status === 'draft' && (
+                              <DropdownMenuItem
+                                className="text-xs cursor-pointer"
+                                onClick={() => openConfirmDialog(po.id, po.poNumber, 'ordered')}
+                                disabled={isUpdatingStatus}
+                              >
+                                <CheckCircle className="mr-2 h-3.5 w-3.5" />
+                                Tandai Dipesan
+                              </DropdownMenuItem>
+                            )}
+                            {(po.status === 'draft' || po.status === 'ordered') && (
+                              <DropdownMenuItem
+                                className="text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+                                onClick={() => openConfirmDialog(po.id, po.poNumber, 'cancelled')}
+                                disabled={isUpdatingStatus}
+                              >
+                                <XCircle className="mr-2 h-3.5 w-3.5" />
+                                Batalkan Pesanan
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -165,7 +238,32 @@ export default function PurchaseOrdersPage() {
             </div>
           )}
         </div>
+
+        <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Konfirmasi Perubahan Status PO</AlertDialogTitle>
+                    <AlertDialogDescription className="text-xs">
+                        Apakah Anda yakin ingin mengubah status untuk PO <strong>{poToUpdate?.poNumber}</strong> menjadi <strong>"{getStatusText(poToUpdate?.newStatus)}"</strong>?
+                        {poToUpdate?.newStatus === 'ordered' && " Ini menandakan pesanan telah dikirim ke pemasok."}
+                        {poToUpdate?.newStatus === 'cancelled' && " Tindakan ini tidak dapat diurungkan."}
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel className="text-xs h-8" onClick={() => {setShowConfirmDialog(false); setPoToUpdate(null);}} disabled={isUpdatingStatus}>Batal</AlertDialogCancel>
+                    <AlertDialogAction 
+                        className={cn("text-xs h-8", poToUpdate?.newStatus === 'cancelled' && "bg-destructive hover:bg-destructive/90")}
+                        onClick={handleUpdateStatus} 
+                        disabled={isUpdatingStatus}
+                    >
+                        {isUpdatingStatus ? "Memproses..." : `Ya, ${poToUpdate?.newStatus === 'ordered' ? 'Tandai Dipesan' : 'Batalkan PO'}`}
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+
       </MainLayout>
     </ProtectedRoute>
   );
 }
+    

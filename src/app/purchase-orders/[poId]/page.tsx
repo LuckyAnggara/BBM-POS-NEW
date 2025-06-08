@@ -10,7 +10,6 @@ import { useBranch } from "@/contexts/branch-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogDescription as DialogModalDescription, DialogFooter as DialogModalFooter, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,11 +20,11 @@ import { getPurchaseOrderById, updatePurchaseOrderStatus, receivePurchaseOrderIt
 import { Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle, XCircle, Printer, Edit, PackageCheck, PackageX } from "lucide-react";
+import { ArrowLeft, Printer, PackageCheck, PackageX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
-import { useForm, useFieldArray, Controller, type SubmitHandler } from "react-hook-form";
+import { useForm, useFieldArray, type SubmitHandler } from "react-hook-form";
 import { z } from "zod";
 
 
@@ -62,7 +61,6 @@ export default function PurchaseOrderDetailPage() {
 
   const [purchaseOrder, setPurchaseOrder] = useState<PurchaseOrder | null>(null);
   const [loadingPO, setLoadingPO] = useState(true);
-  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [isReceivingItemsModalOpen, setIsReceivingItemsModalOpen] = useState(false);
   const [isProcessingReceipt, setIsProcessingReceipt] = useState(false);
 
@@ -108,7 +106,6 @@ export default function PurchaseOrderDetailPage() {
       const fetchedPO = await getPurchaseOrderById(poId);
       if (fetchedPO) {
         setPurchaseOrder(fetchedPO);
-        // Initialize form for receiving items
         const itemsForForm = fetchedPO.items
           .filter(item => item.orderedQuantity > item.receivedQuantity)
           .map(item => ({
@@ -136,22 +133,9 @@ export default function PurchaseOrderDetailPage() {
     fetchPurchaseOrder();
   }, [fetchPurchaseOrder]);
 
-  const handleUpdateStatus = async (newStatus: PurchaseOrderStatus) => {
-    if (!purchaseOrder) return;
-    setIsUpdatingStatus(true);
-    const result = await updatePurchaseOrderStatus(purchaseOrder.id, newStatus);
-    if (result && "error" in result) {
-      toast({ title: "Gagal Update Status", description: result.error, variant: "destructive" });
-    } else {
-      toast({ title: "Status Diperbarui", description: `Status PO ${purchaseOrder.poNumber} telah diubah menjadi ${getStatusText(newStatus)}.` });
-      await fetchPurchaseOrder(); 
-    }
-    setIsUpdatingStatus(false);
-  };
-
   const onSubmitReceiveItems: SubmitHandler<ReceiveFormValues> = async (values) => {
     if (!purchaseOrder) return;
-    
+
     const itemsToProcess: ReceivedItemData[] = values.itemsToReceive
         .filter(item => item.quantityReceivedNow > 0)
         .map(item => ({
@@ -233,8 +217,6 @@ export default function PurchaseOrderDetailPage() {
     return <MainLayout><div className="p-4 text-center">Pesanan Pembelian tidak ditemukan.</div></MainLayout>;
   }
 
-  const canMarkAsOrdered = purchaseOrder.status === 'draft';
-  const canCancel = purchaseOrder.status === 'draft' || purchaseOrder.status === 'ordered';
   const canReceiveGoods = purchaseOrder.status === 'ordered' || purchaseOrder.status === 'partially_received';
   const itemsPendingReceipt = purchaseOrder.items.filter(item => item.orderedQuantity > item.receivedQuantity);
 
@@ -314,7 +296,7 @@ export default function PurchaseOrderDetailPage() {
                         <p><strong>Pemasok:</strong> {purchaseOrder.supplierName}</p>
                         <p><strong>Tanggal Pesan:</strong> {formatDate(purchaseOrder.orderDate)}</p>
                         <p><strong>Estimasi Terima:</strong> {purchaseOrder.expectedDeliveryDate ? formatDate(purchaseOrder.expectedDeliveryDate) : "-"}</p>
-                        <p><strong>Dibuat Oleh:</strong> {purchaseOrder.createdById.substring(0,8)}...</p> 
+                        <p><strong>Dibuat Oleh:</strong> {purchaseOrder.createdById.substring(0,8)}...</p>
                         <p><strong>Dibuat Pada:</strong> {formatDate(purchaseOrder.createdAt, true)}</p>
                         <p><strong>Diperbarui Pada:</strong> {formatDate(purchaseOrder.updatedAt, true)}</p>
                         {purchaseOrder.notes && (
@@ -329,73 +311,33 @@ export default function PurchaseOrderDetailPage() {
                 <Card>
                     <CardHeader><CardTitle className="text-base">Aksi Pesanan</CardTitle></CardHeader>
                     <CardContent className="space-y-2">
-                        {canMarkAsOrdered && (
-                             <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                    <Button size="sm" className="w-full text-xs h-8" variant="default" disabled={isUpdatingStatus}>
-                                        <CheckCircle className="mr-1.5 h-3.5 w-3.5"/> Tandai sebagai Dipesan
-                                    </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                    <AlertDialogHeader><AlertDialogTitle>Konfirmasi Pemesanan</AlertDialogTitle>
-                                    <AlertDialogDescription className="text-xs">
-                                        Apakah Anda yakin ingin mengubah status pesanan ini menjadi "Dipesan"? Ini menandakan pesanan telah dikirim ke pemasok.
-                                    </AlertDialogDescription></AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                        <AlertDialogCancel className="text-xs h-8" disabled={isUpdatingStatus}>Batal</AlertDialogCancel>
-                                        <AlertDialogAction className="text-xs h-8" onClick={() => handleUpdateStatus('ordered')} disabled={isUpdatingStatus}>
-                                            {isUpdatingStatus ? "Memproses..." : "Ya, Tandai Dipesan"}
-                                        </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                </AlertDialogContent>
-                            </AlertDialog>
-                        )}
                         {canReceiveGoods && (
-                            <Button 
-                                size="sm" 
-                                className="w-full text-xs h-8" 
-                                variant="outline" 
+                            <Button
+                                size="sm"
+                                className="w-full text-xs h-8"
+                                variant="outline"
                                 onClick={() => setIsReceivingItemsModalOpen(true)}
-                                disabled={isUpdatingStatus || itemsPendingReceipt.length === 0}
+                                disabled={itemsPendingReceipt.length === 0}
                             >
                                 {itemsPendingReceipt.length === 0 ? <PackageX className="mr-1.5 h-3.5 w-3.5" /> : <PackageCheck className="mr-1.5 h-3.5 w-3.5"/>}
                                 {itemsPendingReceipt.length === 0 ? "Semua Item Diterima" : "Catat Penerimaan Barang"}
                             </Button>
                         )}
-                        {canCancel && (
-                            <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                     <Button size="sm" variant="destructive" className="w-full text-xs h-8" disabled={isUpdatingStatus}>
-                                        <XCircle className="mr-1.5 h-3.5 w-3.5"/> Batalkan Pesanan
-                                    </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                    <AlertDialogHeader><AlertDialogTitle>Batalkan Pesanan Pembelian?</AlertDialogTitle>
-                                    <AlertDialogDescription className="text-xs">
-                                        Apakah Anda yakin ingin membatalkan pesanan pembelian ini? Tindakan ini tidak dapat diurungkan.
-                                    </AlertDialogDescription></AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                        <AlertDialogCancel className="text-xs h-8" disabled={isUpdatingStatus}>Tutup</AlertDialogCancel>
-                                        <AlertDialogAction className="text-xs h-8 bg-destructive hover:bg-destructive/90" onClick={() => handleUpdateStatus('cancelled')} disabled={isUpdatingStatus}>
-                                            {isUpdatingStatus ? "Memproses..." : "Ya, Batalkan PO"}
-                                        </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                </AlertDialogContent>
-                            </AlertDialog>
-                        )}
-                         {!canMarkAsOrdered && !canCancel && !canReceiveGoods && purchaseOrder.status !== 'fully_received' && (
-                            <p className="text-xs text-muted-foreground text-center">Tidak ada aksi yang tersedia untuk status PO saat ini ({getStatusText(purchaseOrder.status)}).</p>
-                         )}
                          {purchaseOrder.status === 'fully_received' && (
-                            <p className="text-xs text-green-600 text-center font-medium">Semua item telah diterima.</p>
+                            <p className="text-xs text-green-600 text-center font-medium py-2">Semua item telah diterima untuk pesanan ini.</p>
                          )}
+                         {purchaseOrder.status === 'cancelled' && (
+                            <p className="text-xs text-destructive text-center font-medium py-2">Pesanan pembelian ini telah dibatalkan.</p>
+                         )}
+                          {!(canReceiveGoods || purchaseOrder.status === 'fully_received' || purchaseOrder.status === 'cancelled') && (
+                             <p className="text-xs text-muted-foreground text-center py-2">Tidak ada aksi penerimaan yang tersedia untuk status PO saat ini ({getStatusText(purchaseOrder.status)}).</p>
+                          )}
                     </CardContent>
                 </Card>
             </div>
           </div>
         </div>
 
-        {/* Receive Items Modal */}
         <Dialog open={isReceivingItemsModalOpen} onOpenChange={setIsReceivingItemsModalOpen}>
             <DialogContent className="sm:max-w-2xl">
                 <DialogHeader>
@@ -465,5 +407,4 @@ export default function PurchaseOrderDetailPage() {
     </ProtectedRoute>
   );
 }
-
-      
+    
