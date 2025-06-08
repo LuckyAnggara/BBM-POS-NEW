@@ -8,6 +8,11 @@ import { getBranches as fetchBranchesFromDB } from '@/lib/firebase/firestore'; /
 export interface Branch {
   id: string;
   name: string;
+  currency?: string;
+  taxRate?: number; // Store as a number, e.g., 10 for 10%
+  invoiceName?: string;
+  address?: string;
+  phoneNumber?: string;
 }
 
 interface BranchContextType {
@@ -30,11 +35,12 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     const fetchedBranches = await fetchBranchesFromDB();
     setBranches(fetchedBranches);
     if (fetchedBranches.length > 0 && !selectedBranch) {
-      // Auto-select first branch if none is selected yet
-      // Or re-select if current selectedBranch is no longer in fetchedBranches
       const currentSelectedStillExists = selectedBranch && fetchedBranches.find(b => b.id === selectedBranch.id);
       if (!currentSelectedStillExists) {
         setSelectedBranchState(fetchedBranches[0]);
+      } else if (currentSelectedStillExists) {
+        // If selected branch still exists, update its data in case it changed
+        setSelectedBranchState(currentSelectedStillExists);
       }
     } else if (fetchedBranches.length === 0) {
       setSelectedBranchState(null);

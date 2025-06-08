@@ -80,30 +80,50 @@ export async function updateUserRole(userId: string, role: string): Promise<void
 }
 
 // --- Branch Management ---
-export async function createBranch(name: string): Promise<Branch | { error: string }> {
-  if (!name.trim()) {
+export interface BranchInput extends Omit<Branch, 'id'> {}
+
+export async function createBranch(branchData: BranchInput): Promise<Branch | { error: string }> {
+  if (!branchData.name?.trim()) {
     return { error: "Nama cabang tidak boleh kosong." };
   }
   try {
-    const branchRef = await addDoc(collection(db, "branches"), {
-      name: name.trim(),
+    const dataToSave = {
+      name: branchData.name.trim(),
+      invoiceName: branchData.invoiceName?.trim() || branchData.name.trim(),
+      currency: branchData.currency?.trim() || "IDR",
+      taxRate: branchData.taxRate === undefined || branchData.taxRate === null || isNaN(Number(branchData.taxRate)) ? 0 : Number(branchData.taxRate),
+      address: branchData.address?.trim() || "",
+      phoneNumber: branchData.phoneNumber?.trim() || "",
       createdAt: serverTimestamp(),
-    });
-    return { id: branchRef.id, name: name.trim() };
+    };
+    const branchRef = await addDoc(collection(db, "branches"), dataToSave);
+    return { id: branchRef.id, ...dataToSave, createdAt: undefined }; // createdAt is handled by server
   } catch (error: any) {
     console.error("Error creating branch:", error);
     return { error: error.message || "Gagal membuat cabang." };
   }
 }
 
-export async function updateBranch(branchId: string, newName: string): Promise<void | { error: string }> {
+export async function updateBranch(branchId: string, updates: Partial<BranchInput>): Promise<void | { error: string }> {
   if (!branchId) return { error: "ID Cabang tidak valid." };
-  if (!newName.trim()) return { error: "Nama cabang baru tidak boleh kosong." };
+  
+  const dataToUpdate: Partial<FirebaseBranchData> = {};
+  if (updates.name?.trim()) dataToUpdate.name = updates.name.trim();
+  if (updates.invoiceName?.trim()) dataToUpdate.invoiceName = updates.invoiceName.trim();
+  if (updates.currency?.trim()) dataToUpdate.currency = updates.currency.trim();
+  if (updates.taxRate !== undefined && updates.taxRate !== null && !isNaN(Number(updates.taxRate))) dataToUpdate.taxRate = Number(updates.taxRate);
+  if (updates.address !== undefined) dataToUpdate.address = updates.address.trim(); // Allow empty string
+  if (updates.phoneNumber !== undefined) dataToUpdate.phoneNumber = updates.phoneNumber.trim(); // Allow empty string
+
+  if (Object.keys(dataToUpdate).length === 0) {
+    return { error: "Tidak ada data untuk diperbarui." };
+  }
+
+  dataToUpdate.updatedAt = serverTimestamp();
+
   try {
     const branchRef = doc(db, "branches", branchId);
-    await updateDoc(branchRef, {
-      name: newName.trim(),
-    });
+    await updateDoc(branchRef, dataToUpdate);
   } catch (error: any) {
     console.error("Error updating branch:", error);
     return { error: error.message || "Gagal memperbarui cabang." };
@@ -113,9 +133,6 @@ export async function updateBranch(branchId: string, newName: string): Promise<v
 export async function deleteBranch(branchId: string): Promise<void | { error: string }> {
   if (!branchId) return { error: "ID Cabang tidak valid." };
   try {
-    // TODO: Consider what happens to users and other data (e.g., inventory) linked to this branch.
-    // For now, just deleting the branch. This might orphan some data or require cleanup.
-    // A more robust solution might involve a transaction or cloud function to handle related data.
     const branchRef = doc(db, "branches", branchId);
     await deleteDoc(branchRef);
   } catch (error: any) {
@@ -124,12 +141,27 @@ export async function deleteBranch(branchId: string): Promise<void | { error: st
   }
 }
 
+// Internal type for Firestore data, including timestamps
+interface FirebaseBranchData extends Branch {
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
 export async function getBranches(): Promise<Branch[]> {
   try {
     const querySnapshot = await getDocs(collection(db, "branches"));
     const branches: Branch[] = [];
     querySnapshot.forEach((doc) => {
-      branches.push({ id: doc.id, ...doc.data() } as Branch);
+      const data = doc.data() as FirebaseBranchData;
+      branches.push({ 
+        id: doc.id, 
+        name: data.name,
+        invoiceName: data.invoiceName || data.name,
+        currency: data.currency || "IDR",
+        taxRate: data.taxRate === undefined ? 0 : data.taxRate,
+        address: data.address || "",
+        phoneNumber: data.phoneNumber || "",
+      });
     });
     branches.sort((a, b) => a.name.localeCompare(b.name));
     return branches;
@@ -203,7 +235,6 @@ export async function getInventoryCategories(branchId: string): Promise<Inventor
 export async function deleteInventoryCategory(categoryId: string): Promise<void | { error: string }> {
   if (!categoryId) return { error: "ID Kategori tidak valid." };
   try {
-    // Check if any inventory items are using this category
     const itemsQuery = query(collection(db, "inventoryItems"), where("categoryId", "==", categoryId));
     const itemsSnapshot = await getDocs(itemsQuery);
     if (!itemsSnapshot.empty) {
@@ -228,7 +259,7 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
   try {
     const itemRef = await addDoc(collection(db, "inventoryItems"), {
       ...itemData,
-      categoryName, // Denormalized
+      categoryName, 
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -236,8 +267,8 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
       id: itemRef.id, 
       ...itemData, 
       categoryName,
-      createdAt: Timestamp.now(), // Approximate for return
-      updatedAt: Timestamp.now()  // Approximate for return
+      createdAt: Timestamp.now(), 
+      updatedAt: Timestamp.now()  
     };
   } catch (error: any) {
     console.error("Error adding inventory item:", error);
@@ -267,15 +298,13 @@ export async function updateInventoryItem(itemId: string, updates: Partial<Omit<
   try {
     const itemRef = doc(db, "inventoryItems", itemId);
     const payload: any = { ...updates, updatedAt: serverTimestamp() };
-    if (newCategoryName && updates.categoryId) { // if categoryId is being updated, also update categoryName
+    if (newCategoryName && updates.categoryId) { 
       payload.categoryName = newCategoryName;
     } else if (updates.categoryId && !newCategoryName) {
-        // Fetch the category name if only categoryId is provided without newCategoryName
         const catDoc = await getDoc(doc(db, "inventoryCategories", updates.categoryId));
         if (catDoc.exists()) {
             payload.categoryName = catDoc.data().name;
         } else {
-            // Handle case where category might not exist, though ideally UI prevents this
             console.warn("Category for updated item not found, categoryName might be stale or incorrect.");
         }
     }

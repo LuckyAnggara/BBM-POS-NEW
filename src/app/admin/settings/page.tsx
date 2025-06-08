@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { 
   createBranch as apiCreateBranch, 
@@ -19,7 +20,8 @@ import {
   updateUserBranch as apiUpdateUserBranch, 
   updateUserRole as apiUpdateUserRole,
   updateBranch as apiUpdateBranch,
-  deleteBranch as apiDeleteBranch
+  deleteBranch as apiDeleteBranch,
+  type BranchInput
 } from "@/lib/firebase/firestore";
 import type { UserData } from "@/contexts/auth-context";
 import type { Branch } from "@/contexts/branch-context";
@@ -30,6 +32,25 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogC
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Pencil, Trash2 } from "lucide-react";
 
+// Form values for creating/editing a branch
+interface BranchFormState {
+  name: string;
+  invoiceName: string;
+  currency: string;
+  taxRate: string; // Store as string for input, convert to number on save
+  address: string;
+  phoneNumber: string;
+}
+
+const initialBranchFormState: BranchFormState = {
+  name: "",
+  invoiceName: "",
+  currency: "IDR",
+  taxRate: "0",
+  address: "",
+  phoneNumber: "",
+};
+
 export default function AdminSettingsPage() {
   const { userData, loadingAuth } = useAuth();
   const { branches, loadingBranches, refreshBranches } = useBranch();
@@ -39,10 +60,10 @@ export default function AdminSettingsPage() {
   const [activeTab, setActiveTab] = useState("manage-branches");
 
   // Branch Management State
-  const [newBranchName, setNewBranchName] = useState("");
+  const [branchForm, setBranchForm] = useState<BranchFormState>(initialBranchFormState);
   const [isSubmittingBranch, setIsSubmittingBranch] = useState(false);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
-  const [editBranchName, setEditBranchName] = useState("");
+  const [editBranchForm, setEditBranchForm] = useState<BranchFormState>(initialBranchFormState);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [branchToDelete, setBranchToDelete] = useState<Branch | null>(null);
   const [isDeletingBranch, setIsDeletingBranch] = useState(false);
@@ -82,20 +103,35 @@ export default function AdminSettingsPage() {
     }
   }, [userData]);
 
+  // Branch Form Input Handler
+  const handleBranchFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>, formSetter: React.Dispatch<React.SetStateAction<BranchFormState>>) => {
+    const { name, value } = e.target;
+    formSetter(prev => ({ ...prev, [name]: value }));
+  };
+
+
   // Branch Handlers
   const handleCreateBranch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBranchName.trim()) {
+    if (!branchForm.name.trim()) {
       toast({ title: "Nama cabang kosong", description: "Silakan masukkan nama cabang.", variant: "destructive" });
       return;
     }
     setIsSubmittingBranch(true);
-    const result = await apiCreateBranch(newBranchName);
+    const branchInput: BranchInput = {
+      name: branchForm.name,
+      invoiceName: branchForm.invoiceName || branchForm.name,
+      currency: branchForm.currency || "IDR",
+      taxRate: parseFloat(branchForm.taxRate) || 0,
+      address: branchForm.address,
+      phoneNumber: branchForm.phoneNumber,
+    };
+    const result = await apiCreateBranch(branchInput);
     if ("error" in result) {
       toast({ title: "Gagal Membuat Cabang", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Cabang Berhasil Dibuat", description: `Cabang "${result.name}" telah ditambahkan.` });
-      setNewBranchName("");
+      setBranchForm(initialBranchFormState);
       await refreshBranches();
     }
     setIsSubmittingBranch(false);
@@ -103,16 +139,31 @@ export default function AdminSettingsPage() {
 
   const handleOpenEditModal = (branch: Branch) => {
     setEditingBranch(branch);
-    setEditBranchName(branch.name);
+    setEditBranchForm({
+      name: branch.name,
+      invoiceName: branch.invoiceName || branch.name,
+      currency: branch.currency || "IDR",
+      taxRate: (branch.taxRate || 0).toString(),
+      address: branch.address || "",
+      phoneNumber: branch.phoneNumber || "",
+    });
     setIsEditModalOpen(true);
   };
 
   const handleUpdateBranch = async () => {
-    if (!editingBranch || !editBranchName.trim()) {
+    if (!editingBranch || !editBranchForm.name.trim()) {
       toast({ title: "Data tidak lengkap", description: "Nama cabang tidak boleh kosong.", variant: "destructive" });
       return;
     }
-    const result = await apiUpdateBranch(editingBranch.id, editBranchName);
+    const branchUpdates: Partial<BranchInput> = {
+      name: editBranchForm.name,
+      invoiceName: editBranchForm.invoiceName || editBranchForm.name,
+      currency: editBranchForm.currency || "IDR",
+      taxRate: parseFloat(editBranchForm.taxRate) || 0,
+      address: editBranchForm.address,
+      phoneNumber: editBranchForm.phoneNumber,
+    };
+    const result = await apiUpdateBranch(editingBranch.id, branchUpdates);
     if (result && "error" in result) {
       toast({ title: "Gagal Memperbarui Cabang", description: result.error, variant: "destructive" });
     } else {
@@ -132,10 +183,9 @@ export default function AdminSettingsPage() {
     } else {
       toast({ title: "Cabang Berhasil Dihapus" });
       await refreshBranches();
-      // Also need to refresh users if their assigned branch was deleted, or handle it in UI
       await fetchUsers(); 
     }
-    setBranchToDelete(null); // Close dialog
+    setBranchToDelete(null); 
     setIsDeletingBranch(false);
   };
 
@@ -204,40 +254,57 @@ export default function AdminSettingsPage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base font-semibold">Kelola Cabang</CardTitle>
-                  <CardDescription className="text-xs">Buat, edit, hapus, dan lihat daftar cabang.</CardDescription>
+                  <CardDescription className="text-xs">Buat, edit, hapus, dan lihat daftar cabang beserta detailnya.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <form onSubmit={handleCreateBranch} className="flex items-end gap-3">
-                    <div className="flex-grow">
-                      <Label htmlFor="branchName" className="text-xs">Nama Cabang Baru</Label>
-                      <Input 
-                        id="branchName" 
-                        type="text" 
-                        value={newBranchName} 
-                        onChange={(e) => setNewBranchName(e.target.value)} 
-                        placeholder="Contoh: Cabang Utama"
-                        className="h-9 text-xs"
-                        disabled={isSubmittingBranch}
-                      />
+                  <form onSubmit={handleCreateBranch} className="space-y-3 border p-4 rounded-md">
+                    <h3 className="text-sm font-medium mb-1">Tambah Cabang Baru</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <Label htmlFor="branchName" className="text-xs">Nama Cabang Utama*</Label>
+                            <Input id="branchName" name="name" value={branchForm.name} onChange={(e) => handleBranchFormChange(e, setBranchForm)} placeholder="Contoh: Cabang Pusat" className="h-9 text-xs" disabled={isSubmittingBranch} />
+                        </div>
+                        <div>
+                            <Label htmlFor="invoiceName" className="text-xs">Nama di Invoice (Opsional)</Label>
+                            <Input id="invoiceName" name="invoiceName" value={branchForm.invoiceName} onChange={(e) => handleBranchFormChange(e, setBranchForm)} placeholder="Sama seperti nama cabang jika kosong" className="h-9 text-xs" disabled={isSubmittingBranch} />
+                        </div>
+                        <div>
+                            <Label htmlFor="currency" className="text-xs">Mata Uang</Label>
+                            <Input id="currency" name="currency" value={branchForm.currency} onChange={(e) => handleBranchFormChange(e, setBranchForm)} placeholder="IDR" className="h-9 text-xs" disabled={isSubmittingBranch} />
+                        </div>
+                        <div>
+                            <Label htmlFor="taxRate" className="text-xs">Tarif Pajak (%)</Label>
+                            <Input id="taxRate" name="taxRate" type="number" value={branchForm.taxRate} onChange={(e) => handleBranchFormChange(e, setBranchForm)} placeholder="0" className="h-9 text-xs" disabled={isSubmittingBranch} />
+                        </div>
+                    </div>
+                     <div>
+                        <Label htmlFor="address" className="text-xs">Alamat</Label>
+                        <Textarea id="address" name="address" value={branchForm.address} onChange={(e) => handleBranchFormChange(e, setBranchForm)} placeholder="Alamat lengkap cabang" className="text-xs min-h-[60px]" disabled={isSubmittingBranch} />
+                    </div>
+                    <div>
+                        <Label htmlFor="phoneNumber" className="text-xs">Nomor Telepon</Label>
+                        <Input id="phoneNumber" name="phoneNumber" value={branchForm.phoneNumber} onChange={(e) => handleBranchFormChange(e, setBranchForm)} placeholder="08xxxxxxxxxx" className="h-9 text-xs" disabled={isSubmittingBranch} />
                     </div>
                     <Button type="submit" size="sm" className="h-9 text-xs" disabled={isSubmittingBranch}>
                       {isSubmittingBranch ? "Membuat..." : "Buat Cabang"}
                     </Button>
                   </form>
                   <div>
-                    <h3 className="text-sm font-medium mb-1.5">Daftar Cabang Saat Ini</h3>
+                    <h3 className="text-sm font-medium mb-1.5 mt-4">Daftar Cabang Saat Ini</h3>
                     {loadingBranches ? (
                       <div className="space-y-2">
                         <Skeleton className="h-10 w-full" />
                         <Skeleton className="h-10 w-full" />
                       </div>
                     ) : branches.length > 0 ? (
-                      <div className="border rounded-md">
+                      <div className="border rounded-md overflow-x-auto">
                         <Table>
                           <TableHeader>
                             <TableRow>
                               <TableHead className="text-xs">Nama Cabang</TableHead>
-                              <TableHead className="text-xs">ID Cabang</TableHead>
+                              <TableHead className="text-xs hidden sm:table-cell">Nama di Invoice</TableHead>
+                              <TableHead className="text-xs hidden md:table-cell">Mata Uang</TableHead>
+                              <TableHead className="text-xs hidden md:table-cell">Pajak (%)</TableHead>
                               <TableHead className="text-xs text-right">Aksi</TableHead>
                             </TableRow>
                           </TableHeader>
@@ -245,7 +312,9 @@ export default function AdminSettingsPage() {
                             {branches.map((branch) => (
                               <TableRow key={branch.id}>
                                 <TableCell className="text-xs py-2">{branch.name}</TableCell>
-                                <TableCell className="text-xs py-2 text-muted-foreground">{branch.id}</TableCell>
+                                <TableCell className="text-xs py-2 hidden sm:table-cell">{branch.invoiceName || branch.name}</TableCell>
+                                <TableCell className="text-xs py-2 hidden md:table-cell">{branch.currency || "IDR"}</TableCell>
+                                <TableCell className="text-xs py-2 hidden md:table-cell">{branch.taxRate !== undefined ? branch.taxRate : 0}%</TableCell>
                                 <TableCell className="text-right py-2">
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenEditModal(branch)}>
                                     <Pencil className="h-3.5 w-3.5" />
@@ -390,19 +459,34 @@ export default function AdminSettingsPage() {
 
         {/* Edit Branch Modal */}
         <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-          <DialogContent>
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>Edit Nama Cabang</DialogTitle>
+              <DialogTitle>Edit Detail Cabang</DialogTitle>
             </DialogHeader>
-            <div className="space-y-3 py-3">
+            <div className="space-y-3 py-3 max-h-[70vh] overflow-y-auto pr-2">
+               <div>
+                  <Label htmlFor="editBranchName" className="text-xs">Nama Cabang Utama*</Label>
+                  <Input id="editBranchName" name="name" value={editBranchForm.name} onChange={(e) => handleBranchFormChange(e, setEditBranchForm)} className="text-xs h-9" />
+              </div>
               <div>
-                <Label htmlFor="editBranchNameInput" className="text-xs">Nama Cabang Baru</Label>
-                <Input 
-                  id="editBranchNameInput" 
-                  value={editBranchName} 
-                  onChange={(e) => setEditBranchName(e.target.value)}
-                  className="text-xs h-9"
-                />
+                  <Label htmlFor="editInvoiceName" className="text-xs">Nama di Invoice</Label>
+                  <Input id="editInvoiceName" name="invoiceName" value={editBranchForm.invoiceName} onChange={(e) => handleBranchFormChange(e, setEditBranchForm)} className="text-xs h-9" />
+              </div>
+               <div>
+                  <Label htmlFor="editCurrency" className="text-xs">Mata Uang</Label>
+                  <Input id="editCurrency" name="currency" value={editBranchForm.currency} onChange={(e) => handleBranchFormChange(e, setEditBranchForm)} className="text-xs h-9" />
+              </div>
+               <div>
+                  <Label htmlFor="editTaxRate" className="text-xs">Tarif Pajak (%)</Label>
+                  <Input id="editTaxRate" name="taxRate" type="number" value={editBranchForm.taxRate} onChange={(e) => handleBranchFormChange(e, setEditBranchForm)} className="text-xs h-9" />
+              </div>
+               <div>
+                  <Label htmlFor="editAddress" className="text-xs">Alamat</Label>
+                  <Textarea id="editAddress" name="address" value={editBranchForm.address} onChange={(e) => handleBranchFormChange(e, setEditBranchForm)} className="text-xs min-h-[60px]" />
+              </div>
+               <div>
+                  <Label htmlFor="editPhoneNumber" className="text-xs">Nomor Telepon</Label>
+                  <Input id="editPhoneNumber" name="phoneNumber" value={editBranchForm.phoneNumber} onChange={(e) => handleBranchFormChange(e, setEditBranchForm)} className="text-xs h-9" />
               </div>
             </div>
             <DialogFooter>
