@@ -24,6 +24,10 @@ export default function InvoiceTemplate({ transaction, branch }: InvoiceTemplate
     return `${branch.currency || 'Rp'}${amount.toLocaleString('id-ID')}`;
   };
 
+  // Try to get user's name if available, otherwise fallback
+  const cashierName = transaction.userId ? `Kasir: ${transaction.userId.substring(0,8)}` : 'Kasir: N/A'; 
+  // In a real app, you'd fetch user data based on transaction.userId if needed.
+
   return (
     <Card className="w-full max-w-2xl mx-auto my-4 shadow-lg print:shadow-none print:border-none print:my-0">
       <CardHeader className="p-4 sm:p-6 border-b print:border-b-2">
@@ -41,10 +45,16 @@ export default function InvoiceTemplate({ transaction, branch }: InvoiceTemplate
         </div>
       </CardHeader>
       <CardContent className="p-4 sm:p-6">
-        <div className="mb-4">
-          <h3 className="text-sm font-semibold mb-1">Detail Transaksi:</h3>
-          <p className="text-xs">Kasir: {transaction.userId.substring(0,8)} (Nama kasir bisa ditambahkan nanti)</p>
-          <p className="text-xs">Metode Pembayaran: <span className="capitalize">{transaction.paymentMethod}</span></p>
+        <div className="mb-4 text-xs">
+          <div className="grid grid-cols-2 gap-x-2">
+            <div>
+              <p>{cashierName}</p>
+              {transaction.customerName && <p>Pelanggan: {transaction.customerName}</p>}
+            </div>
+            <div className="text-right">
+              <p>Metode Pembayaran: <span className="capitalize">{transaction.paymentMethod}</span></p>
+            </div>
+          </div>
         </div>
         
         <Table className="text-xs">

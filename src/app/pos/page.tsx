@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import MainLayout from "@/components/layout/main-layout";
 import { useBranch } from "@/contexts/branch-context";
 import { useAuth } from "@/contexts/auth-context";
@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer } from "lucide-react";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -73,6 +73,13 @@ export default function POSPage() {
   const [posModeActive, setPosModeActive] = useState(false);
   const [lastTransactionId, setLastTransactionId] = useState<string | null>(null);
   const [showPrintInvoiceDialog, setShowPrintInvoiceDialog] = useState(false);
+
+  // States for Cash Payment Modal
+  const [showCashPaymentModal, setShowCashPaymentModal] = useState(false);
+  const [cashAmountPaidInput, setCashAmountPaidInput] = useState("");
+  const [customerNameInput, setCustomerNameInput] = useState("");
+  const [calculatedChange, setCalculatedChange] = useState<number | null>(null);
+
 
    useEffect(() => {
     setPosModeActive(true);
@@ -218,7 +225,7 @@ export default function POSPage() {
           productName: product.name, 
           quantity: 1, 
           price: product.price,
-          costPrice: product.costPrice,
+          costPrice: product.costPrice || 0,
           total: product.price 
       }];
     });
@@ -256,10 +263,78 @@ export default function POSPage() {
     setCartItems(prevItems => prevItems.filter(item => item.productId !== productId));
   };
 
-  const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
-  const tax = subtotal * taxRate;
-  const total = subtotal + tax;
-  const totalCost = cartItems.reduce((sum, item) => sum + (item.quantity * item.costPrice), 0);
+  const subtotal = useMemo(() => cartItems.reduce((sum, item) => sum + item.total, 0), [cartItems]);
+  const tax = useMemo(() => subtotal * taxRate, [subtotal, taxRate]);
+  const total = useMemo(() => subtotal + tax, [subtotal, tax]);
+  const totalCost = useMemo(() => cartItems.reduce((sum, item) => sum + (item.quantity * (item.costPrice || 0)), 0), [cartItems]);
+
+
+  const openCashPaymentModal = () => {
+    setCashAmountPaidInput(total.toString()); // Pre-fill with total amount
+    setCustomerNameInput("");
+    setCalculatedChange(0);
+    setShowCashPaymentModal(true);
+  };
+
+  const handleCashAmountPaidChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const paidAmountStr = e.target.value;
+    setCashAmountPaidInput(paidAmountStr);
+    const paidAmount = parseFloat(paidAmountStr);
+    if (!isNaN(paidAmount) && paidAmount >= total) {
+      setCalculatedChange(paidAmount - total);
+    } else {
+      setCalculatedChange(null);
+    }
+  };
+
+  const handleConfirmCashPayment = async () => {
+    if (!activeShift || !selectedBranch || !currentUser) {
+      toast({ title: "Kesalahan", description: "Shift, cabang, atau pengguna tidak aktif.", variant: "destructive" });
+      return;
+    }
+    const amountPaid = parseFloat(cashAmountPaidInput);
+    if (isNaN(amountPaid) || amountPaid < total) {
+      toast({ title: "Pembayaran Tidak Cukup", description: "Jumlah yang dibayar kurang dari total belanja.", variant: "destructive" });
+      return;
+    }
+    
+    const change = amountPaid - total;
+    setIsProcessingSale(true);
+
+    const transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp'> = {
+      shiftId: activeShift.id,
+      branchId: selectedBranch.id,
+      userId: currentUser.uid,
+      items: cartItems,
+      subtotal,
+      taxAmount: tax,
+      totalAmount: total,
+      totalCost: totalCost,
+      paymentMethod: 'cash',
+      amountPaid: amountPaid, 
+      changeGiven: change, 
+      customerName: customerNameInput.trim() || undefined,
+    };
+
+    const result = await recordTransaction(transactionData);
+    setIsProcessingSale(false);
+    setShowCashPaymentModal(false);
+
+    if ("error" in result || !result.id) {
+      toast({ title: "Gagal Merekam Transaksi", description: result.error || "ID transaksi tidak ditemukan.", variant: "destructive" });
+      setLastTransactionId(null);
+    } else {
+      toast({ title: "Transaksi Berhasil", description: "Penjualan telah direkam." });
+      setLastTransactionId(result.id);
+      setShowPrintInvoiceDialog(true);
+      setCartItems([]);
+      setSelectedPaymentMethod('cash');
+      setCashAmountPaidInput("");
+      setCustomerNameInput("");
+      setCalculatedChange(null);
+      await fetchProductsForBranch(); // Refresh product stock
+    }
+  };
 
 
   const handleCompleteSale = async () => {
@@ -272,6 +347,12 @@ export default function POSPage() {
       return;
     }
 
+    if (selectedPaymentMethod === 'cash') {
+      openCashPaymentModal();
+      return; // Stop here, cash payment will be handled by its own modal and confirmation
+    }
+
+    // For non-cash payments
     setIsProcessingSale(true);
     const transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp'> = {
       shiftId: activeShift.id,
@@ -285,6 +366,7 @@ export default function POSPage() {
       paymentMethod: selectedPaymentMethod,
       amountPaid: total, 
       changeGiven: 0, 
+      customerName: undefined, // No customer name for non-cash by default
     };
 
     const result = await recordTransaction(transactionData);
@@ -295,7 +377,7 @@ export default function POSPage() {
     } else {
       toast({ title: "Transaksi Berhasil", description: "Penjualan telah direkam." });
       setLastTransactionId(result.id);
-      setShowPrintInvoiceDialog(true); // Show dialog to print invoice
+      setShowPrintInvoiceDialog(true); 
       setCartItems([]);
       setSelectedPaymentMethod('cash');
       await fetchProductsForBranch();
@@ -596,9 +678,66 @@ export default function POSPage() {
             </AlertDialogFooter></AlertDialogContent>
         </AlertDialog>
 
+        {/* Cash Payment Modal */}
+        <Dialog open={showCashPaymentModal} onOpenChange={setShowCashPaymentModal}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-base">Pembayaran Tunai</DialogTitle>
+              <DialogDescription className="text-xs">
+                Total Belanja: <span className="font-semibold">{currencySymbol}{total.toLocaleString('id-ID')}</span>
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-3 space-y-3">
+              <div>
+                <Label htmlFor="cashAmountPaidInput" className="text-xs">Jumlah Dibayar Pelanggan ({currencySymbol})</Label>
+                <Input 
+                  id="cashAmountPaidInput" 
+                  type="number" 
+                  value={cashAmountPaidInput} 
+                  onChange={handleCashAmountPaidChange} 
+                  placeholder="Masukkan jumlah bayar" 
+                  className="h-9 text-sm mt-1" 
+                />
+              </div>
+              {calculatedChange !== null && (
+                <p className={cn("text-sm font-medium", calculatedChange < 0 ? "text-destructive" : "text-green-600")}>
+                  Kembalian: {currencySymbol}{calculatedChange.toLocaleString('id-ID')}
+                </p>
+              )}
+              <div>
+                <Label htmlFor="customerNameInput" className="text-xs">Nama Pelanggan (Opsional)</Label>
+                <div className="flex items-center mt-1">
+                    <UserPlus className="h-4 w-4 mr-2 text-muted-foreground"/>
+                    <Input 
+                    id="customerNameInput" 
+                    type="text" 
+                    value={customerNameInput} 
+                    onChange={(e) => setCustomerNameInput(e.target.value)} 
+                    placeholder="Masukkan nama pelanggan" 
+                    className="h-9 text-sm flex-1" 
+                    />
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Kosongkan jika tidak ada nama pelanggan.</p>
+              </div>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline" className="text-xs h-8" onClick={() => setShowCashPaymentModal(false)}>Batal</Button>
+              </DialogClose>
+              <Button 
+                onClick={handleConfirmCashPayment} 
+                className="text-xs h-8" 
+                disabled={isProcessingSale || calculatedChange === null || calculatedChange < 0}
+              >
+                {isProcessingSale ? "Memproses..." : "Konfirmasi Pembayaran"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Print Invoice Dialog */}
         <Dialog open={showPrintInvoiceDialog} onOpenChange={(open) => {
-            if (!open) { // When dialog is closed
+            if (!open) { 
                 setShowPrintInvoiceDialog(false);
                 setLastTransactionId(null);
             } else {

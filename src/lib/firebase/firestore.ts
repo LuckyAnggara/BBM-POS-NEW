@@ -311,8 +311,8 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
   if (!itemData.name.trim()) return { error: "Nama produk tidak boleh kosong." };
   if (!itemData.branchId) return { error: "ID Cabang diperlukan." };
   if (!itemData.categoryId) return { error: "Kategori produk diperlukan." };
-  if (itemData.quantity < 0) return { error: "Jumlah tidak boleh negatif."};
-  if (itemData.price < 0) return { error: "Harga tidak boleh negatif."};
+  if (itemData.quantity < 0) return { error: "Stok tidak boleh negatif."};
+  if (itemData.price < 0) return { error: "Harga jual tidak boleh negatif."};
   if (itemData.costPrice < 0) return { error: "Harga pokok tidak boleh negatif."};
 
   try {
@@ -500,8 +500,9 @@ export interface PosTransaction {
   totalAmount: number;
   totalCost: number;
   paymentMethod: PaymentMethod;
-  amountPaid: number;
-  changeGiven: number;
+  amountPaid: number; // Amount customer paid (especially for cash)
+  changeGiven: number; // Change given back to customer (for cash)
+  customerName?: string; // Optional customer name
   invoiceNumber: string;
 }
 
@@ -516,8 +517,21 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
   try {
     const transactionRef = doc(collection(db, "posTransactions"));
     const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
+    
+    // Ensure all fields are present, especially new ones like customerName
     const dataToSave: Omit<PosTransaction, 'id'> = {
-      ...transactionData,
+      shiftId: transactionData.shiftId,
+      branchId: transactionData.branchId,
+      userId: transactionData.userId,
+      items: transactionData.items,
+      subtotal: transactionData.subtotal,
+      taxAmount: transactionData.taxAmount,
+      totalAmount: transactionData.totalAmount,
+      totalCost: transactionData.totalCost,
+      paymentMethod: transactionData.paymentMethod,
+      amountPaid: transactionData.amountPaid,
+      changeGiven: transactionData.changeGiven,
+      customerName: transactionData.customerName || "", // Ensure it's at least an empty string if not provided
       invoiceNumber,
       timestamp: serverTimestamp() as Timestamp,
     };
