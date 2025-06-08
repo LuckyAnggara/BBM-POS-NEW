@@ -8,20 +8,20 @@ import {
   LayoutDashboard,
   ShoppingCart,
   Archive,
-  CreditCard,
+  CreditCard, // Icon for Expenses
   BarChart3,
   Settings,
   Receipt, 
   History, 
-  PackageSearch, // New icon for Stock Mutation
+  PackageSearch,
 } from "lucide-react";
 import { 
   SidebarMenu, 
   SidebarMenuItem, 
   SidebarMenuButton, 
-  SidebarMenuSub, // Added import
-  SidebarMenuSubItem, // Added import
-  SidebarMenuSubButton // Added import
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton
 } from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
 import SidebarHeaderBrand from "./sidebar-header-brand";
@@ -34,10 +34,10 @@ const navItems = [
   { href: "/inventory", label: "Inventaris", icon: Archive, adminOnly: false },
   { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
-  { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
+  { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false }, // New Expenses Item
   { 
     href: "/reports", 
-    label: "Laporan", // Changed label to be more generic for the group
+    label: "Laporan", 
     icon: BarChart3, 
     adminOnly: false,
     subItems: [ 
@@ -70,7 +70,6 @@ export default function AppSidebarNav() {
                                      !item.subItems?.some(sub => sub.href === '/dashboard');
 
             if (item.subItems) {
-              // This is a group
               return (
                 <SidebarMenuItem key={item.label} className="flex flex-col items-start">
                    <SidebarMenuButton
