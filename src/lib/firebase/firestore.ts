@@ -668,4 +668,35 @@ export async function getTransactionsForShift(shiftId: string): Promise<PosTrans
   }
 }
 
+export async function getTransactionsByDateRangeAndBranch(
+  branchId: string,
+  startDate: Date,
+  endDate: Date
+): Promise<PosTransaction[]> {
+  if (!branchId || !startDate || !endDate) return [];
+  try {
+    const startTimestamp = Timestamp.fromDate(startDate);
+    // Set endDate to the end of the selected day
+    const endOfDayEndDate = new Date(endDate);
+    endOfDayEndDate.setHours(23, 59, 59, 999);
+    const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
+
+    const q = query(
+      collection(db, "posTransactions"),
+      where("branchId", "==", branchId),
+      where("timestamp", ">=", startTimestamp),
+      where("timestamp", "<=", endTimestamp),
+      orderBy("timestamp", "asc")
+    );
+    const querySnapshot = await getDocs(q);
+    const transactions: PosTransaction[] = [];
+    querySnapshot.forEach((docSnap) => {
+      transactions.push({ id: docSnap.id, ...docSnap.data() } as PosTransaction);
+    });
+    return transactions;
+  } catch (error) {
+    console.error("Error fetching transactions by date range and branch:", error);
+    return [];
+  }
+}
     
