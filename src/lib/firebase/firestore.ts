@@ -97,8 +97,8 @@ export async function createBranch(branchData: BranchInput): Promise<Branch | { 
       createdAt: serverTimestamp() as Timestamp,
     };
     const branchRef = await addDoc(collection(db, "branches"), dataToSave);
-    return { 
-        id: branchRef.id, 
+    return {
+        id: branchRef.id,
         name: dataToSave.name,
         invoiceName: dataToSave.invoiceName,
         currency: dataToSave.currency,
@@ -114,7 +114,7 @@ export async function createBranch(branchData: BranchInput): Promise<Branch | { 
 
 export async function updateBranch(branchId: string, updates: Partial<BranchInput>): Promise<void | { error: string }> {
   if (!branchId) return { error: "ID Cabang tidak valid." };
-  
+
   const dataToUpdate: Partial<Omit<FirebaseBranchData, 'id' | 'createdAt'>> & {updatedAt: Timestamp} = {} as any;
   if (updates.name?.trim()) dataToUpdate.name = updates.name.trim();
   if (updates.invoiceName !== undefined) dataToUpdate.invoiceName = updates.invoiceName.trim() || updates.name?.trim() || ""; // Use name if invoice name becomes empty
@@ -164,8 +164,8 @@ export async function getBranches(): Promise<Branch[]> {
     const branches: Branch[] = [];
     querySnapshot.forEach((doc) => {
       const data = doc.data() as FirebaseBranchData;
-      branches.push({ 
-        id: doc.id, 
+      branches.push({
+        id: doc.id,
         name: data.name,
         invoiceName: data.invoiceName || data.name,
         currency: data.currency || "IDR",
@@ -187,10 +187,11 @@ export interface InventoryItem {
   name: string;
   sku?: string;
   categoryId: string;
-  categoryName?: string; 
+  categoryName?: string;
   branchId: string;
   quantity: number;
   price: number;
+  costPrice: number; // Harga Pokok
   imageUrl?: string;
   imageHint?: string;
   createdAt: Timestamp;
@@ -260,22 +261,26 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
   if (!itemData.categoryId) return { error: "Kategori produk diperlukan." };
   if (itemData.quantity < 0) return { error: "Jumlah tidak boleh negatif."};
   if (itemData.price < 0) return { error: "Harga tidak boleh negatif."};
+  if (itemData.costPrice < 0) return { error: "Harga pokok tidak boleh negatif."};
+
 
   try {
     const now = serverTimestamp() as Timestamp;
     const itemRef = await addDoc(collection(db, "inventoryItems"), {
       ...itemData,
-      categoryName, 
+      costPrice: itemData.costPrice || 0, // Ensure costPrice is set
+      categoryName,
       createdAt: now,
       updatedAt: now,
     });
     const clientTimestamp = Timestamp.now();
-    return { 
-      id: itemRef.id, 
-      ...itemData, 
+    return {
+      id: itemRef.id,
+      ...itemData,
+      costPrice: itemData.costPrice || 0,
       categoryName,
-      createdAt: clientTimestamp, 
-      updatedAt: clientTimestamp  
+      createdAt: clientTimestamp,
+      updatedAt: clientTimestamp
     };
   } catch (error: any) {
     console.error("Error adding inventory item:", error);
@@ -290,7 +295,8 @@ export async function getInventoryItems(branchId: string): Promise<InventoryItem
     const querySnapshot = await getDocs(q);
     const items: InventoryItem[] = [];
     querySnapshot.forEach((doc) => {
-      items.push({ id: doc.id, ...doc.data() } as InventoryItem);
+      const data = doc.data();
+      items.push({ id: doc.id, ...data, costPrice: data.costPrice || 0 } as InventoryItem); // Ensure costPrice defaults to 0 if not present
     });
     return items;
   } catch (error) {
@@ -304,7 +310,16 @@ export async function updateInventoryItem(itemId: string, updates: Partial<Omit<
   try {
     const itemRef = doc(db, "inventoryItems", itemId);
     const payload: any = { ...updates, updatedAt: serverTimestamp() };
-    if (newCategoryName && updates.categoryId) { 
+    if (updates.costPrice === undefined || updates.costPrice === null || isNaN(Number(updates.costPrice))) {
+      // If costPrice is being explicitly set to undefined/null/NaN, ensure it defaults to 0 or handle as error
+      // For now, let's assume it might be an optional update, so we don't force it to 0 unless it's part of the explicit update.
+      // If it's in `updates` and invalid, it should be caught by form validation earlier.
+    } else {
+      payload.costPrice = Number(updates.costPrice);
+    }
+
+
+    if (newCategoryName && updates.categoryId) {
       payload.categoryName = newCategoryName;
     } else if (updates.categoryId && !newCategoryName) {
         const catDoc = await getDoc(doc(db, "inventoryCategories", updates.categoryId));
@@ -422,6 +437,7 @@ export interface TransactionItem {
   productName: string;
   quantity: number;
   price: number; // Price per unit at the time of sale
+  costPrice: number; // Cost price per unit at the time of sale
   total: number;
 }
 
@@ -435,6 +451,7 @@ export interface PosTransaction {
   subtotal: number;
   taxAmount: number;
   totalAmount: number;
+  totalCost: number; // Total cost of goods sold for this transaction
   paymentMethod: PaymentMethod;
   amountPaid: number; // For cash, this might be > totalAmount
   changeGiven: number; // For cash

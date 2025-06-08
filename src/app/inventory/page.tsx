@@ -21,7 +21,7 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { InventoryItem, InventoryCategory, InventoryItemInput, InventoryCategoryInput } from "@/lib/firebase/firestore";
-import { 
+import {
   addInventoryItem, getInventoryItems, updateInventoryItem, deleteInventoryItem,
   addInventoryCategory, getInventoryCategories, deleteInventoryCategory
 } from "@/lib/firebase/firestore";
@@ -32,8 +32,9 @@ const itemFormSchema = z.object({
   name: z.string().min(3, { message: "Nama produk minimal 3 karakter." }),
   sku: z.string().optional(),
   categoryId: z.string().min(1, { message: "Kategori harus dipilih." }),
-  quantity: z.coerce.number().min(0, { message: "Jumlah tidak boleh negatif." }),
-  price: z.coerce.number().min(0, { message: "Harga tidak boleh negatif." }),
+  quantity: z.coerce.number().min(0, { message: "Stok tidak boleh negatif." }),
+  price: z.coerce.number().min(0, { message: "Harga jual tidak boleh negatif." }),
+  costPrice: z.coerce.number().min(0, { message: "Harga pokok tidak boleh negatif." }),
   imageUrl: z.string().url({ message: "URL gambar tidak valid." }).optional().or(z.literal('')),
   imageHint: z.string().optional(),
 });
@@ -57,13 +58,12 @@ export default function InventoryPage() {
 
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
-  
-  const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
+
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
 
   const itemForm = useForm<ItemFormValues>({
     resolver: zodResolver(itemFormSchema),
-    defaultValues: { name: "", sku: "", categoryId: "", quantity: 0, price: 0, imageUrl: "", imageHint: "" },
+    defaultValues: { name: "", sku: "", categoryId: "", quantity: 0, price: 0, costPrice: 0, imageUrl: "", imageHint: "" },
   });
 
   const categoryForm = useForm<CategoryFormValues>({
@@ -104,11 +104,12 @@ export default function InventoryPage() {
         categoryId: item.categoryId,
         quantity: item.quantity,
         price: item.price,
+        costPrice: item.costPrice || 0,
         imageUrl: item.imageUrl || "",
         imageHint: item.imageHint || "",
       });
     } else {
-      itemForm.reset({ name: "", sku: "", categoryId: "", quantity: 0, price: 0, imageUrl: "", imageHint: "" });
+      itemForm.reset({ name: "", sku: "", categoryId: "", quantity: 0, price: 0, costPrice: 0, imageUrl: "", imageHint: "" });
     }
     setIsItemDialogOpen(true);
   };
@@ -127,6 +128,7 @@ export default function InventoryPage() {
       branchId: selectedBranch.id,
       quantity: Number(values.quantity),
       price: Number(values.price),
+      costPrice: Number(values.costPrice),
       imageUrl: values.imageUrl || `https://placehold.co/64x64.png`,
       imageHint: values.imageHint || values.name.split(" ").slice(0,2).join(" ").toLowerCase(),
     };
@@ -168,7 +170,7 @@ export default function InventoryPage() {
       toast({ title: "Gagal Menambah Kategori", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Kategori Ditambahkan", description: `Kategori "${values.name}" telah ditambahkan.` });
-      setIsCategoryDialogOpen(false);
+      setIsCategoryManagerOpen(false); // Close manager dialog on success
       categoryForm.reset();
       // Re-fetch categories to update dropdowns
       const fetchedCategories = await getInventoryCategories(selectedBranch.id);
@@ -189,7 +191,7 @@ export default function InventoryPage() {
   };
 
 
-  const filteredItems = items.filter(item => 
+  const filteredItems = items.filter(item =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     categories.find(c => c.id === item.categoryId)?.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -217,10 +219,10 @@ export default function InventoryPage() {
             <div className="flex gap-2 w-full sm:w-auto">
               <div className="relative flex-grow sm:flex-grow-0">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input 
-                  type="search" 
-                  placeholder="Cari produk..." 
-                  className="pl-8 w-full sm:w-56 rounded-md h-9 text-xs" 
+                <Input
+                  type="search"
+                  placeholder="Cari produk..."
+                  className="pl-8 w-full sm:w-56 rounded-md h-9 text-xs"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -261,8 +263,9 @@ export default function InventoryPage() {
                     <TableHead className="text-xs px-2">Nama</TableHead>
                     <TableHead className="hidden md:table-cell text-xs px-2">SKU</TableHead>
                     <TableHead className="hidden lg:table-cell text-xs px-2">Kategori</TableHead>
-                    <TableHead className="text-right text-xs px-2">Jumlah</TableHead>
-                    <TableHead className="text-right hidden sm:table-cell text-xs px-2">Harga</TableHead>
+                    <TableHead className="text-right text-xs px-2">Stok</TableHead>
+                    <TableHead className="text-right hidden sm:table-cell text-xs px-2">Harga Jual</TableHead>
+                    <TableHead className="text-right hidden sm:table-cell text-xs px-2">Harga Pokok</TableHead>
                     <TableHead className="text-right text-xs px-2">Aksi</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -270,11 +273,11 @@ export default function InventoryPage() {
                   {filteredItems.map((product) => (
                     <TableRow key={product.id}>
                       <TableCell className="hidden sm:table-cell py-1.5 px-2">
-                        <Image 
-                            src={product.imageUrl || `https://placehold.co/64x64.png`} 
-                            alt={product.name} 
-                            width={32} height={32} 
-                            className="rounded object-cover h-8 w-8" 
+                        <Image
+                            src={product.imageUrl || `https://placehold.co/64x64.png`}
+                            alt={product.name}
+                            width={32} height={32}
+                            className="rounded object-cover h-8 w-8"
                             data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()}
                             onError={(e) => (e.currentTarget.src = "https://placehold.co/64x64.png")}
                         />
@@ -284,6 +287,7 @@ export default function InventoryPage() {
                       <TableCell className="hidden lg:table-cell py-1.5 px-2 text-xs">{product.categoryName || categories.find(c => c.id === product.categoryId)?.name || "N/A"}</TableCell>
                       <TableCell className="text-right py-1.5 px-2 text-xs">{product.quantity}</TableCell>
                       <TableCell className="text-right hidden sm:table-cell py-1.5 px-2 text-xs">Rp {product.price.toLocaleString('id-ID')}</TableCell>
+                      <TableCell className="text-right hidden sm:table-cell py-1.5 px-2 text-xs">Rp {(product.costPrice || 0).toLocaleString('id-ID')}</TableCell>
                       <TableCell className="text-right py-1.5 px-2">
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenItemDialog(product)}>
                           <FilePenLine className="h-3.5 w-3.5" />
@@ -305,7 +309,7 @@ export default function InventoryPage() {
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                               <AlertDialogCancel className="text-xs h-8">Batal</AlertDialogCancel>
-                              <AlertDialogAction 
+                              <AlertDialogAction
                                 className="text-xs h-8 bg-destructive hover:bg-destructive/90"
                                 onClick={() => handleDeleteItem(product.id, product.name)}>
                                 Ya, Hapus
@@ -328,7 +332,7 @@ export default function InventoryPage() {
             <DialogHeader>
               <DialogTitle className="text-base">{editingItem ? "Edit Produk" : "Tambah Produk Baru"}</DialogTitle>
             </DialogHeader>
-            <form onSubmit={itemForm.handleSubmit(onItemSubmit)} className="space-y-3 py-2">
+            <form onSubmit={itemForm.handleSubmit(onItemSubmit)} className="space-y-3 py-2 max-h-[70vh] overflow-y-auto pr-2">
               <div>
                 <Label htmlFor="itemName" className="text-xs">Nama Produk</Label>
                 <Input id="itemName" {...itemForm.register("name")} className="h-9 text-xs" />
@@ -362,16 +366,21 @@ export default function InventoryPage() {
                 />
                 {itemForm.formState.errors.categoryId && <p className="text-xs text-destructive mt-1">{itemForm.formState.errors.categoryId.message}</p>}
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
-                  <Label htmlFor="itemQuantity" className="text-xs">Jumlah</Label>
+                  <Label htmlFor="itemQuantity" className="text-xs">Stok</Label>
                   <Input id="itemQuantity" type="number" {...itemForm.register("quantity")} className="h-9 text-xs" />
                   {itemForm.formState.errors.quantity && <p className="text-xs text-destructive mt-1">{itemForm.formState.errors.quantity.message}</p>}
                 </div>
                 <div>
-                  <Label htmlFor="itemPrice" className="text-xs">Harga (Rp)</Label>
+                  <Label htmlFor="itemPrice" className="text-xs">Harga Jual (Rp)</Label>
                   <Input id="itemPrice" type="number" {...itemForm.register("price")} className="h-9 text-xs" />
                   {itemForm.formState.errors.price && <p className="text-xs text-destructive mt-1">{itemForm.formState.errors.price.message}</p>}
+                </div>
+                 <div>
+                  <Label htmlFor="itemCostPrice" className="text-xs">Harga Pokok (Rp)</Label>
+                  <Input id="itemCostPrice" type="number" {...itemForm.register("costPrice")} className="h-9 text-xs" />
+                  {itemForm.formState.errors.costPrice && <p className="text-xs text-destructive mt-1">{itemForm.formState.errors.costPrice.message}</p>}
                 </div>
               </div>
                <div>
@@ -412,7 +421,7 @@ export default function InventoryPage() {
                   {categoryForm.formState.isSubmitting ? "Menambah..." : "Tambah"}
                 </Button>
               </form>
-              
+
               <div className="mt-3">
                 <h3 className="text-sm font-medium mb-1.5">Daftar Kategori Saat Ini:</h3>
                 {loadingCategories ? (
@@ -439,7 +448,7 @@ export default function InventoryPage() {
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                                 <AlertDialogCancel className="text-xs h-8">Batal</AlertDialogCancel>
-                                <AlertDialogAction 
+                                <AlertDialogAction
                                     className="text-xs h-8 bg-destructive hover:bg-destructive/90"
                                     onClick={() => handleDeleteCategory(cat.id, cat.name)}>
                                     Ya, Hapus Kategori
@@ -465,6 +474,3 @@ export default function InventoryPage() {
     </ProtectedRoute>
   );
 }
-
-
-    
