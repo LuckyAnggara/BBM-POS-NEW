@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { CalendarIcon, Download, Package, AlertTriangle, Info } from "lucide-react";
 import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
+import Image from "next/image"; // Added missing import
 import { 
   getInventoryItems, 
   getTransactionsByDateRangeAndBranch, 
