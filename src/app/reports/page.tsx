@@ -20,18 +20,26 @@ import { Separator } from "@/components/ui/separator";
 type ReportType = "sales_summary" | "income_statement" | "balance_sheet";
 
 interface SalesSummaryData {
-  totalRevenue: number;
-  totalTransactions: number;
-  averageTransactionValue: number;
-  salesByPaymentMethod: Record<PaymentMethod, number>;
+  grossRevenueBeforeReturns: number;
+  totalValueReturned: number;
+  netRevenue: number; // Formerly totalRevenue
+  totalNetTransactions: number; // Based on completed transactions
+  averageTransactionValue: number; // Based on net revenue and net transactions
+  salesByPaymentMethod: Record<PaymentMethod, number>; // Based on completed transactions
 }
 
 interface IncomeStatementData {
-  totalRevenue: number;
-  totalCOGS: number;
-  grossProfit: number;
+  grossRevenueBeforeReturns: number;
+  totalValueReturned: number;
+  netRevenue: number; // Revenue from completed sales
+  
+  grossCOGSBeforeReturns: number;
+  cogsOfReturnedItems: number;
+  netCOGS: number; // COGS from completed sales
+
+  grossProfit: number; // netRevenue - netCOGS
   totalExpenses: number;
-  netProfit: number;
+  netProfit: number; // grossProfit - totalExpenses
   expensesBreakdown?: { category: string; amount: number }[]; 
 }
 
@@ -71,40 +79,42 @@ export default function ReportsPage() {
     setIncomeStatementData(null);
 
     try {
+      const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
+      const completedTransactions = allTransactions.filter(tx => tx.status !== 'returned');
+      const returnedTransactions = allTransactions.filter(tx => tx.status === 'returned');
+
+      const totalValueReturned = returnedTransactions.reduce((sum, tx) => sum + tx.totalAmount, 0);
+      const cogsOfReturnedItems = returnedTransactions.reduce((sum, tx) => sum + (tx.totalCost || 0), 0);
+
       if (reportType === "sales_summary") {
-        const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
-        const completedTransactions = allTransactions.filter(tx => tx.status !== 'returned');
-
-        let totalRevenue = 0;
+        const netRevenue = completedTransactions.reduce((sum, tx) => sum + tx.totalAmount, 0);
+        const grossRevenueBeforeReturns = netRevenue + totalValueReturned;
+        
         const salesByPaymentMethod: Record<PaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
-
         completedTransactions.forEach(tx => {
-          totalRevenue += tx.totalAmount;
           salesByPaymentMethod[tx.paymentMethod] = (salesByPaymentMethod[tx.paymentMethod] || 0) + tx.totalAmount;
         });
 
-        const totalTransactions = completedTransactions.length;
-        const averageTransactionValue = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
+        const totalNetTransactions = completedTransactions.length;
+        const averageTransactionValue = totalNetTransactions > 0 ? netRevenue / totalNetTransactions : 0;
 
         setSalesSummaryData({
-          totalRevenue,
-          totalTransactions,
+          grossRevenueBeforeReturns,
+          totalValueReturned,
+          netRevenue,
+          totalNetTransactions,
           averageTransactionValue,
           salesByPaymentMethod,
         });
-        if (totalTransactions === 0) {
-             toast({ title: "Tidak Ada Data", description: "Tidak ada transaksi penjualan (yang belum diretur) ditemukan untuk rentang tanggal dan cabang yang dipilih.", variant: "default" });
+        if (allTransactions.length === 0) {
+             toast({ title: "Tidak Ada Data", description: "Tidak ada transaksi (selesai maupun retur) ditemukan untuk rentang tanggal dan cabang yang dipilih.", variant: "default" });
         }
       } else if (reportType === "income_statement") {
-        const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
-        const completedTransactions = allTransactions.filter(tx => tx.status !== 'returned');
+        const netRevenue = completedTransactions.reduce((sum, tx) => sum + tx.totalAmount, 0);
+        const netCOGS = completedTransactions.reduce((sum, tx) => sum + (tx.totalCost || 0), 0);
         
-        let totalRevenue = 0;
-        let totalCOGS = 0;
-        completedTransactions.forEach(tx => {
-          totalRevenue += tx.totalAmount;
-          totalCOGS += tx.totalCost || 0; 
-        });
+        const grossRevenueBeforeReturns = netRevenue + totalValueReturned;
+        const grossCOGSBeforeReturns = netCOGS + cogsOfReturnedItems;
 
         const expenses = await getExpenses(selectedBranch.id, { startDate, endDate });
         let totalExpenses = 0;
@@ -119,21 +129,24 @@ export default function ReportsPage() {
             expensesBreakdown.push({ category, amount });
         });
 
-
-        const grossProfit = totalRevenue - totalCOGS;
+        const grossProfit = netRevenue - netCOGS;
         const netProfit = grossProfit - totalExpenses;
 
         setIncomeStatementData({
-          totalRevenue,
-          totalCOGS,
+          grossRevenueBeforeReturns,
+          totalValueReturned,
+          netRevenue,
+          grossCOGSBeforeReturns,
+          cogsOfReturnedItems,
+          netCOGS,
           grossProfit,
           totalExpenses,
           netProfit,
           expensesBreakdown
         });
 
-         if (completedTransactions.length === 0 && expenses.length === 0) {
-            toast({ title: "Tidak Ada Data", description: "Tidak ada data transaksi penjualan maupun pengeluaran ditemukan untuk periode ini.", variant: "default" });
+         if (completedTransactions.length === 0 && expenses.length === 0 && returnedTransactions.length === 0) {
+            toast({ title: "Tidak Ada Data", description: "Tidak ada data transaksi penjualan, retur, maupun pengeluaran ditemukan untuk periode ini.", variant: "default" });
         }
 
       } else {
@@ -275,20 +288,29 @@ export default function ReportsPage() {
                 <div className="space-y-2 p-3 border rounded-md bg-muted/30">
                     <h3 className="text-sm font-medium text-muted-foreground">Ringkasan Umum</h3>
                     <div className="flex justify-between text-sm">
-                        <span>Total Pendapatan:</span>
-                        <span className="font-semibold">{formatCurrency(salesSummaryData.totalRevenue)}</span>
+                        <span>Pendapatan Kotor (Sebelum Retur):</span>
+                        <span className="font-semibold">{formatCurrency(salesSummaryData.grossRevenueBeforeReturns)}</span>
+                    </div>
+                     <div className="flex justify-between text-sm">
+                        <span>Total Nilai Retur:</span>
+                        <span className="font-semibold text-destructive">({formatCurrency(salesSummaryData.totalValueReturned)})</span>
+                    </div>
+                    <Separator/>
+                    <div className="flex justify-between text-sm">
+                        <span>Total Pendapatan Bersih:</span>
+                        <span className="font-semibold">{formatCurrency(salesSummaryData.netRevenue)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                        <span>Jumlah Transaksi:</span>
-                        <span className="font-semibold">{salesSummaryData.totalTransactions}</span>
+                        <span>Jumlah Transaksi Bersih:</span>
+                        <span className="font-semibold">{salesSummaryData.totalNetTransactions}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                        <span>Rata-rata per Transaksi:</span>
+                        <span>Rata-rata per Transaksi (Bersih):</span>
                         <span className="font-semibold">{formatCurrency(salesSummaryData.averageTransactionValue)}</span>
                     </div>
                 </div>
                 <div className="space-y-2 p-3 border rounded-md bg-muted/30">
-                    <h3 className="text-sm font-medium text-muted-foreground">Pendapatan per Metode Pembayaran</h3>
+                    <h3 className="text-sm font-medium text-muted-foreground">Pendapatan Bersih per Metode Pembayaran</h3>
                      <div className="flex justify-between text-sm">
                         <span>Tunai (Cash):</span>
                         <span className="font-semibold">{formatCurrency(salesSummaryData.salesByPaymentMethod.cash)}</span>
@@ -317,20 +339,46 @@ export default function ReportsPage() {
               </CardHeader>
               <CardContent className="p-4 space-y-3">
                 <div className="border rounded-md p-3 bg-muted/30 space-y-1.5 text-sm">
+                  <h3 className="text-sm font-medium text-muted-foreground mb-1">Pendapatan</h3>
                   <div className="flex justify-between">
-                    <span>Total Pendapatan Penjualan:</span>
-                    <span className="font-medium">{formatCurrency(incomeStatementData.totalRevenue)}</span>
+                    <span>Pendapatan Kotor (Bruto):</span>
+                    <span className="font-medium">{formatCurrency(incomeStatementData.grossRevenueBeforeReturns)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Harga Pokok Penjualan (HPP):</span>
-                    <span className="font-medium text-destructive">({formatCurrency(incomeStatementData.totalCOGS)})</span>
+                    <span>(-) Retur Penjualan:</span>
+                    <span className="font-medium text-destructive">({formatCurrency(incomeStatementData.totalValueReturned)})</span>
                   </div>
                   <Separator />
                   <div className="flex justify-between font-semibold">
-                    <span>Laba Kotor:</span>
-                    <span>{formatCurrency(incomeStatementData.grossProfit)}</span>
+                    <span>(=) Pendapatan Penjualan Bersih (Neto):</span>
+                    <span>{formatCurrency(incomeStatementData.netRevenue)}</span>
                   </div>
                 </div>
+
+                <div className="border rounded-md p-3 bg-muted/30 space-y-1.5 text-sm">
+                  <h3 className="text-sm font-medium text-muted-foreground mb-1">Harga Pokok Penjualan (HPP)</h3>
+                   <div className="flex justify-between">
+                    <span>HPP Kotor (untuk penjualan bruto):</span>
+                    <span className="font-medium text-destructive">({formatCurrency(incomeStatementData.grossCOGSBeforeReturns)})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>(-) Pengurangan HPP dari Retur:</span>
+                    <span className="font-medium text-green-600">{formatCurrency(incomeStatementData.cogsOfReturnedItems)}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between font-semibold">
+                    <span>(=) HPP Bersih (Neto):</span>
+                    <span className="text-destructive">({formatCurrency(incomeStatementData.netCOGS)})</span>
+                  </div>
+                </div>
+                
+                <div className="border rounded-md p-3 bg-background mt-1">
+                     <div className="flex justify-between text-sm font-bold">
+                        <span>Laba Kotor:</span>
+                        <span>{formatCurrency(incomeStatementData.grossProfit)}</span>
+                    </div>
+                </div>
+
 
                 <div className="border rounded-md p-3 bg-muted/30 space-y-1.5 text-sm">
                     <h3 className="text-sm font-medium text-muted-foreground mb-1">Beban Operasional:</h3>
@@ -376,3 +424,5 @@ export default function ReportsPage() {
     </ProtectedRoute>
   );
 }
+
+    
