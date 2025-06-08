@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { ReactNode } from "react";
@@ -6,14 +7,17 @@ import {
   Sidebar,
   SidebarContent,
   SidebarInset,
-  SidebarFooter, // Added for structure if needed by AppSidebarNav internal fixed footer
+  SidebarFooter,
 } from "@/components/ui/sidebar";
 import AppHeader from "@/components/layout/app-header";
 import AppSidebarNav from "@/components/layout/app-sidebar-nav";
-import Breadcrumbs from "./breadcrumbs"; // Import Breadcrumbs
+import Breadcrumbs from "./breadcrumbs";
+import ProtectedRoute from "../auth/ProtectedRoute"; // Ensure this path is correct
 
 export default function MainLayout({ children }: { children: ReactNode }) {
   return (
+    // ProtectedRoute is now applied at each page level directly
+    // So it's not needed here if all pages using MainLayout are individually protected
     <SidebarProvider defaultOpen>
       <div className="min-h-screen bg-background">
         <AppHeader />
@@ -23,7 +27,7 @@ export default function MainLayout({ children }: { children: ReactNode }) {
           </Sidebar>
           <SidebarInset>
             <main className="w-full h-full overflow-y-auto p-4 sm:p-6 lg:p-8">
-              <Breadcrumbs /> {/* Add Breadcrumbs here */}
+              <Breadcrumbs />
               {children}
             </main>
           </SidebarInset>
