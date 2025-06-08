@@ -11,7 +11,7 @@ import { Timestamp } from "firebase/firestore";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Printer, RotateCcw, CheckCircle, XCircle, Trash2, CalendarIcon, Search, FilterX } from "lucide-react";
+import { Printer, RotateCcw, CheckCircle, XCircle, Trash2, CalendarIcon, Search, FilterX, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -22,6 +22,13 @@ import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { format, isValid, parseISO } from "date-fns";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 
 export default function SalesHistoryPage() {
@@ -31,7 +38,7 @@ export default function SalesHistoryPage() {
 
   const [allFetchedTransactions, setAllFetchedTransactions] = useState<PosTransaction[]>([]);
   const [filteredTransactions, setFilteredTransactions] = useState<PosTransaction[]>([]);
-  const [loading, setLoading] = useState(false); // Changed initial state to false
+  const [loading, setLoading] = useState(false);
   
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [endDate, setEndDate] = useState<Date | undefined>(undefined);
@@ -63,7 +70,7 @@ export default function SalesHistoryPage() {
         { startDate, endDate, orderByField: "timestamp", orderDirection: "desc" }
       );
       setAllFetchedTransactions(fetchedTransactions);
-      setFilteredTransactions(fetchedTransactions); // Initially set filtered to all fetched
+      setFilteredTransactions(fetchedTransactions); 
       setLoading(false);
       if(fetchedTransactions.length === 0){
         toast({title: "Tidak Ada Transaksi", description: "Tidak ada transaksi ditemukan untuk rentang tanggal yang dipilih.", variant: "default"});
@@ -75,7 +82,6 @@ export default function SalesHistoryPage() {
     }
   }, [currentUser, selectedBranch, startDate, endDate, toast]);
 
-  // Client-side search filtering
   useEffect(() => {
     if (!searchTerm.trim()) {
       setFilteredTransactions(allFetchedTransactions);
@@ -141,7 +147,7 @@ export default function SalesHistoryPage() {
       setShowReturnDialog(false);
       setTransactionToReturn(null);
       setReturnReason("");
-      await fetchTransactions(); // Refresh list
+      await fetchTransactions(); 
     }
   };
   
@@ -174,7 +180,7 @@ export default function SalesHistoryPage() {
         toast({ title: "Transaksi Dihapus", description: "Transaksi berhasil dihapus dan stok dikembalikan."});
         setShowDeleteDialog(false);
         setTransactionToDeleteId(null);
-        await fetchTransactions(); // Refresh
+        await fetchTransactions(); 
     } else {
         toast({ title: "Gagal Menghapus", description: result.error || "Terjadi kesalahan saat menghapus transaksi.", variant: "destructive"});
     }
@@ -189,6 +195,7 @@ export default function SalesHistoryPage() {
         </span>
       );
     }
+    // Consider undefined status as completed for older transactions
     return (
       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
         <CheckCircle className="mr-1 h-3 w-3" /> Selesai
@@ -312,20 +319,40 @@ export default function SalesHistoryPage() {
                                 <p className="text-xs text-muted-foreground italic mt-0.5 max-w-[150px] truncate" title={tx.returnReason}>Alasan: {tx.returnReason}</p>
                             )}
                           </TableCell>
-                          <TableCell className="text-xs text-center py-2 space-x-1">
-                            <Button asChild variant="outline" size="sm" className="h-7 text-xs">
-                              <Link href={`/invoice/${tx.id}/view`} target="_blank">
-                                <Printer className="mr-1 h-3 w-3" /> Invoice
-                              </Link>
-                            </Button>
-                            {tx.status !== 'returned' && (
-                              <Button variant="outline" size="sm" className="h-7 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 hover:text-amber-800" onClick={() => handleOpenReturnDialog(tx)}>
-                                <RotateCcw className="mr-1 h-3 w-3" /> Retur
-                              </Button>
-                            )}
-                             <Button variant="destructive" size="sm" className="h-7 text-xs" onClick={() => handleOpenDeleteDialog(tx.id)}>
-                                <Trash2 className="mr-1 h-3 w-3" /> Hapus
-                            </Button>
+                          <TableCell className="text-xs text-center py-2">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                  <span className="sr-only">Aksi</span>
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem asChild className="text-xs cursor-pointer">
+                                  <Link href={`/invoice/${tx.id}/view`} target="_blank" rel="noopener noreferrer">
+                                    <Printer className="mr-2 h-3.5 w-3.5" />
+                                    Lihat Invoice
+                                  </Link>
+                                </DropdownMenuItem>
+                                {tx.status !== 'returned' && (
+                                  <DropdownMenuItem
+                                    className="text-xs cursor-pointer text-amber-700 focus:bg-amber-50 focus:text-amber-800"
+                                    onClick={() => handleOpenReturnDialog(tx)}
+                                  >
+                                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                                    Proses Retur
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+                                  onClick={() => handleOpenDeleteDialog(tx.id)}
+                                >
+                                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                                  Hapus Transaksi
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       ))}
