@@ -262,8 +262,10 @@ Sidebar.displayName = "Sidebar"
 const SidebarTrigger = React.forwardRef<
   React.ElementRef<typeof Button>,
   React.ComponentProps<typeof Button>
->(({ className, onClick, ...props }, ref) => {
-  const { toggleSidebar } = useSidebar()
+>(({ className, onClick, children, ...props }, ref) => {
+  const { toggleSidebar } = useSidebar();
+  // Ensure asChild is not part of props if we are not supporting it here for simplicity
+  const { asChild, ...buttonProps } = props;
 
   return (
     <Button
@@ -273,16 +275,20 @@ const SidebarTrigger = React.forwardRef<
       size="icon"
       className={cn("h-7 w-7", className)}
       onClick={(event) => {
-        onClick?.(event)
-        toggleSidebar()
+        onClick?.(event);
+        toggleSidebar();
       }}
-      {...props}
+      {...buttonProps}
     >
-      <PanelLeft />
-      <span className="sr-only">Toggle Sidebar</span>
+      {children || (
+        <>
+          <PanelLeft className="h-5 w-5" />
+          <span className="sr-only">Toggle Sidebar</span>
+        </>
+      )}
     </Button>
-  )
-})
+  );
+});
 SidebarTrigger.displayName = "SidebarTrigger"
 
 const SidebarRail = React.forwardRef<
