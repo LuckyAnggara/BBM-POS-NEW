@@ -61,10 +61,13 @@ export default function StockMutationReportPage() {
 
     try {
       const inventoryItems = await getInventoryItems(selectedBranch.id);
-      const transactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
+      const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
+
+      // Filter out returned transactions before calculating sold quantities
+      const completedTransactions = allTransactions.filter(tx => tx.status !== 'returned');
 
       const soldQuantitiesMap = new Map<string, number>();
-      transactions.forEach(tx => {
+      completedTransactions.forEach(tx => {
         tx.items.forEach(item => {
           soldQuantitiesMap.set(item.productId, (soldQuantitiesMap.get(item.productId) || 0) + item.quantity);
         });
@@ -72,10 +75,7 @@ export default function StockMutationReportPage() {
 
       const processedData: StockMutationReportItem[] = inventoryItems.map(item => {
         const stockSold = soldQuantitiesMap.get(item.id) || 0;
-        // finalStock is the current quantity of the item.
         const finalStock = item.quantity; 
-        // initialStock is calculated as current stock + items sold during the period.
-        // This assumes no stock was received or manually adjusted during the period.
         const initialStock = finalStock + stockSold; 
 
         return {
@@ -84,7 +84,7 @@ export default function StockMutationReportPage() {
           sku: item.sku,
           categoryName: item.categoryName,
           initialStock: initialStock,
-          stockIn: 0, // Placeholder for now
+          stockIn: 0, 
           stockSold: stockSold,
           finalStock: finalStock,
         };
@@ -243,7 +243,7 @@ export default function StockMutationReportPage() {
                                 </TableRow>
                             ))}
                         </TableBody>
-                         <TableCaption className="text-xs py-2">Stok Awal dihitung berdasarkan: Stok Akhir (Saat Ini) + Barang Terjual (Selama Periode). Fitur stok masuk/penyesuaian belum diimplementasikan.</TableCaption>
+                         <TableCaption className="text-xs py-2">Stok Awal dihitung berdasarkan: Stok Akhir (Saat Ini) + Barang Terjual (Selama Periode, tidak termasuk retur). Fitur stok masuk/penyesuaian belum diimplementasikan.</TableCaption>
                     </Table>
                 ) : (
                     <p className="text-sm text-muted-foreground text-center py-6">Tidak ada data produk inventaris untuk ditampilkan pada cabang ini.</p>
@@ -265,4 +265,3 @@ export default function StockMutationReportPage() {
     </ProtectedRoute>
   );
 }
-

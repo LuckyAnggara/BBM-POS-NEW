@@ -59,17 +59,20 @@ export default function ReportsPage() {
 
     if (reportType === "sales_summary") {
       try {
-        const transactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
+        const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
         
+        // Filter out returned transactions for sales summary calculations
+        const completedTransactions = allTransactions.filter(tx => tx.status !== 'returned');
+
         let totalRevenue = 0;
         const salesByPaymentMethod: Record<PaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
 
-        transactions.forEach(tx => {
+        completedTransactions.forEach(tx => {
           totalRevenue += tx.totalAmount;
           salesByPaymentMethod[tx.paymentMethod] = (salesByPaymentMethod[tx.paymentMethod] || 0) + tx.totalAmount;
         });
 
-        const totalTransactions = transactions.length;
+        const totalTransactions = completedTransactions.length;
         const averageTransactionValue = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
 
         setReportData({
@@ -79,7 +82,7 @@ export default function ReportsPage() {
           salesByPaymentMethod,
         });
         if (totalTransactions === 0) {
-             toast({ title: "Tidak Ada Data", description: "Tidak ada transaksi ditemukan untuk rentang tanggal dan cabang yang dipilih.", variant: "default" });
+             toast({ title: "Tidak Ada Data", description: "Tidak ada transaksi (yang belum diretur) ditemukan untuk rentang tanggal dan cabang yang dipilih.", variant: "default" });
         }
 
       } catch (error) {
