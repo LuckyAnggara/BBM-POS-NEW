@@ -41,9 +41,21 @@ export default function LoginPage() {
     setIsLoading(true);
     const result = await signInWithEmail(data.email, data.password);
     if ("error" in result && result.error) {
+      let description = "Login gagal. Silakan coba lagi.";
+      if (result.errorCode === "auth/invalid-credential" || 
+          result.errorCode === "auth/user-not-found" || 
+          result.errorCode === "auth/wrong-password") {
+        description = "Email atau password salah. Silakan periksa kembali.";
+      } else if (result.errorCode === "auth/invalid-email") {
+        description = "Format email tidak valid.";
+      } else if (result.errorCode === "auth/user-disabled") {
+        description = "Akun ini telah dinonaktifkan.";
+      } else {
+        description = `Terjadi kesalahan: ${result.error}. Cek konsol untuk detail.`;
+      }
       toast({
         title: "Login Gagal",
-        description: "Email atau password salah. Silakan coba lagi.",
+        description: description,
         variant: "destructive",
       });
     } else {

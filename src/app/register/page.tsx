@@ -43,9 +43,22 @@ export default function RegisterPage() {
     setIsLoading(true);
     const result = await registerWithEmailAndPassword(data.name, data.email, data.password);
     if ("error" in result && result.error) {
+      let description = "Registrasi gagal. Silakan coba lagi.";
+      if (result.errorCode === "auth/email-already-in-use") {
+        description = "Email ini sudah terdaftar. Silakan gunakan email lain atau login.";
+      } else if (result.errorCode === "auth/weak-password") {
+        description = "Password terlalu lemah. Gunakan minimal 6 karakter.";
+      } else if (result.errorCode === "auth/invalid-email") {
+        description = "Format email tidak valid.";
+      } else if (result.errorCode === "auth/operation-not-allowed") {
+        description = "Metode pendaftaran ini tidak diizinkan. Hubungi administrator.";
+      } else {
+        // Fallback for other errors, including potentially permission issues from Firebase Rules
+        description = `Terjadi kesalahan: ${result.error}. Cek konsol untuk detail.`;
+      }
       toast({
         title: "Registrasi Gagal",
-        description: "Gagal membuat akun. Email mungkin sudah digunakan.",
+        description: description,
         variant: "destructive",
       });
     } else {

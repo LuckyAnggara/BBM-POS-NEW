@@ -11,7 +11,7 @@ import { auth } from "./config";
 import { createUserDocument, getUserDocument } from "./firestore";
 import type { UserData } from "@/contexts/auth-context";
 
-export async function registerWithEmailAndPassword(name: string, email: string, password: string): Promise<{ user: FirebaseUser; userData: UserData | null } | { error: string }> {
+export async function registerWithEmailAndPassword(name: string, email: string, password: string): Promise<{ user: FirebaseUser; userData: UserData | null } | { error: string; errorCode?: string }> {
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
@@ -30,18 +30,20 @@ export async function registerWithEmailAndPassword(name: string, email: string, 
 
     return { user, userData };
   } catch (error: any) {
-    return { error: error.message };
+    console.error("Registration error:", error); // Log the full error object
+    return { error: error.message, errorCode: error.code };
   }
 }
 
-export async function signInWithEmail(email: string, password: string): Promise<{ user: FirebaseUser; userData: UserData | null } | { error: string }> {
+export async function signInWithEmail(email: string, password: string): Promise<{ user: FirebaseUser; userData: UserData | null } | { error: string; errorCode?: string }> {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
     const userData = await getUserDocument(user.uid);
     return { user, userData };
   } catch (error: any) {
-    return { error: error.message };
+    console.error("Login error:", error); // Log the full error object
+    return { error: error.message, errorCode: error.code };
   }
 }
 
@@ -49,6 +51,7 @@ export async function signOutUser(): Promise<void | { error: string }> {
   try {
     await signOut(auth);
   } catch (error: any) {
+    console.error("Sign out error:", error);
     return { error: error.message };
   }
 }
