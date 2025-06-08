@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { PlusCircle, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { PurchaseOrder } from "@/lib/firebase/firestore";
+import type { PurchaseOrder, PurchaseOrderStatus } from "@/lib/firebase/firestore";
 import { getPurchaseOrdersByBranch } from "@/lib/firebase/firestore";
 import Link from "next/link";
 import { Timestamp } from "firebase/firestore";
@@ -59,17 +59,17 @@ export default function PurchaseOrdersPage() {
     return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID')}`;
   };
 
-  const getStatusBadgeVariant = (status: PurchaseOrder['status']) => {
+  const getStatusBadgeVariant = (status: PurchaseOrderStatus) => {
     switch (status) {
       case 'draft': return 'secondary';
       case 'ordered': return 'default';
-      case 'partially_received': return 'outline'; // Or another color
-      case 'fully_received': return 'default'; // Same as ordered, but with different text potentially
+      case 'partially_received': return 'outline'; 
+      case 'fully_received': return 'default'; 
       case 'cancelled': return 'destructive';
       default: return 'secondary';
     }
   };
-   const getStatusText = (status: PurchaseOrder['status']) => {
+   const getStatusText = (status: PurchaseOrderStatus) => {
     switch (status) {
       case 'draft': return 'Draft';
       case 'ordered': return 'Dipesan';
@@ -140,7 +140,10 @@ export default function PurchaseOrdersPage() {
                       <TableCell className="py-2 text-xs text-center">
                         <Badge 
                           variant={getStatusBadgeVariant(po.status)} 
-                          className={cn(po.status === 'fully_received' && "bg-green-600 text-white hover:bg-green-700")}
+                          className={cn(po.status === 'fully_received' && "bg-green-600 text-white hover:bg-green-700",
+                                       po.status === 'ordered' && "bg-blue-500 text-white hover:bg-blue-600",
+                                       po.status === 'partially_received' && "bg-yellow-500 text-white hover:bg-yellow-600"
+                                      )}
                         >
                             {getStatusText(po.status)}
                         </Badge>

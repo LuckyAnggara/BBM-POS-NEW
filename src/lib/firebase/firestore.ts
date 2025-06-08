@@ -1003,6 +1003,8 @@ export async function deleteSupplier(supplierId: string): Promise<void | { error
 }
 
 // --- Purchase Order Management ---
+export type PurchaseOrderStatus = 'draft' | 'ordered' | 'partially_received' | 'fully_received' | 'cancelled';
+
 export interface PurchaseOrderItemInput {
   productId: string;
   productName: string; // Denormalized
@@ -1022,7 +1024,7 @@ export interface PurchaseOrderInput {
   expectedDeliveryDate?: Timestamp;
   items: PurchaseOrderItemInput[];
   notes?: string;
-  status: 'draft' | 'ordered' | 'partially_received' | 'fully_received' | 'cancelled';
+  status: PurchaseOrderStatus;
   createdById: string;
 }
 
@@ -1112,7 +1114,7 @@ export async function getPurchaseOrdersByBranch(
   if (options.orderByField) {
       constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
   } else {
-      constraints.push(orderBy("orderDate", "desc")); 
+      constraints.push(orderBy("createdAt", "desc")); // Changed from orderDate to createdAt for more consistent sorting
   }
 
   if (options.limit) {
@@ -1147,3 +1149,50 @@ export async function getPurchaseOrderById(poId: string): Promise<PurchaseOrder 
         return null;
     }
 }
+
+export async function updatePurchaseOrderStatus(
+    poId: string, 
+    newStatus: PurchaseOrderStatus,
+    updatedItems?: PurchaseOrderItem[] // Optional: for when receiving items
+): Promise<void | { error: string }> {
+  if (!poId) return { error: "ID Pesanan Pembelian tidak valid." };
+  if (!newStatus) return { error: "Status baru tidak valid." };
+
+  try {
+    const poRef = doc(db, "purchaseOrders", poId);
+    const updateData: any = {
+      status: newStatus,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (updatedItems) {
+        updateData.items = updatedItems.map(item => ({
+            productId: item.productId,
+            productName: item.productName,
+            orderedQuantity: item.orderedQuantity,
+            purchasePrice: item.purchasePrice,
+            receivedQuantity: item.receivedQuantity,
+            totalPrice: item.totalPrice
+        }));
+        // Recalculate subtotal and totalAmount if items are updated
+        const subtotal = updatedItems.reduce((sum, item) => sum + (item.orderedQuantity * item.purchasePrice), 0);
+        // Assuming tax and shipping are handled elsewhere or are 0 for now
+        const totalAmount = subtotal; 
+        updateData.subtotal = subtotal;
+        updateData.totalAmount = totalAmount;
+    }
+
+    await updateDoc(poRef, updateData);
+  } catch (error: any) {
+    console.error("Error updating purchase order status:", error);
+    return { error: error.message || "Gagal memperbarui status pesanan pembelian." };
+  }
+}
+
+// TODO: Implement function to update PO items when receiving goods (updateInventoryOnPOReceive)
+// This function would:
+// 1. Update `receivedQuantity` for each item in the PO.
+// 2. Update stock in `inventoryItems` collection.
+// 3. Optionally, update `costPrice` in `inventoryItems` based on PO price (e.g., weighted average).
+// 4. Update PO status to `partially_received` or `fully_received`.
+// This should be done within a batch write.
