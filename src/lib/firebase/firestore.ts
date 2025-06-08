@@ -1,7 +1,8 @@
 
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where } from "firebase/firestore";
 import { db } from "./config";
 import type { UserData } from "@/contexts/auth-context";
+import type { Branch } from "@/contexts/branch-context";
 
 export async function createUserDocument(uid: string, data: Partial<UserData>): Promise<void> {
   const userRef = doc(db, "users", uid);
@@ -33,5 +34,76 @@ export async function getUserDocument(uid: string): Promise<UserData | null> {
     } as UserData;
   } else {
     return null;
+  }
+}
+
+export async function createBranch(name: string): Promise<Branch | { error: string }> {
+  if (!name.trim()) {
+    return { error: "Nama cabang tidak boleh kosong." };
+  }
+  try {
+    const branchRef = await addDoc(collection(db, "branches"), {
+      name: name.trim(),
+      createdAt: serverTimestamp(),
+    });
+    return { id: branchRef.id, name: name.trim() };
+  } catch (error: any) {
+    console.error("Error creating branch:", error);
+    return { error: error.message || "Gagal membuat cabang." };
+  }
+}
+
+export async function getBranches(): Promise<Branch[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, "branches"));
+    const branches: Branch[] = [];
+    querySnapshot.forEach((doc) => {
+      branches.push({ id: doc.id, ...doc.data() } as Branch);
+    });
+    return branches;
+  } catch (error) {
+    console.error("Error fetching branches:", error);
+    return [];
+  }
+}
+
+export async function getAllUsers(): Promise<UserData[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, "users"));
+    const users: UserData[] = [];
+    querySnapshot.forEach((doc) => {
+      users.push({ uid: doc.id, ...doc.data() } as UserData);
+    });
+    return users;
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    return [];
+  }
+}
+
+export async function updateUserBranch(userId: string, branchId: string | null): Promise<void | { error: string }> {
+  if (!userId) return { error: "User ID tidak valid." };
+  try {
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, {
+      branchId: branchId,
+    });
+  } catch (error: any) {
+    console.error("Error updating user branch:", error);
+    return { error: error.message || "Gagal memperbarui cabang pengguna." };
+  }
+}
+
+export async function updateUserRole(userId: string, role: string): Promise<void | { error: string }> {
+  if (!userId) return { error: "User ID tidak valid." };
+  if (!role) return { error: "Peran tidak valid." };
+  try {
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, {
+      role: role,
+    });
+  } catch (error: any) {
+    console.error("Error updating user role:", error);
+    return { error: error.message || "Gagal memperbarui peran pengguna." };
   }
 }

@@ -10,6 +10,7 @@ import {
   Archive,
   CreditCard,
   BarChart3,
+  Settings, // Added Settings icon
 } from "lucide-react";
 import { SidebarMenu, SidebarMenuItem, SidebarMenuButton } from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
@@ -18,11 +19,12 @@ import { useAuth } from "@/contexts/auth-context";
 
 
 const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/pos", label: "Point of Sale", icon: ShoppingCart },
-  { href: "/inventory", label: "Inventory", icon: Archive },
-  { href: "/expenses", label: "Expenses", icon: CreditCard },
-  { href: "/reports", label: "Reports", icon: BarChart3 },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
+  { href: "/pos", label: "Point of Sale", icon: ShoppingCart, adminOnly: false },
+  { href: "/inventory", label: "Inventory", icon: Archive, adminOnly: false },
+  { href: "/expenses", label: "Expenses", icon: CreditCard, adminOnly: false },
+  { href: "/reports", label: "Reports", icon: BarChart3, adminOnly: false },
+  { href: "/admin/settings", label: "Pengaturan Admin", icon: Settings, adminOnly: true },
 ];
 
 export default function AppSidebarNav() {
@@ -36,10 +38,14 @@ export default function AppSidebarNav() {
       <div className="flex-grow overflow-y-auto p-2 space-y-1 mt-1">
         <SidebarMenu>
           {navItems.map((item) => {
+            if (item.adminOnly && userData?.role !== 'admin') {
+              return null; // Don't render admin-only items for non-admins
+            }
+
             const isNavItemDisabled = !loadingAuth && !loadingUserData &&
                                      userData?.role === 'cashier' &&
                                      userData?.branchId === null &&
-                                     item.href !== '/dashboard';
+                                     item.href !== '/dashboard'; // Dashboard is always accessible
 
             return (
               <SidebarMenuItem key={item.label}>
@@ -77,4 +83,3 @@ export default function AppSidebarNav() {
     </nav>
   );
 }
-

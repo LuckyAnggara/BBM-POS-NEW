@@ -1,7 +1,7 @@
 
 "use client";
 
-import React from "react"; // Added this line
+import React from "react"; 
 import { useBranch } from "@/contexts/branch-context";
 import { useAuth } from "@/contexts/auth-context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -19,26 +19,26 @@ import { User, Settings, LogOut, ChevronsUpDown } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function SidebarUserProfile() {
-  const { branches, selectedBranch, setSelectedBranch } = useBranch();
+  const { branches, selectedBranch, setSelectedBranch, loadingBranches } = useBranch(); // Added loadingBranches
   const { currentUser, userData, signOut, loadingAuth, loadingUserData } = useAuth();
 
   const handleLogout = async () => {
     await signOut();
   };
 
-  const isLoading = loadingAuth || loadingUserData;
+  const isLoading = loadingAuth || loadingUserData || loadingBranches; // Include loadingBranches
 
   const userDisplayName = userData?.name || currentUser?.displayName || "Pengguna";
   const userDisplayEmail = userData?.email || currentUser?.email || "email@contoh.com";
   const userAvatar = userData?.avatarUrl || currentUser?.photoURL || "https://placehold.co/40x40.png";
 
   const assignedBranchName = React.useMemo(() => {
-    if (isLoading || !userData) return null;
-    if (userData.role === 'admin') return null; // Admins use selector
+    if (isLoading || !userData || loadingBranches) return null; // Check loadingBranches
+    if (userData.role === 'admin') return null; 
     if (!userData.branchId) return "Belum ada cabang";
     const foundBranch = branches.find(b => b.id === userData.branchId);
     return foundBranch?.name || "ID Cabang tidak valid";
-  }, [isLoading, userData, branches]);
+  }, [isLoading, userData, branches, loadingBranches]);
 
 
   return (
@@ -52,13 +52,16 @@ export default function SidebarUserProfile() {
             onValueChange={(branchId) => {
               const branch = branches.find(b => b.id === branchId);
               if (branch) setSelectedBranch(branch);
+              else if (branchId === "") setSelectedBranch(null); // Allow deselecting or handle "all branches"
             }}
-            disabled={!selectedBranch && branches.length === 0}
+            disabled={loadingBranches || (!selectedBranch && branches.length === 0)}
           >
             <SelectTrigger className="h-9 text-xs rounded-md w-full justify-between bg-sidebar-accent hover:bg-sidebar-accent/90 text-sidebar-accent-foreground">
-              <SelectValue placeholder="Pilih Cabang" />
+              <SelectValue placeholder={loadingBranches ? "Memuat cabang..." : "Pilih Cabang"} />
             </SelectTrigger>
             <SelectContent>
+              {/* Optional: Add an item for "All Branches" or "No specific branch" if needed for admin view */}
+              {/* <SelectItem value="" className="text-xs">Semua Cabang (Tampilan Global)</SelectItem> */}
               {branches.map(branch => (
                 <SelectItem key={branch.id} value={branch.id} className="text-xs">
                   {branch.name}
@@ -69,7 +72,7 @@ export default function SidebarUserProfile() {
         )
       ) : (
         <div className="h-9 px-3 py-2 text-xs rounded-md w-full bg-sidebar-accent/50 text-sidebar-foreground/80 text-left truncate flex items-center">
-          {assignedBranchName}
+          {loadingBranches ? <Skeleton className="h-4 w-24" /> : (assignedBranchName || "Memuat...")}
         </div>
       )}
 
@@ -83,7 +86,7 @@ export default function SidebarUserProfile() {
                   {userDisplayName?.substring(0, 2).toUpperCase() || "BW"}
                 </AvatarFallback>
               </Avatar>
-              {isLoading ? (
+              {isLoading ? ( // Combined loading state
                 <div className="flex-grow space-y-1">
                   <Skeleton className="h-3 w-24" />
                   <Skeleton className="h-3 w-32" />
