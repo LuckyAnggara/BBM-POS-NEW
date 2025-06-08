@@ -11,8 +11,9 @@ import {
   CreditCard,
   BarChart3,
   Settings,
-  Receipt, // Added Receipt icon
-  History, // Added History icon
+  Receipt, 
+  History, 
+  PackageSearch, // New icon for Stock Mutation
 } from "lucide-react";
 import { SidebarMenu, SidebarMenuItem, SidebarMenuButton } from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
@@ -27,7 +28,16 @@ const navItems = [
   { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
   { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
-  { href: "/reports", label: "Laporan", icon: BarChart3, adminOnly: false },
+  { 
+    href: "/reports", 
+    label: "Laporan Penjualan", 
+    icon: BarChart3, 
+    adminOnly: false,
+    subItems: [ // Making reports a group
+      { href: "/reports", label: "Ringkasan Penjualan", icon: BarChart3, exactMatch: true },
+      { href: "/reports/stock-mutation", label: "Mutasi Stok", icon: PackageSearch },
+    ]
+  },
   { href: "/admin/settings", label: "Pengaturan Admin", icon: Settings, adminOnly: true },
 ];
 
@@ -49,7 +59,53 @@ export default function AppSidebarNav() {
             const isNavItemDisabled = !loadingAuth && !loadingUserData &&
                                      userData?.role === 'cashier' &&
                                      userData?.branchId === null &&
-                                     item.href !== '/dashboard'; 
+                                     item.href !== '/dashboard' &&
+                                     !item.subItems?.some(sub => sub.href === '/dashboard');
+
+            if (item.subItems) {
+              // This is a group
+              return (
+                <SidebarMenuItem key={item.label} className="flex flex-col items-start">
+                   <SidebarMenuButton
+                      variant="default"
+                      size="default"
+                      className={cn(
+                        "w-full justify-start text-sm font-medium",
+                         pathname.startsWith(item.href) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
+                         isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
+                      )}
+                      isActive={pathname.startsWith(item.href) && !isNavItemDisabled}
+                      // Removed tooltip for parent group items for now, can be added if needed
+                      // tooltip={isNavItemDisabled ? undefined : {children: item.label, side: "right", align: "center"}}
+                      asChild={false} // Parent is not a link
+                      onClick={(e) => { if(isNavItemDisabled) e.preventDefault(); }}
+                      aria-disabled={isNavItemDisabled}
+                      tabIndex={isNavItemDisabled ? -1 : undefined}
+                    >
+                      <item.icon className="mr-2.5 h-4.5 w-4.5" />
+                      <span className="truncate">{item.label}</span>
+                  </SidebarMenuButton>
+                  <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
+                    {item.subItems.map(subItem => (
+                       <SidebarMenuSubItem key={subItem.href}>
+                         <Link href={isNavItemDisabled ? "#" : subItem.href} legacyBehavior passHref>
+                           <SidebarMenuSubButton
+                              isActive={ (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isNavItemDisabled}
+                              aria-disabled={isNavItemDisabled}
+                              className={cn(isNavItemDisabled && "cursor-not-allowed")}
+                           >
+                            {/* Sub-item icon can be added here if desired, or use a generic one */}
+                            {/* <subItem.icon className="mr-2 h-4 w-4" />  */}
+                            <span>{subItem.label}</span>
+                           </SidebarMenuSubButton>
+                         </Link>
+                       </SidebarMenuSubItem>
+                    ))}
+                  </SidebarMenuSub>
+                </SidebarMenuItem>
+              );
+            }
+
 
             return (
               <SidebarMenuItem key={item.label}>
@@ -87,5 +143,4 @@ export default function AppSidebarNav() {
     </nav>
   );
 }
-
     
