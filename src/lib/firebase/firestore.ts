@@ -498,9 +498,13 @@ export interface PosTransaction {
   changeGiven: number;
   customerName?: string; 
   invoiceNumber: string;
+  status: 'completed' | 'returned'; // Added status for returns
+  returnedAt?: Timestamp;
+  returnReason?: string;
+  returnedByUserId?: string;
 }
 
-export async function recordTransaction(transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' >): Promise<PosTransaction | { error: string }> {
+export async function recordTransaction(transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId'>): Promise<PosTransaction | { error: string }> {
   if (!transactionData.shiftId || !transactionData.branchId || !transactionData.userId) {
     return { error: "Shift ID, Branch ID, dan User ID diperlukan untuk transaksi." };
   }
@@ -526,19 +530,22 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
       changeGiven: transactionData.changeGiven,
       customerName: transactionData.customerName || "", 
       invoiceNumber,
+      status: 'completed', // Default status
       timestamp: serverTimestamp() as Timestamp,
     };
     batch.set(transactionRef, dataToSave);
 
     for (const item of transactionData.items) {
       const productRef = doc(db, "inventoryItems", item.productId);
-      const productSnap = await getDoc(productRef);
+      const productSnap = await getDoc(productRef); // Must be awaited to get actual data
       if (productSnap.exists()) {
         const currentStock = productSnap.data().quantity as number;
         const newStock = currentStock - item.quantity;
         batch.update(productRef, { quantity: newStock < 0 ? 0 : newStock, updatedAt: serverTimestamp() });
       } else {
         console.warn(`Product with ID ${item.productId} not found in inventory. Stock not updated.`);
+        // Potentially throw an error here or handle it more gracefully
+        // return { error: `Produk dengan ID ${item.productId} tidak ditemukan di inventaris.` };
       }
     }
 
@@ -547,6 +554,57 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
   } catch (error: any) {
     console.error("Error recording transaction:", error);
     return { error: error.message || "Gagal merekam transaksi." };
+  }
+}
+
+
+export async function processFullTransactionReturn(transactionId: string, reason: string, returnedByUserId: string): Promise<void | { error: string }> {
+  if (!transactionId) return { error: "ID Transaksi tidak valid." };
+  if (!reason.trim()) return { error: "Alasan retur harus diisi." };
+  if (!returnedByUserId) return { error: "ID Pengguna yang memproses retur diperlukan." };
+
+  const transactionRef = doc(db, "posTransactions", transactionId);
+  const batch = writeBatch(db);
+
+  try {
+    const transactionSnap = await getDoc(transactionRef);
+    if (!transactionSnap.exists()) {
+      return { error: "Transaksi tidak ditemukan." };
+    }
+
+    const transactionData = transactionSnap.data() as PosTransaction;
+    if (transactionData.status === 'returned') {
+      return { error: "Transaksi ini sudah pernah diretur." };
+    }
+
+    // Update transaction status
+    batch.update(transactionRef, {
+      status: 'returned',
+      returnReason: reason,
+      returnedAt: serverTimestamp(),
+      returnedByUserId: returnedByUserId,
+    });
+
+    // Restore stock for each item
+    for (const item of transactionData.items) {
+      const productRef = doc(db, "inventoryItems", item.productId);
+      const productSnap = await getDoc(productRef); // Important to get latest stock before update
+      if (productSnap.exists()) {
+        const currentStock = productSnap.data().quantity as number;
+        const newStock = currentStock + item.quantity;
+        batch.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
+      } else {
+        // This case should ideally not happen if data integrity is maintained
+        // Or, it implies the product was deleted after the transaction.
+        // Log a warning or handle as per business rules (e.g., create a placeholder adjustment)
+        console.warn(`Product with ID ${item.productId} not found while processing return. Stock not restored.`);
+      }
+    }
+
+    await batch.commit();
+  } catch (error: any) {
+    console.error("Error processing transaction return:", error);
+    return { error: error.message || "Gagal memproses retur transaksi." };
   }
 }
 
@@ -782,3 +840,6 @@ export async function deleteExpense(expenseId: string): Promise<void | { error: 
     return { error: error.message || "Gagal menghapus pengeluaran." };
   }
 }
+
+
+    
