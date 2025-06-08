@@ -101,8 +101,8 @@ export default function ReportsPage() {
               Laporan {selectedBranch ? `- ${selectedBranch.name}` : ''}
             </h1>
              {reportData && !loadingReport && (
-                <Button variant="outline" size="sm" className="rounded-md text-xs">
-                    <Download className="mr-1.5 h-3.5 w-3.5" /> Ekspor ke CSV (Segera)
+                <Button variant="outline" size="sm" className="rounded-md text-xs" disabled>
+                    <Download className="mr-1.5 h-3.5 w-3.5" /> Ekspor ke CSV/PDF (Segera)
                 </Button>
             )}
           </div>
