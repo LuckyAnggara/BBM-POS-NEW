@@ -194,13 +194,13 @@ export default function AdminSettingsPage() {
         <div className="space-y-6">
           <h1 className="text-xl md:text-2xl font-semibold font-headline">Pengaturan Admin</h1>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab} orientation="vertical" className="flex flex-col md:flex-row gap-6">
-            <TabsList className="w-full md:w-48 shrink-0 border-r-0 md:border-r md:border-b-0 border-b p-1 h-auto md:h-fit">
-              <TabsTrigger value="manage-branches" className="w-full justify-start text-xs py-2 data-[state=active]:bg-muted">Kelola Cabang</TabsTrigger>
-              <TabsTrigger value="manage-users" className="w-full justify-start text-xs py-2 data-[state=active]:bg-muted">Kelola Pengguna</TabsTrigger>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+            <TabsList className="inline-flex items-center justify-start rounded-md bg-muted p-1 text-muted-foreground">
+              <TabsTrigger value="manage-branches" className="text-xs px-3 py-1.5 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Kelola Cabang</TabsTrigger>
+              <TabsTrigger value="manage-users" className="text-xs px-3 py-1.5 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Kelola Pengguna</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="manage-branches" className="mt-0 flex-grow">
+            <TabsContent value="manage-branches" className="mt-0">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base font-semibold">Kelola Cabang</CardTitle>
@@ -291,7 +291,7 @@ export default function AdminSettingsPage() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="manage-users" className="mt-0 flex-grow">
+            <TabsContent value="manage-users" className="mt-0">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base font-semibold">Kelola Pengguna</CardTitle>
