@@ -1,3 +1,4 @@
+
 "use client"
 
 import * as React from "react"
@@ -61,7 +62,7 @@ function Calendar({
           <ChevronRight className={cn("h-4 w-4", className)} {...props} />
         ),
       }}
-      {...props}
+      {...props} // Ensures `initialFocus` and other DayPicker props are passed through
     />
   )
 }

@@ -1,5 +1,5 @@
 
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, FieldPath, OrderByDirection } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, FieldPath, OrderByDirection, startAfter, documentId } from "firebase/firestore";
 import { db } from "./config";
 import type { UserData } from "@/contexts/auth-context";
 import type { Branch } from "@/contexts/branch-context";
@@ -82,6 +82,11 @@ export async function updateUserRole(userId: string, role: string): Promise<void
 // --- Branch Management ---
 export interface BranchInput extends Omit<Branch, 'id'> {}
 
+interface FirebaseBranchData extends Omit<Branch, 'id'> {
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+}
+
 export async function createBranch(branchData: BranchInput): Promise<Branch | { error: string }> {
   if (!branchData.name?.trim()) {
     return { error: "Nama cabang tidak boleh kosong." };
@@ -141,34 +146,29 @@ export async function updateBranch(branchId: string, updates: Partial<BranchInpu
 export async function deleteBranch(branchId: string): Promise<void | { error: string }> {
   if (!branchId) return { error: "ID Cabang tidak valid." };
   try {
-    // Check if any users are assigned to this branch
     const usersQuery = query(collection(db, "users"), where("branchId", "==", branchId), limit(1));
     const usersSnapshot = await getDocs(usersQuery);
     if (!usersSnapshot.empty) {
       return { error: `Masih ada pengguna yang terhubung ke cabang ini. Hapus atau pindahkan pengguna terlebih dahulu.` };
     }
 
-    // Check if any inventory items are assigned to this branch
     const itemsQuery = query(collection(db, "inventoryItems"), where("branchId", "==", branchId), limit(1));
     const itemsSnapshot = await getDocs(itemsQuery);
     if (!itemsSnapshot.empty) {
       return { error: `Masih ada produk inventaris yang terhubung ke cabang ini. Hapus atau pindahkan produk terlebih dahulu.` };
     }
     
-    // Check if any POS shifts are assigned to this branch
     const shiftsQuery = query(collection(db, "posShifts"), where("branchId", "==", branchId), limit(1));
     const shiftsSnapshot = await getDocs(shiftsQuery);
     if (!shiftsSnapshot.empty) {
       return { error: `Masih ada data shift POS yang terhubung ke cabang ini.` };
     }
     
-    // Check if any POS transactions are assigned to this branch
     const transactionsQuery = query(collection(db, "posTransactions"), where("branchId", "==", branchId), limit(1));
     const transactionsSnapshot = await getDocs(transactionsQuery);
     if (!transactionsSnapshot.empty) {
       return { error: `Masih ada data transaksi POS yang terhubung ke cabang ini.` };
     }
-
 
     const branchRef = doc(db, "branches", branchId);
     await deleteDoc(branchRef);
@@ -176,12 +176,6 @@ export async function deleteBranch(branchId: string): Promise<void | { error: st
     console.error("Error deleting branch:", error);
     return { error: error.message || "Gagal menghapus cabang." };
   }
-}
-
-
-interface FirebaseBranchData extends Omit<Branch, 'id'> {
-  createdAt?: Timestamp;
-  updatedAt?: Timestamp;
 }
 
 export async function getBranches(): Promise<Branch[]> {
@@ -500,9 +494,9 @@ export interface PosTransaction {
   totalAmount: number;
   totalCost: number;
   paymentMethod: PaymentMethod;
-  amountPaid: number; // Amount customer paid (especially for cash)
-  changeGiven: number; // Change given back to customer (for cash)
-  customerName?: string; // Optional customer name
+  amountPaid: number; 
+  changeGiven: number;
+  customerName?: string; 
   invoiceNumber: string;
 }
 
@@ -518,7 +512,6 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
     const transactionRef = doc(collection(db, "posTransactions"));
     const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
     
-    // Ensure all fields are present, especially new ones like customerName
     const dataToSave: Omit<PosTransaction, 'id'> = {
       shiftId: transactionData.shiftId,
       branchId: transactionData.branchId,
@@ -531,7 +524,7 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
       paymentMethod: transactionData.paymentMethod,
       amountPaid: transactionData.amountPaid,
       changeGiven: transactionData.changeGiven,
-      customerName: transactionData.customerName || "", // Ensure it's at least an empty string if not provided
+      customerName: transactionData.customerName || "", 
       invoiceNumber,
       timestamp: serverTimestamp() as Timestamp,
     };
@@ -577,7 +570,7 @@ interface QueryOptions {
     limit?: number;
     orderByField?: string | FieldPath;
     orderDirection?: OrderByDirection;
-    // lastVisible?: DocumentSnapshot; // For pagination
+    // lastVisible?: DocumentSnapshot; 
 }
 
 export async function getTransactionsForUserByBranch(
@@ -587,22 +580,19 @@ export async function getTransactionsForUserByBranch(
 ): Promise<PosTransaction[]> {
     if (!userId || !branchId) return [];
     try {
-        const constraints = [
+        const constraints: any[] = [
             where("userId", "==", userId),
             where("branchId", "==", branchId)
         ];
         if (options.orderByField) {
             constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
         } else {
-            constraints.push(orderBy("timestamp", "desc")); // Default order
+            constraints.push(orderBy("timestamp", "desc")); 
         }
         if (options.limit) {
             constraints.push(limit(options.limit));
         }
-        // if (options.lastVisible) {
-        //     constraints.push(startAfter(options.lastVisible));
-        // }
-
+        
         const q = query(collection(db, "posTransactions"), ...constraints);
         const querySnapshot = await getDocs(q);
         const transactions: PosTransaction[] = [];
@@ -624,21 +614,19 @@ export async function getShiftsForUserByBranch(
 ): Promise<PosShift[]> {
     if (!userId || !branchId) return [];
     try {
-        const constraints = [
+        const constraints: any[] = [
             where("userId", "==", userId),
             where("branchId", "==", branchId)
         ];
         if (options.orderByField) {
             constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
         } else {
-            constraints.push(orderBy("startTime", "desc")); // Default order
+            constraints.push(orderBy("startTime", "desc")); 
         }
         if (options.limit) {
             constraints.push(limit(options.limit));
         }
-        // if (options.lastVisible) {
-        //     constraints.push(startAfter(options.lastVisible));
-        // }
+        
         const q = query(collection(db, "posShifts"), ...constraints);
         const querySnapshot = await getDocs(q);
         const shifts: PosShift[] = [];
@@ -676,7 +664,6 @@ export async function getTransactionsByDateRangeAndBranch(
   if (!branchId || !startDate || !endDate) return [];
   try {
     const startTimestamp = Timestamp.fromDate(startDate);
-    // Set endDate to the end of the selected day
     const endOfDayEndDate = new Date(endDate);
     endOfDayEndDate.setHours(23, 59, 59, 999);
     const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
@@ -699,4 +686,99 @@ export async function getTransactionsByDateRangeAndBranch(
     return [];
   }
 }
+
+// --- Expense Management ---
+export interface Expense {
+  id: string;
+  branchId: string;
+  userId: string; // User who recorded the expense
+  date: Timestamp;
+  category: string;
+  amount: number;
+  description: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export type ExpenseInput = Omit<Expense, 'id' | 'createdAt' | 'updatedAt' | 'userId'>;
+
+export const EXPENSE_CATEGORIES = ["Sewa", "Gaji", "Utilitas", "Perlengkapan", "Pemasaran", "Transportasi", "Perbaikan", "Lain-lain"] as const;
+export type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
+
+
+export async function addExpense(expenseData: ExpenseInput, userId: string): Promise<Expense | { error: string }> {
+  if (!expenseData.branchId) return { error: "ID Cabang diperlukan." };
+  if (!userId) return { error: "ID Pengguna diperlukan." };
+  if (!expenseData.date) return { error: "Tanggal pengeluaran diperlukan." };
+  if (!expenseData.category.trim()) return { error: "Kategori pengeluaran tidak boleh kosong." };
+  if (isNaN(expenseData.amount) || expenseData.amount <= 0) return { error: "Jumlah pengeluaran tidak valid." };
+
+  try {
+    const now = serverTimestamp() as Timestamp;
+    const dataToSave = {
+      ...expenseData,
+      userId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const expenseRef = await addDoc(collection(db, "expenses"), dataToSave);
+    const clientTimestamp = Timestamp.now(); 
+    return { 
+        id: expenseRef.id, 
+        ...dataToSave, 
+        date: expenseData.date, // Use the provided date
+        createdAt: clientTimestamp, 
+        updatedAt: clientTimestamp 
+    };
+  } catch (error: any) {
+    console.error("Error adding expense:", error);
+    return { error: error.message || "Gagal menambah pengeluaran." };
+  }
+}
+
+export async function getExpenses(branchId: string, filters?: { categories?: string[] }): Promise<Expense[]> {
+  if (!branchId) return [];
+  try {
+    let qConstraints = [where("branchId", "==", branchId)];
+
+    if (filters?.categories && filters.categories.length > 0) {
+      qConstraints.push(where("category", "in", filters.categories));
+    }
     
+    const q = query(collection(db, "expenses"), ...qConstraints, orderBy("date", "desc"));
+    
+    const querySnapshot = await getDocs(q);
+    const expenses: Expense[] = [];
+    querySnapshot.forEach((docSnap) => {
+      expenses.push({ id: docSnap.id, ...docSnap.data() } as Expense);
+    });
+    return expenses;
+  } catch (error) {
+    console.error("Error fetching expenses:", error);
+    return [];
+  }
+}
+
+export async function updateExpense(expenseId: string, updates: Partial<ExpenseInput>): Promise<void | { error: string }> {
+  if (!expenseId) return { error: "ID Pengeluaran tidak valid." };
+  try {
+    const expenseRef = doc(db, "expenses", expenseId);
+    await updateDoc(expenseRef, {
+      ...updates,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error: any) {
+    console.error("Error updating expense:", error);
+    return { error: error.message || "Gagal memperbarui pengeluaran." };
+  }
+}
+
+export async function deleteExpense(expenseId: string): Promise<void | { error: string }> {
+  if (!expenseId) return { error: "ID Pengeluaran tidak valid." };
+  try {
+    await deleteDoc(doc(db, "expenses", expenseId));
+  } catch (error: any) {
+    console.error("Error deleting expense:", error);
+    return { error: error.message || "Gagal menghapus pengeluaran." };
+  }
+}
