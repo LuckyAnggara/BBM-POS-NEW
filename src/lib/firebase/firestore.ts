@@ -395,9 +395,9 @@ export async function deleteInventoryItem(itemId: string): Promise<void | { erro
 }
 
 // --- POS Shift Management ---
-export type PaymentMethod = 'cash' | 'card' | 'transfer'; // To be deprecated by paymentTerms
-export type PaymentTerms = 'cash' | 'card' | 'transfer' | 'credit';
-export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid' | 'overdue';
+export type ShiftPaymentMethod = 'cash' | 'card' | 'transfer'; // For shift reporting
+export type PaymentTerms = 'cash' | 'card' | 'transfer' | 'credit'; // For transaction recording
+export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid' | 'overdue' | 'returned';
 
 
 export interface PosShift {
@@ -411,7 +411,7 @@ export interface PosShift {
   expectedCashAtEnd?: number;
   actualCashAtEnd?: number;
   cashDifference?: number;
-  totalSalesByPaymentMethod?: Record<PaymentMethod, number>; // This should be updated if paymentTerms change
+  totalSalesByPaymentMethod?: Record<ShiftPaymentMethod, number>;
 }
 
 export async function startNewShift(userId: string, branchId: string, initialCash: number): Promise<PosShift | { error: string }> {
@@ -462,7 +462,7 @@ export async function endShift(
   actualCashAtEnd: number,
   expectedCashAtEnd: number,
   cashDifference: number,
-  totalSalesByPaymentMethod: Record<PaymentMethod, number>
+  totalSalesByPaymentMethod: Record<ShiftPaymentMethod, number>
 ): Promise<void | { error: string }> {
   if (!shiftId) return { error: "Shift ID tidak valid." };
   try {
@@ -502,7 +502,7 @@ export interface PosTransaction {
   taxAmount: number;
   totalAmount: number;
   totalCost: number;
-  paymentTerms: PaymentTerms; // Changed from paymentMethod
+  paymentTerms: PaymentTerms;
   customerId?: string;
   customerName?: string; // Denormalized
   creditDueDate?: Timestamp;
@@ -599,8 +599,8 @@ export async function processFullTransactionReturn(transactionId: string, reason
       returnReason: reason,
       returnedAt: serverTimestamp(),
       returnedByUserId: returnedByUserId,
-      outstandingAmount: 0, // Assuming full return means no outstanding amount
-      paymentStatus: 'returned', // Or a more specific status if needed
+      outstandingAmount: 0, 
+      paymentStatus: 'returned', 
     });
 
     for (const item of transactionData.items) {
@@ -682,7 +682,7 @@ export async function getTransactionById(transactionId: string): Promise<PosTran
             return { 
                 id: docSnap.id, 
                 ...data,
-                paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback for older data
+                paymentTerms: data.paymentTerms || data.paymentMethod, 
              } as PosTransaction;
         }
         return null;
@@ -740,7 +740,7 @@ export async function getTransactionsForUserByBranch(
             transactions.push({ 
                 id: docSnap.id, 
                 ...data,
-                paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback for older data
+                paymentTerms: data.paymentTerms || data.paymentMethod, 
             } as PosTransaction);
         });
         return transactions;
@@ -795,8 +795,8 @@ export async function getTransactionsForShift(shiftId: string): Promise<PosTrans
       transactions.push({ 
           id: docSnap.id, 
           ...data,
-          paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback
-      } as PosTransaction);
+          paymentTerms: data.paymentTerms || data.paymentMethod, 
+       } as PosTransaction);
     });
     return transactions;
   } catch (error) {
@@ -831,7 +831,7 @@ export async function getTransactionsByDateRangeAndBranch(
       transactions.push({ 
           id: docSnap.id, 
           ...data,
-          paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback
+          paymentTerms: data.paymentTerms || data.paymentMethod, 
        } as PosTransaction);
     });
     return transactions;
@@ -1019,7 +1019,6 @@ export async function updateSupplier(supplierId: string, updates: Partial<Suppli
 export async function deleteSupplier(supplierId: string): Promise<void | { error: string }> {
   if (!supplierId) return { error: "ID Pemasok tidak valid." };
   try {
-    // Tambahkan pengecekan jika supplier masih terkait dengan Purchase Orders
     const poQuery = query(collection(db, "purchaseOrders"), where("supplierId", "==", supplierId), limit(1));
     const poSnapshot = await getDocs(poQuery);
     if (!poSnapshot.empty) {
@@ -1296,6 +1295,7 @@ export interface Customer {
   phone?: string;
   address?: string;
   notes?: string;
+  qrCodeId?: string; // For QR code identification
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -1308,14 +1308,18 @@ export async function addCustomer(customerData: CustomerInput): Promise<Customer
 
   try {
     const now = serverTimestamp() as Timestamp;
+    const customerRef = doc(collection(db, "customers")); // Generate ID first
+    const qrCodeId = customerData.qrCodeId || customerRef.id; // Use provided or generated ID
+
     const dataToSave = {
       ...customerData,
+      qrCodeId,
       createdAt: now,
       updatedAt: now,
     };
-    const customerRef = await addDoc(collection(db, "customers"), dataToSave);
+    await setDoc(customerRef, dataToSave);
     const clientTimestamp = Timestamp.now();
-    return { id: customerRef.id, ...customerData, createdAt: clientTimestamp, updatedAt: clientTimestamp };
+    return { id: customerRef.id, ...dataToSave, createdAt: clientTimestamp, updatedAt: clientTimestamp };
   } catch (error: any) {
     console.error("Error adding customer:", error);
     return { error: error.message || "Gagal menambah pelanggan." };
@@ -1337,6 +1341,27 @@ export async function getCustomers(branchId: string): Promise<Customer[]> {
     return [];
   }
 }
+
+export async function getCustomerByQrCodeId(branchId: string, qrCodeId: string): Promise<Customer | null> {
+  if (!branchId || !qrCodeId) return null;
+  try {
+    const q = query(
+      collection(db, "customers"),
+      where("branchId", "==", branchId),
+      where("qrCodeId", "==", qrCodeId),
+      limit(1)
+    );
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      return { id: querySnapshot.docs[0].id, ...querySnapshot.docs[0].data() } as Customer;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching customer by QR code ID:", error);
+    return null;
+  }
+}
+
 
 export async function updateCustomer(customerId: string, updates: Partial<CustomerInput>): Promise<void | { error: string }> {
   if (!customerId) return { error: "ID Pelanggan tidak valid." };
