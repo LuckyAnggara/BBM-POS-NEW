@@ -1,8 +1,9 @@
 
 "use client";
 
+import React from "react"; // Added this line
 import { useBranch } from "@/contexts/branch-context";
-import { useAuth } from "@/contexts/auth-context"; 
+import { useAuth } from "@/contexts/auth-context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -14,12 +15,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { User, Settings, LogOut, ChevronsUpDown } from "lucide-react"; 
+import { User, Settings, LogOut, ChevronsUpDown } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function SidebarUserProfile() {
   const { branches, selectedBranch, setSelectedBranch } = useBranch();
-  const { currentUser, userData, signOut, loadingAuth, loadingUserData } = useAuth(); 
+  const { currentUser, userData, signOut, loadingAuth, loadingUserData } = useAuth();
 
   const handleLogout = async () => {
     await signOut();
@@ -45,14 +46,14 @@ export default function SidebarUserProfile() {
       {isLoading ? (
         <Skeleton className="h-9 w-full rounded-md" />
       ) : userData?.role === 'admin' ? (
-        branches.length > 0 && ( 
+        branches.length > 0 && (
           <Select
             value={selectedBranch?.id || ""}
             onValueChange={(branchId) => {
               const branch = branches.find(b => b.id === branchId);
               if (branch) setSelectedBranch(branch);
             }}
-            disabled={!selectedBranch && branches.length === 0} 
+            disabled={!selectedBranch && branches.length === 0}
           >
             <SelectTrigger className="h-9 text-xs rounded-md w-full justify-between bg-sidebar-accent hover:bg-sidebar-accent/90 text-sidebar-accent-foreground">
               <SelectValue placeholder="Pilih Cabang" />
@@ -114,7 +115,7 @@ export default function SidebarUserProfile() {
             <span>Pengaturan</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem 
+          <DropdownMenuItem
             className="text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
             onClick={handleLogout}
           >
@@ -126,4 +127,3 @@ export default function SidebarUserProfile() {
     </div>
   );
 }
-
