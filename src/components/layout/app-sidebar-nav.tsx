@@ -13,7 +13,7 @@ import {
 import { SidebarMenu, SidebarMenuItem, SidebarMenuButton } from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
 import SidebarHeaderBrand from "./sidebar-header-brand";
-import { Separator } from "@/components/ui/separator";
+
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -29,18 +29,18 @@ export default function AppSidebarNav() {
   return (
     <nav className="flex flex-col h-full">
       <SidebarHeaderBrand />
-      <Separator className="mx-2 my-1 w-auto bg-sidebar-border" />
-      <div className="flex-grow overflow-y-auto p-2 space-y-1">
+      
+      <div className="flex-grow overflow-y-auto p-2 space-y-1 mt-1">
         <SidebarMenu>
           {navItems.map((item) => (
             <SidebarMenuItem key={item.label}>
-              <Link href={item.href}>
+              <Link href={item.href} legacyBehavior={false} passHref={false}>
                 <SidebarMenuButton
                   variant="default"
                   size="default" 
                   className={cn(
-                    "w-full justify-start text-sm", // Use text-sm for nav items
-                    pathname === item.href ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-accent/50"
+                    "w-full justify-start text-sm", 
+                    pathname === item.href ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-sidebar-accent/50"
                   )}
                   isActive={pathname === item.href}
                   tooltip={{children: item.label, side: "right", align: "center"}}
@@ -53,7 +53,7 @@ export default function AppSidebarNav() {
           ))}
         </SidebarMenu>
       </div>
-      <Separator className="mx-2 my-1 w-auto bg-sidebar-border" />
+      
       <SidebarUserProfile />
     </nav>
   );
