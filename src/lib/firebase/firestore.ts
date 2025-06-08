@@ -794,16 +794,32 @@ export async function addExpense(expenseData: ExpenseInput, userId: string): Pro
   }
 }
 
-export async function getExpenses(branchId: string, filters?: { categories?: string[] }): Promise<Expense[]> {
+export async function getExpenses(
+  branchId: string, 
+  filters?: { categories?: string[], startDate?: Date, endDate?: Date }
+): Promise<Expense[]> {
   if (!branchId) return [];
   try {
-    let qConstraints = [where("branchId", "==", branchId)];
+    let qConstraints: any[] = [where("branchId", "==", branchId)];
 
     if (filters?.categories && filters.categories.length > 0) {
       qConstraints.push(where("category", "in", filters.categories));
     }
     
-    const q = query(collection(db, "expenses"), ...qConstraints, orderBy("date", "desc"));
+    if (filters?.startDate && filters?.endDate) {
+      const startTimestamp = Timestamp.fromDate(filters.startDate);
+      const endOfDayEndDate = new Date(filters.endDate);
+      endOfDayEndDate.setHours(23, 59, 59, 999); // Ensure end of day for endDate
+      const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
+
+      qConstraints.push(where("date", ">=", startTimestamp));
+      qConstraints.push(where("date", "<=", endTimestamp));
+    }
+    
+    // Default order by date descending if no specific order is needed for reports
+    qConstraints.push(orderBy("date", "desc")); 
+    
+    const q = query(collection(db, "expenses"), ...qConstraints);
     
     const querySnapshot = await getDocs(q);
     const expenses: Expense[] = [];
@@ -840,6 +856,3 @@ export async function deleteExpense(expenseId: string): Promise<void | { error: 
     return { error: error.message || "Gagal menghapus pengeluaran." };
   }
 }
-
-
-    
