@@ -100,6 +100,7 @@ export default function SalesHistoryPage() {
         </span>
       );
     }
+    // Default to 'completed' if status is undefined (for older transactions) or 'completed'
     return (
       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
         <CheckCircle className="mr-1 h-3 w-3" /> Selesai
@@ -160,7 +161,8 @@ export default function SalesHistoryPage() {
                                 <Printer className="mr-1.5 h-3.5 w-3.5" /> Invoice
                               </Link>
                             </Button>
-                            {tx.status === 'completed' && (
+                            {/* Updated condition: show if status is not 'returned' */}
+                            {tx.status !== 'returned' && (
                               <Button variant="outline" size="sm" className="h-7 text-xs text-amber-700 border-amber-300 hover:bg-amber-50 hover:text-amber-800" onClick={() => handleOpenReturnDialog(tx)}>
                                 <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Retur
                               </Button>
