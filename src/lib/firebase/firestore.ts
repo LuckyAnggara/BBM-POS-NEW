@@ -550,8 +550,6 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
         batch.update(productRef, { quantity: newStock < 0 ? 0 : newStock, updatedAt: serverTimestamp() });
       } else {
         console.warn(`Product with ID ${item.productId} not found in inventory. Stock not updated.`);
-        // Potentially throw an error here or handle it more gracefully
-        // return { error: `Produk dengan ID ${item.productId} tidak ditemukan di inventaris.` };
       }
     }
 
@@ -583,7 +581,6 @@ export async function processFullTransactionReturn(transactionId: string, reason
       return { error: "Transaksi ini sudah pernah diretur." };
     }
 
-    // Update transaction status
     batch.update(transactionRef, {
       status: 'returned',
       returnReason: reason,
@@ -591,10 +588,9 @@ export async function processFullTransactionReturn(transactionId: string, reason
       returnedByUserId: returnedByUserId,
     });
 
-    // Restore stock for each item
     for (const item of transactionData.items) {
       const productRef = doc(db, "inventoryItems", item.productId);
-      const productSnap = await getDoc(productRef); // Important to get latest stock before update
+      const productSnap = await getDoc(productRef); 
       if (productSnap.exists()) {
         const currentStock = productSnap.data().quantity as number;
         const newStock = currentStock + item.quantity;
@@ -618,7 +614,6 @@ export async function deleteTransaction(transactionId: string, branchId: string,
 
   const batch = writeBatch(db);
   try {
-    // 1. Fetch branch to validate password
     const branchDoc = await getBranchById(branchId);
     if (!branchDoc) {
       return { error: "Data cabang tidak ditemukan." };
@@ -630,7 +625,6 @@ export async function deleteTransaction(transactionId: string, branchId: string,
       return { error: "Password hapus transaksi salah." };
     }
 
-    // 2. Fetch transaction to be deleted
     const transactionRef = doc(db, "posTransactions", transactionId);
     const transactionSnap = await getDoc(transactionRef);
     if (!transactionSnap.exists()) {
@@ -638,23 +632,20 @@ export async function deleteTransaction(transactionId: string, branchId: string,
     }
     const transactionData = transactionSnap.data() as PosTransaction;
 
-    // 3. If transaction was not 'returned', revert stock quantities
     if (transactionData.status !== 'returned') {
       for (const item of transactionData.items) {
         const productRef = doc(db, "inventoryItems", item.productId);
         const productSnap = await getDoc(productRef);
         if (productSnap.exists()) {
           const currentStock = productSnap.data().quantity as number;
-          const newStock = currentStock + item.quantity; // Add back the sold quantity
+          const newStock = currentStock + item.quantity; 
           batch.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
         } else {
           console.warn(`Product with ID ${item.productId} not found while deleting transaction. Stock not restored.`);
         }
       }
     }
-    // If it was already 'returned', stock was already adjusted.
 
-    // 4. Delete the transaction document
     batch.delete(transactionRef);
 
     await batch.commit();
@@ -713,12 +704,10 @@ export async function getTransactionsForUserByBranch(
     if (options.orderByField) {
         constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
     } else {
-        // Default sort by timestamp if specific order field is not provided,
-        // or if date range is present, sorting by timestamp is natural.
         constraints.push(orderBy("timestamp", options.orderDirection || "desc")); 
     }
 
-    if (options.limit && !(options.startDate && options.endDate)) { // Apply limit only if not fetching by date range, to avoid complex pagination with date filters
+    if (options.limit && !(options.startDate && options.endDate)) { 
         constraints.push(limit(options.limit));
     }
     
@@ -856,7 +845,7 @@ export async function addExpense(expenseData: ExpenseInput, userId: string): Pro
     return { 
         id: expenseRef.id, 
         ...dataToSave, 
-        date: expenseData.date, // Use the provided date
+        date: expenseData.date, 
         createdAt: clientTimestamp, 
         updatedAt: clientTimestamp 
     };
@@ -881,7 +870,7 @@ export async function getExpenses(
     if (filters?.startDate && filters?.endDate) {
       const startTimestamp = Timestamp.fromDate(filters.startDate);
       const endOfDayEndDate = new Date(filters.endDate);
-      endOfDayEndDate.setHours(23, 59, 59, 999); // Ensure end of day for endDate
+      endOfDayEndDate.setHours(23, 59, 59, 999); 
       const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
 
       qConstraints.push(where("date", ">=", startTimestamp));
@@ -1007,14 +996,14 @@ export type PurchaseOrderStatus = 'draft' | 'ordered' | 'partially_received' | '
 
 export interface PurchaseOrderItemInput {
   productId: string;
-  productName: string; // Denormalized
+  productName: string; 
   orderedQuantity: number;
-  purchasePrice: number; // Price per unit
+  purchasePrice: number; 
 }
 
 export interface PurchaseOrderItem extends PurchaseOrderItemInput {
   receivedQuantity: number;
-  totalPrice: number; // orderedQuantity * purchasePrice
+  totalPrice: number; 
 }
 
 export interface PurchaseOrderInput {
@@ -1030,8 +1019,8 @@ export interface PurchaseOrderInput {
 
 export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
   id: string;
-  poNumber: string; // Auto-generated or manual
-  supplierName: string; // Denormalized
+  poNumber: string; 
+  supplierName: string; 
   items: PurchaseOrderItem[];
   subtotal: number;
   shippingCost?: number;
@@ -1039,7 +1028,6 @@ export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
   totalAmount: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
-  // Fields related to receiving might be added here or in a separate sub-collection
 }
 
 export async function addPurchaseOrder(
@@ -1054,16 +1042,15 @@ export async function addPurchaseOrder(
 
   try {
     const now = serverTimestamp() as Timestamp;
-    const poRef = doc(collection(db, "purchaseOrders")); // Auto-generate ID
+    const poRef = doc(collection(db, "purchaseOrders")); 
 
     const processedItems: PurchaseOrderItem[] = poData.items.map(item => ({
       ...item,
-      receivedQuantity: 0, // Initially 0
+      receivedQuantity: 0, 
       totalPrice: item.orderedQuantity * item.purchasePrice,
     }));
 
     const subtotal = processedItems.reduce((sum, item) => sum + item.totalPrice, 0);
-    // For now, totalAmount is same as subtotal. Shipping and tax can be added later.
     const totalAmount = subtotal; 
     const poNumber = `PO-${poRef.id.substring(0, 8).toUpperCase()}`;
 
@@ -1071,16 +1058,16 @@ export async function addPurchaseOrder(
       poNumber,
       branchId: poData.branchId,
       supplierId: poData.supplierId,
-      supplierName, // Denormalized supplier name
+      supplierName, 
       orderDate: poData.orderDate,
       expectedDeliveryDate: poData.expectedDeliveryDate,
       items: processedItems,
       notes: poData.notes || "",
-      status: poData.status || 'draft', // Default to draft
+      status: poData.status || 'draft', 
       createdById: poData.createdById,
       subtotal,
-      shippingCost: 0, // Placeholder
-      taxAmount: 0,    // Placeholder
+      shippingCost: 0, 
+      taxAmount: 0,    
       totalAmount,
       createdAt: now,
       updatedAt: now,
@@ -1092,7 +1079,7 @@ export async function addPurchaseOrder(
     return {
       id: poRef.id,
       ...dataToSave,
-      createdAt: clientTimestamp, // Use client-side timestamp for immediate return
+      createdAt: clientTimestamp, 
       updatedAt: clientTimestamp,
     };
   } catch (error: any) {
@@ -1114,7 +1101,7 @@ export async function getPurchaseOrdersByBranch(
   if (options.orderByField) {
       constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
   } else {
-      constraints.push(orderBy("createdAt", "desc")); // Changed from orderDate to createdAt for more consistent sorting
+      constraints.push(orderBy("createdAt", "desc")); 
   }
 
   if (options.limit) {
@@ -1152,8 +1139,7 @@ export async function getPurchaseOrderById(poId: string): Promise<PurchaseOrder 
 
 export async function updatePurchaseOrderStatus(
     poId: string, 
-    newStatus: PurchaseOrderStatus,
-    updatedItems?: PurchaseOrderItem[] // Optional: for when receiving items
+    newStatus: PurchaseOrderStatus
 ): Promise<void | { error: string }> {
   if (!poId) return { error: "ID Pesanan Pembelian tidak valid." };
   if (!newStatus) return { error: "Status baru tidak valid." };
@@ -1164,24 +1150,6 @@ export async function updatePurchaseOrderStatus(
       status: newStatus,
       updatedAt: serverTimestamp(),
     };
-
-    if (updatedItems) {
-        updateData.items = updatedItems.map(item => ({
-            productId: item.productId,
-            productName: item.productName,
-            orderedQuantity: item.orderedQuantity,
-            purchasePrice: item.purchasePrice,
-            receivedQuantity: item.receivedQuantity,
-            totalPrice: item.totalPrice
-        }));
-        // Recalculate subtotal and totalAmount if items are updated
-        const subtotal = updatedItems.reduce((sum, item) => sum + (item.orderedQuantity * item.purchasePrice), 0);
-        // Assuming tax and shipping are handled elsewhere or are 0 for now
-        const totalAmount = subtotal; 
-        updateData.subtotal = subtotal;
-        updateData.totalAmount = totalAmount;
-    }
-
     await updateDoc(poRef, updateData);
   } catch (error: any) {
     console.error("Error updating purchase order status:", error);
@@ -1189,10 +1157,85 @@ export async function updatePurchaseOrderStatus(
   }
 }
 
-// TODO: Implement function to update PO items when receiving goods (updateInventoryOnPOReceive)
-// This function would:
-// 1. Update `receivedQuantity` for each item in the PO.
-// 2. Update stock in `inventoryItems` collection.
-// 3. Optionally, update `costPrice` in `inventoryItems` based on PO price (e.g., weighted average).
-// 4. Update PO status to `partially_received` or `fully_received`.
-// This should be done within a batch write.
+export interface ReceivedItemData {
+  productId: string;
+  quantityReceivedNow: number;
+}
+
+export async function receivePurchaseOrderItems(
+  poId: string,
+  itemsReceived: ReceivedItemData[]
+): Promise<void | { error: string }> {
+  if (!poId) return { error: "ID Pesanan Pembelian tidak valid." };
+  if (!itemsReceived || itemsReceived.length === 0) {
+    return { error: "Tidak ada item yang ditandai diterima." };
+  }
+
+  const batch = writeBatch(db);
+  const poRef = doc(db, "purchaseOrders", poId);
+
+  try {
+    const poSnap = await getDoc(poRef);
+    if (!poSnap.exists()) {
+      return { error: "Pesanan Pembelian tidak ditemukan." };
+    }
+    const purchaseOrder = poSnap.data() as PurchaseOrder;
+
+    if (purchaseOrder.status === 'fully_received' || purchaseOrder.status === 'cancelled') {
+      return { error: `Tidak dapat menerima item untuk PO yang sudah ${purchaseOrder.status === 'fully_received' ? 'diterima penuh' : 'dibatalkan'}.` };
+    }
+
+    const updatedPoItems = [...purchaseOrder.items]; // Create a mutable copy
+
+    for (const receivedItem of itemsReceived) {
+      if (receivedItem.quantityReceivedNow <= 0) continue;
+
+      const poItemIndex = updatedPoItems.findIndex(item => item.productId === receivedItem.productId);
+      if (poItemIndex === -1) {
+        console.warn(`Item dengan productId ${receivedItem.productId} tidak ditemukan di PO ${poId}.`);
+        continue;
+      }
+      
+      const poItem = updatedPoItems[poItemIndex];
+      const newReceivedQuantity = poItem.receivedQuantity + receivedItem.quantityReceivedNow;
+
+      if (newReceivedQuantity > poItem.orderedQuantity) {
+        return { error: `Jumlah diterima untuk ${poItem.productName} (${newReceivedQuantity}) melebihi jumlah dipesan (${poItem.orderedQuantity}).` };
+      }
+      
+      // Update PO item
+      updatedPoItems[poItemIndex] = { ...poItem, receivedQuantity: newReceivedQuantity };
+
+      // Update inventory item
+      const inventoryItemRef = doc(db, "inventoryItems", receivedItem.productId);
+      const inventoryItemSnap = await getDoc(inventoryItemRef);
+      if (inventoryItemSnap.exists()) {
+        const inventoryItemData = inventoryItemSnap.data() as InventoryItem;
+        const newInventoryQuantity = inventoryItemData.quantity + receivedItem.quantityReceivedNow;
+        batch.update(inventoryItemRef, {
+          quantity: newInventoryQuantity,
+          costPrice: poItem.purchasePrice, // Update cost price based on this PO
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        console.warn(`Inventory item ${receivedItem.productId} not found. Stock not updated.`);
+        // Optionally create the item if it's missing, or throw an error
+      }
+    }
+
+    // Determine new PO status
+    const allItemsFullyReceived = updatedPoItems.every(item => item.receivedQuantity === item.orderedQuantity);
+    const newStatus = allItemsFullyReceived ? 'fully_received' : 'partially_received';
+
+    batch.update(poRef, {
+      items: updatedPoItems,
+      status: newStatus,
+      updatedAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+  } catch (error: any) {
+    console.error("Error receiving purchase order items:", error);
+    return { error: error.message || "Gagal memproses penerimaan barang." };
+  }
+}

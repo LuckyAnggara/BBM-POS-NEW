@@ -23,9 +23,10 @@ interface StockMutationReportItem {
   sku?: string;
   categoryName?: string;
   initialStock: number;
-  stockIn: number; // For future use (purchases, adjustments)
+  stockInFromPO: number; 
   stockSold: number;
-  finalStock: number; // Current stock at the end of the period (or current if period ends today)
+  stockReturned: number; 
+  finalStock: number; 
 }
 
 export default function StockMutationReportPage() {
@@ -38,7 +39,6 @@ export default function StockMutationReportPage() {
   const [reportData, setReportData] = useState<StockMutationReportItem[] | null>(null);
 
   const formatCurrency = (amount: number) => {
-     // Assuming a default if branch/currency is not set, adjust as needed
     return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
@@ -63,8 +63,8 @@ export default function StockMutationReportPage() {
       const inventoryItems = await getInventoryItems(selectedBranch.id);
       const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
 
-      // Filter out returned transactions before calculating sold quantities
-      const completedTransactions = allTransactions.filter(tx => tx.status !== 'returned');
+      const completedTransactions = allTransactions.filter(tx => tx.status === 'completed');
+      const returnedTransactions = allTransactions.filter(tx => tx.status === 'returned');
 
       const soldQuantitiesMap = new Map<string, number>();
       completedTransactions.forEach(tx => {
@@ -73,10 +73,24 @@ export default function StockMutationReportPage() {
         });
       });
 
+      const returnedQuantitiesMap = new Map<string, number>();
+      returnedTransactions.forEach(tx => {
+        tx.items.forEach(item => {
+          returnedQuantitiesMap.set(item.productId, (returnedQuantitiesMap.get(item.productId) || 0) + item.quantity);
+        });
+      });
+      
+      // TODO: Fetch Purchase Order receipts within date range to calculate stockInFromPO
+      // For now, stockInFromPO will be 0.
+
       const processedData: StockMutationReportItem[] = inventoryItems.map(item => {
         const stockSold = soldQuantitiesMap.get(item.id) || 0;
-        const finalStock = item.quantity; 
-        const initialStock = finalStock + stockSold; 
+        const stockReturned = returnedQuantitiesMap.get(item.id) || 0;
+        const stockInFromPO = 0; // Placeholder for now
+        const finalStock = item.quantity; // Current stock from inventory item (end of period if period is up to "today")
+        
+        // Initial stock = Final Stock - Received + Sold - Returned
+        const initialStock = finalStock - stockInFromPO + stockSold - stockReturned;
 
         return {
           productId: item.id,
@@ -84,8 +98,9 @@ export default function StockMutationReportPage() {
           sku: item.sku,
           categoryName: item.categoryName,
           initialStock: initialStock,
-          stockIn: 0, 
+          stockInFromPO: stockInFromPO,
           stockSold: stockSold,
+          stockReturned: stockReturned,
           finalStock: finalStock,
         };
       });
@@ -225,8 +240,9 @@ export default function StockMutationReportPage() {
                                 <TableHead className="text-xs hidden md:table-cell">SKU</TableHead>
                                 <TableHead className="text-xs hidden lg:table-cell">Kategori</TableHead>
                                 <TableHead className="text-xs text-right">Stok Awal</TableHead>
+                                <TableHead className="text-xs text-right text-blue-600">Masuk (PO) (+)</TableHead>
                                 <TableHead className="text-xs text-right text-destructive">Terjual (-)</TableHead>
-                                <TableHead className="text-xs text-right text-green-600">Masuk (+)</TableHead>
+                                <TableHead className="text-xs text-right text-green-600">Diretur (Jual) (+)</TableHead>
                                 <TableHead className="text-xs text-right">Stok Akhir</TableHead>
                             </TableRow>
                         </TableHeader>
@@ -237,13 +253,18 @@ export default function StockMutationReportPage() {
                                     <TableCell className="text-xs hidden md:table-cell py-1.5">{item.sku || '-'}</TableCell>
                                     <TableCell className="text-xs hidden lg:table-cell py-1.5">{item.categoryName || '-'}</TableCell>
                                     <TableCell className="text-xs text-right py-1.5">{item.initialStock}</TableCell>
+                                    <TableCell className="text-xs text-right py-1.5 text-blue-600">{item.stockInFromPO > 0 ? `${item.stockInFromPO}` : '-'}</TableCell>
                                     <TableCell className="text-xs text-right py-1.5 text-destructive">{item.stockSold > 0 ? `${item.stockSold}` : '-'}</TableCell>
-                                    <TableCell className="text-xs text-right py-1.5 text-green-600">{item.stockIn > 0 ? `${item.stockIn}` : '-'}</TableCell>
+                                    <TableCell className="text-xs text-right py-1.5 text-green-600">{item.stockReturned > 0 ? `${item.stockReturned}` : '-'}</TableCell>
                                     <TableCell className="text-xs text-right font-semibold py-1.5">{item.finalStock}</TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>
-                         <TableCaption className="text-xs py-2">Stok Awal dihitung berdasarkan: Stok Akhir (Saat Ini) + Barang Terjual (Selama Periode, tidak termasuk retur). Fitur stok masuk/penyesuaian belum diimplementasikan.</TableCaption>
+                         <TableCaption className="text-xs py-2">
+                            Stok Awal dihitung berdasarkan: Stok Akhir (Saat Ini) + Barang Terjual (Periode) - Barang Diretur (Periode) - Barang Masuk dari PO (Periode).
+                            <br />
+                            Fitur pencatatan barang masuk dari PO pada laporan ini akan diimplementasikan sepenuhnya kemudian. Saat ini, "Masuk (PO)" akan selalu 0.
+                         </TableCaption>
                     </Table>
                 ) : (
                     <p className="text-sm text-muted-foreground text-center py-6">Tidak ada data produk inventaris untuk ditampilkan pada cabang ini.</p>
