@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { CalendarIcon, Download } from "lucide-react";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getInventoryItems, getTransactionsByDateRangeAndBranch, type InventoryItem, type PosTransaction } from "@/lib/firebase/firestore";
+import { getInventoryItems, getTransactionsByDateRangeAndBranch, getPurchaseOrdersByBranch, type InventoryItem, type PosTransaction, type PurchaseOrder } from "@/lib/firebase/firestore";
 
 interface StockMutationReportItem {
   productId: string;
@@ -38,10 +38,6 @@ export default function StockMutationReportPage() {
   const [loadingReport, setLoadingReport] = useState(false);
   const [reportData, setReportData] = useState<StockMutationReportItem[] | null>(null);
 
-  const formatCurrency = (amount: number) => {
-    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-  };
-
   const handleGenerateReport = useCallback(async () => {
     if (!selectedBranch) {
       toast({ title: "Pilih Cabang", description: "Silakan pilih cabang terlebih dahulu.", variant: "destructive" });
@@ -62,6 +58,14 @@ export default function StockMutationReportPage() {
     try {
       const inventoryItems = await getInventoryItems(selectedBranch.id);
       const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
+      
+      // Fetch POs updated within the period
+      const purchaseOrdersUpdatedInPeriod = await getPurchaseOrdersByBranch(selectedBranch.id, {
+        startDate,
+        endDate,
+        orderByField: "updatedAt", // Filter based on when PO was updated (likely when items were received)
+        orderDirection: "desc",
+      });
 
       const completedTransactions = allTransactions.filter(tx => tx.status === 'completed');
       const returnedTransactions = allTransactions.filter(tx => tx.status === 'returned');
@@ -80,17 +84,25 @@ export default function StockMutationReportPage() {
         });
       });
       
-      // TODO: Fetch Purchase Order receipts within date range to calculate stockInFromPO
-      // For now, stockInFromPO will be 0.
+      const stockInFromPOMap = new Map<string, number>();
+      purchaseOrdersUpdatedInPeriod.forEach(po => {
+        if (po.status === 'partially_received' || po.status === 'fully_received') {
+          po.items.forEach(poItem => {
+            // This sums up the *total* received quantity for items in POs updated in the period.
+            // This is an approximation of stock received *during* the period.
+            // A more precise method would track individual receipt events with timestamps.
+            stockInFromPOMap.set(poItem.productId, (stockInFromPOMap.get(poItem.productId) || 0) + poItem.receivedQuantity);
+          });
+        }
+      });
 
       const processedData: StockMutationReportItem[] = inventoryItems.map(item => {
         const stockSold = soldQuantitiesMap.get(item.id) || 0;
         const stockReturned = returnedQuantitiesMap.get(item.id) || 0;
-        const stockInFromPO = 0; // Placeholder for now
-        const finalStock = item.quantity; // Current stock from inventory item (end of period if period is up to "today")
+        const stockInFromPOForPeriod = stockInFromPOMap.get(item.id) || 0; 
+        const finalStock = item.quantity; // Current stock from inventory item
         
-        // Initial stock = Final Stock - Received + Sold - Returned
-        const initialStock = finalStock - stockInFromPO + stockSold - stockReturned;
+        const initialStock = finalStock - stockInFromPOForPeriod + stockSold - stockReturned;
 
         return {
           productId: item.id,
@@ -98,7 +110,7 @@ export default function StockMutationReportPage() {
           sku: item.sku,
           categoryName: item.categoryName,
           initialStock: initialStock,
-          stockInFromPO: stockInFromPO,
+          stockInFromPO: stockInFromPOForPeriod,
           stockSold: stockSold,
           stockReturned: stockReturned,
           finalStock: finalStock,
@@ -106,9 +118,12 @@ export default function StockMutationReportPage() {
       });
 
       setReportData(processedData);
-      if (processedData.length === 0) {
-        toast({ title: "Tidak Ada Data", description: "Tidak ada produk inventaris ditemukan untuk cabang ini.", variant: "default" });
+      if (processedData.length === 0 && inventoryItems.length > 0) {
+        toast({ title: "Tidak Ada Mutasi", description: "Tidak ada pergerakan stok (penjualan, retur, atau penerimaan PO) untuk produk pada periode ini, namun produk terdaftar di inventaris.", variant: "default" });
+      } else if (inventoryItems.length === 0) {
+         toast({ title: "Tidak Ada Produk", description: "Tidak ada produk inventaris ditemukan untuk cabang ini.", variant: "default" });
       }
+
 
     } catch (error) {
       console.error("Error generating stock mutation report:", error);
@@ -260,14 +275,19 @@ export default function StockMutationReportPage() {
                                 </TableRow>
                             ))}
                         </TableBody>
-                         <TableCaption className="text-xs py-2">
-                            Stok Awal dihitung berdasarkan: Stok Akhir (Saat Ini) + Barang Terjual (Periode) - Barang Diretur (Periode) - Barang Masuk dari PO (Periode).
-                            <br />
-                            Fitur pencatatan barang masuk dari PO pada laporan ini akan diimplementasikan sepenuhnya kemudian. Saat ini, "Masuk (PO)" akan selalu 0.
+                         <TableCaption className="text-xs py-2 text-left">
+                            <strong>Catatan:</strong>
+                            <ul className="list-disc pl-4">
+                                <li><strong>Stok Awal:</strong> Stok pada awal periode, dihitung mundur dari Stok Akhir dengan memperhitungkan pergerakan selama periode.</li>
+                                <li><strong>Masuk (PO) (+):</strong> Total kuantitas barang diterima dari Pesanan Pembelian (PO) yang <em>diperbarui (updated)</em> selama periode laporan. Ini adalah estimasi penerimaan dalam periode tersebut.</li>
+                                <li><strong>Terjual (-):</strong> Total kuantitas barang terjual (tidak termasuk yang diretur) selama periode laporan.</li>
+                                <li><strong>Diretur (Jual) (+):</strong> Total kuantitas barang yang dikembalikan oleh pelanggan selama periode laporan.</li>
+                                <li><strong>Stok Akhir:</strong> Kuantitas stok produk aktual saat ini di inventaris.</li>
+                            </ul>
                          </TableCaption>
                     </Table>
                 ) : (
-                    <p className="text-sm text-muted-foreground text-center py-6">Tidak ada data produk inventaris untuk ditampilkan pada cabang ini.</p>
+                    <p className="text-sm text-muted-foreground text-center py-6">Tidak ada data produk inventaris untuk ditampilkan pada cabang ini atau tidak ada mutasi pada periode terpilih.</p>
                 )}
               </CardContent>
             </Card>

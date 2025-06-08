@@ -672,7 +672,7 @@ export async function getTransactionById(transactionId: string): Promise<PosTran
     }
 }
 
-interface QueryOptions {
+export interface QueryOptions {
     limit?: number;
     orderByField?: string | FieldPath;
     orderDirection?: OrderByDirection;
@@ -1098,6 +1098,15 @@ export async function getPurchaseOrdersByBranch(
       where("branchId", "==", branchId)
   ];
 
+  if (options.startDate && options.endDate && options.orderByField === "updatedAt") {
+    const startTimestamp = Timestamp.fromDate(options.startDate);
+    const endOfDayEndDate = new Date(options.endDate);
+    endOfDayEndDate.setHours(23, 59, 59, 999);
+    const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
+    constraints.push(where("updatedAt", ">=", startTimestamp));
+    constraints.push(where("updatedAt", "<=", endTimestamp));
+  }
+  
   if (options.orderByField) {
       constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
   } else {
@@ -1185,7 +1194,7 @@ export async function receivePurchaseOrderItems(
       return { error: `Tidak dapat menerima item untuk PO yang sudah ${purchaseOrder.status === 'fully_received' ? 'diterima penuh' : 'dibatalkan'}.` };
     }
 
-    const updatedPoItems = [...purchaseOrder.items]; // Create a mutable copy
+    const updatedPoItems = [...purchaseOrder.items]; 
 
     for (const receivedItem of itemsReceived) {
       if (receivedItem.quantityReceivedNow <= 0) continue;
@@ -1203,10 +1212,8 @@ export async function receivePurchaseOrderItems(
         return { error: `Jumlah diterima untuk ${poItem.productName} (${newReceivedQuantity}) melebihi jumlah dipesan (${poItem.orderedQuantity}).` };
       }
       
-      // Update PO item
       updatedPoItems[poItemIndex] = { ...poItem, receivedQuantity: newReceivedQuantity };
 
-      // Update inventory item
       const inventoryItemRef = doc(db, "inventoryItems", receivedItem.productId);
       const inventoryItemSnap = await getDoc(inventoryItemRef);
       if (inventoryItemSnap.exists()) {
@@ -1214,16 +1221,14 @@ export async function receivePurchaseOrderItems(
         const newInventoryQuantity = inventoryItemData.quantity + receivedItem.quantityReceivedNow;
         batch.update(inventoryItemRef, {
           quantity: newInventoryQuantity,
-          costPrice: poItem.purchasePrice, // Update cost price based on this PO
+          costPrice: poItem.purchasePrice, 
           updatedAt: serverTimestamp(),
         });
       } else {
         console.warn(`Inventory item ${receivedItem.productId} not found. Stock not updated.`);
-        // Optionally create the item if it's missing, or throw an error
       }
     }
 
-    // Determine new PO status
     const allItemsFullyReceived = updatedPoItems.every(item => item.receivedQuantity === item.orderedQuantity);
     const newStatus = allItemsFullyReceived ? 'fully_received' : 'partially_received';
 
