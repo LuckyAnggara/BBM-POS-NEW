@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart } from "lucide-react";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -20,14 +20,24 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { InventoryItem } from "@/lib/firebase/firestore";
-import { getInventoryItems, startNewShift, getActiveShift, endShift, recordTransaction, getTransactionsForShift, type PosShift, type PosTransaction, type TransactionItem, type PaymentMethod } from "@/lib/firebase/firestore";
+import { 
+  getInventoryItems, 
+  startNewShift, 
+  getActiveShift, 
+  endShift, 
+  recordTransaction, 
+  getTransactionsForShift, 
+  type PosShift, 
+  type PosTransaction, 
+  type TransactionItem, 
+  type PaymentMethod 
+} from "@/lib/firebase/firestore";
 import { Timestamp } from "firebase/firestore";
 
 type ViewMode = "card" | "table";
 
 interface CartItem extends TransactionItem {
-  // Inherits productId, productName, quantity, price, total
-  // May add more cart-specific fields later if needed, e.g. applied discounts
+  // Inherits productId, productName, quantity, price, total, costPrice
 }
 
 
@@ -61,12 +71,15 @@ export default function POSPage() {
   const [isProcessingSale, setIsProcessingSale] = useState(false);
   
   const [posModeActive, setPosModeActive] = useState(false);
+  const [lastTransactionId, setLastTransactionId] = useState<string | null>(null);
+  const [showPrintInvoiceDialog, setShowPrintInvoiceDialog] = useState(false);
+
    useEffect(() => {
     setPosModeActive(true);
   }, []);
 
 
-  const currencySymbol = selectedBranch?.currency === "IDR" ? "Rp" : "$";
+  const currencySymbol = selectedBranch?.currency === "IDR" ? "Rp" : (selectedBranch?.currency || "$");
   const taxRate = selectedBranch?.taxRate ? selectedBranch.taxRate / 100 : 0.0;
 
 
@@ -92,9 +105,9 @@ export default function POSPage() {
     const shift = await getActiveShift(currentUser.uid, selectedBranch.id);
     setActiveShift(shift);
     if(shift) {
-        setInitialCashInput(shift.initialCash.toString()); // Pre-fill if shift is active
+        setInitialCashInput(shift.initialCash.toString()); 
     } else {
-        setInitialCashInput(""); // Clear if no active shift
+        setInitialCashInput(""); 
     }
     setLoadingShift(false);
   }, [currentUser, selectedBranch]);
@@ -133,11 +146,9 @@ export default function POSPage() {
     const salesByPayment: Record<PaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
 
     transactions.forEach(tx => {
-      if (tx.paymentMethod === 'cash') {
-        totalCashSales += tx.totalAmount; // Assuming totalAmount is what's received for cash
-      }
-      salesByPayment[tx.paymentMethod] = (salesByPayment[tx.paymentMethod] || 0) + tx.totalAmount;
+        salesByPayment[tx.paymentMethod] = (salesByPayment[tx.paymentMethod] || 0) + tx.totalAmount;
     });
+    totalCashSales = salesByPayment.cash; // Total cash sales is just the cash part
     
     const expected = (activeShift.initialCash || 0) + totalCashSales;
     setEndShiftCalculations({ expectedCash: expected, totalSalesByPaymentMethod: salesByPayment });
@@ -174,7 +185,7 @@ export default function POSPage() {
       setActualCashAtEndInput("");
       setEndShiftCalculations(null);
       setShowEndShiftModal(false);
-      setCartItems([]); // Clear cart on shift end
+      setCartItems([]); 
     }
     setIsEndingShift(false);
   };
@@ -191,7 +202,7 @@ export default function POSPage() {
     setCartItems(prevItems => {
       const existingItem = prevItems.find(item => item.productId === product.id);
       if (existingItem) {
-        if (existingItem.quantity < product.quantity) { // Check against available stock
+        if (existingItem.quantity < product.quantity) { 
             return prevItems.map(item =>
             item.productId === product.id
                 ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price }
@@ -206,7 +217,8 @@ export default function POSPage() {
           productId: product.id, 
           productName: product.name, 
           quantity: 1, 
-          price: product.price, 
+          price: product.price,
+          costPrice: product.costPrice,
           total: product.price 
       }];
     });
@@ -247,6 +259,8 @@ export default function POSPage() {
   const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
   const tax = subtotal * taxRate;
   const total = subtotal + tax;
+  const totalCost = cartItems.reduce((sum, item) => sum + (item.quantity * item.costPrice), 0);
+
 
   const handleCompleteSale = async () => {
     if (!activeShift || !selectedBranch || !currentUser) {
@@ -259,7 +273,7 @@ export default function POSPage() {
     }
 
     setIsProcessingSale(true);
-    const transactionData: Omit<PosTransaction, 'id' | 'timestamp'> = {
+    const transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp'> = {
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
       userId: currentUser.uid,
@@ -267,23 +281,34 @@ export default function POSPage() {
       subtotal,
       taxAmount: tax,
       totalAmount: total,
+      totalCost: totalCost,
       paymentMethod: selectedPaymentMethod,
-      amountPaid: total, // Assuming full amount paid for non-cash. For cash, this could be different.
-      changeGiven: 0, // Assuming 0 for non-cash. For cash, this needs calculation.
+      amountPaid: total, 
+      changeGiven: 0, 
     };
 
     const result = await recordTransaction(transactionData);
 
-    if ("error" in result) {
-      toast({ title: "Gagal Merekam Transaksi", description: result.error, variant: "destructive" });
+    if ("error" in result || !result.id) {
+      toast({ title: "Gagal Merekam Transaksi", description: result.error || "ID transaksi tidak ditemukan.", variant: "destructive" });
+      setLastTransactionId(null);
     } else {
       toast({ title: "Transaksi Berhasil", description: "Penjualan telah direkam." });
+      setLastTransactionId(result.id);
+      setShowPrintInvoiceDialog(true); // Show dialog to print invoice
       setCartItems([]);
-      setSelectedPaymentMethod('cash'); // Reset payment method
-      // Re-fetch products to update stock display, or update locally
+      setSelectedPaymentMethod('cash');
       await fetchProductsForBranch();
     }
     setIsProcessingSale(false);
+  };
+
+  const handlePrintInvoice = () => {
+    if (lastTransactionId) {
+        window.open(`/invoice/${lastTransactionId}/view`, '_blank');
+    }
+    setShowPrintInvoiceDialog(false);
+    setLastTransactionId(null);
   };
 
 
@@ -310,7 +335,7 @@ export default function POSPage() {
             {activeShift ? (
                 <div className="flex items-center gap-3">
                     <span className="text-xs text-green-600 font-medium bg-green-100 px-2 py-1 rounded-full flex items-center">
-                        <PlayCircle className="h-3.5 w-3.5 mr-1" /> Shift Aktif (Modal: {currencySymbol}{activeShift.initialCash.toLocaleString()})
+                        <PlayCircle className="h-3.5 w-3.5 mr-1" /> Shift Aktif (Modal: {currencySymbol}{activeShift.initialCash.toLocaleString('id-ID')})
                     </span>
                     <Button variant="destructive" size="sm" className="text-xs h-8" onClick={prepareEndShiftCalculations} disabled={isEndingShift}>
                         {isEndingShift ? "Memproses..." : <><StopCircle className="mr-1.5 h-3.5 w-3.5" /> Akhiri Shift</>}
@@ -360,7 +385,7 @@ export default function POSPage() {
               </div>
               
               <div className={cn(
-                  "flex-grow overflow-y-auto p-0.5 -m-0.5 relative", // Added relative for overlay
+                  "flex-grow overflow-y-auto p-0.5 -m-0.5 relative",
                   viewMode === 'card' ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5" : ""
               )}>
                 {loadingProducts ? (
@@ -538,7 +563,6 @@ export default function POSPage() {
             <AlertDialogContent className="sm:max-w-md"><AlertDialogHeader>
                     <AlertDialogTitle>Konfirmasi Akhiri Shift</AlertDialogTitle>
                     <AlertDialogDescription className="text-xs">
-                        Apakah Anda yakin ingin mengakhiri shift saat ini? Pastikan semua transaksi sudah selesai.
                         {activeShift && endShiftCalculations && (
                             <div className="mt-2 p-2 border rounded-md bg-muted/50 text-xs space-y-1">
                                 <p>Modal Awal: {currencySymbol}{activeShift.initialCash.toLocaleString('id-ID')}</p>
@@ -553,7 +577,7 @@ export default function POSPage() {
                             <Input id="actualCashAtEndInput" type="number" value={actualCashAtEndInput} onChange={(e) => setActualCashAtEndInput(e.target.value)} placeholder="Hitung dan masukkan kas aktual" className="h-9 text-sm mt-1" />
                         </div>
                         {activeShift && endShiftCalculations && actualCashAtEndInput && !isNaN(parseFloat(actualCashAtEndInput)) && (
-                             <p className="mt-1 font-medium">
+                             <p className="mt-1 font-medium text-xs">
                                 Selisih Kas: <span className={cn(parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash < 0 ? "text-destructive" : "text-green-600")}>
                                     {currencySymbol}{(parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash).toLocaleString('id-ID')}
                                 </span>
@@ -571,7 +595,38 @@ export default function POSPage() {
                 </AlertDialogAction>
             </AlertDialogFooter></AlertDialogContent>
         </AlertDialog>
+
+        {/* Print Invoice Dialog */}
+        <Dialog open={showPrintInvoiceDialog} onOpenChange={(open) => {
+            if (!open) { // When dialog is closed
+                setShowPrintInvoiceDialog(false);
+                setLastTransactionId(null);
+            } else {
+                setShowPrintInvoiceDialog(true);
+            }
+        }}>
+            <DialogContent className="sm:max-w-xs">
+                <DialogHeader>
+                    <DialogTitle className="text-base">Transaksi Berhasil</DialogTitle>
+                    <DialogDescription className="text-xs">Penjualan telah berhasil direkam.</DialogDescription>
+                </DialogHeader>
+                <div className="py-4">
+                    <p className="text-sm text-center">Apakah Anda ingin mencetak invoice untuk transaksi ini?</p>
+                </div>
+                <DialogFooter className="sm:justify-center">
+                    <Button type="button" variant="outline" className="text-xs h-8" onClick={() => {setShowPrintInvoiceDialog(false); setLastTransactionId(null);}}>
+                        Tutup
+                    </Button>
+                    <Button onClick={handlePrintInvoice} className="text-xs h-8" disabled={!lastTransactionId}>
+                        <Printer className="mr-1.5 h-4 w-4" /> Cetak Invoice
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+
       </MainLayout>
     </ProtectedRoute>
   );
 }
+
+    

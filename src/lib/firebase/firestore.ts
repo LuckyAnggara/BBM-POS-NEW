@@ -1,5 +1,5 @@
 
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, FieldPath, OrderByDirection } from "firebase/firestore";
 import { db } from "./config";
 import type { UserData } from "@/contexts/auth-context";
 import type { Branch } from "@/contexts/branch-context";
@@ -117,15 +117,14 @@ export async function updateBranch(branchId: string, updates: Partial<BranchInpu
 
   const dataToUpdate: Partial<Omit<FirebaseBranchData, 'id' | 'createdAt'>> & {updatedAt: Timestamp} = {} as any;
   if (updates.name?.trim()) dataToUpdate.name = updates.name.trim();
-  if (updates.invoiceName !== undefined) dataToUpdate.invoiceName = updates.invoiceName.trim() || updates.name?.trim() || ""; // Use name if invoice name becomes empty
+  if (updates.invoiceName !== undefined) dataToUpdate.invoiceName = updates.invoiceName.trim() || updates.name?.trim() || "";
   if (updates.currency?.trim()) dataToUpdate.currency = updates.currency.trim();
   if (updates.taxRate !== undefined && updates.taxRate !== null && !isNaN(Number(updates.taxRate))) dataToUpdate.taxRate = Number(updates.taxRate);
   if (updates.address !== undefined) dataToUpdate.address = updates.address.trim();
   if (updates.phoneNumber !== undefined) dataToUpdate.phoneNumber = updates.phoneNumber.trim();
 
-  if (Object.keys(dataToUpdate).length === 0) {
-    // No actual data changed, so don't set updatedAt
-     return; // Or return { message: "Tidak ada perubahan data." }
+  if (Object.keys(dataToUpdate).length === 0 && !(updates.hasOwnProperty('invoiceName') || updates.hasOwnProperty('address') || updates.hasOwnProperty('phoneNumber') || updates.hasOwnProperty('currency') || updates.hasOwnProperty('taxRate'))) {
+     return;
   }
 
   dataToUpdate.updatedAt = serverTimestamp() as Timestamp;
@@ -142,15 +141,43 @@ export async function updateBranch(branchId: string, updates: Partial<BranchInpu
 export async function deleteBranch(branchId: string): Promise<void | { error: string }> {
   if (!branchId) return { error: "ID Cabang tidak valid." };
   try {
+    // Check if any users are assigned to this branch
+    const usersQuery = query(collection(db, "users"), where("branchId", "==", branchId), limit(1));
+    const usersSnapshot = await getDocs(usersQuery);
+    if (!usersSnapshot.empty) {
+      return { error: `Masih ada pengguna yang terhubung ke cabang ini. Hapus atau pindahkan pengguna terlebih dahulu.` };
+    }
+
+    // Check if any inventory items are assigned to this branch
+    const itemsQuery = query(collection(db, "inventoryItems"), where("branchId", "==", branchId), limit(1));
+    const itemsSnapshot = await getDocs(itemsQuery);
+    if (!itemsSnapshot.empty) {
+      return { error: `Masih ada produk inventaris yang terhubung ke cabang ini. Hapus atau pindahkan produk terlebih dahulu.` };
+    }
+    
+    // Check if any POS shifts are assigned to this branch
+    const shiftsQuery = query(collection(db, "posShifts"), where("branchId", "==", branchId), limit(1));
+    const shiftsSnapshot = await getDocs(shiftsQuery);
+    if (!shiftsSnapshot.empty) {
+      return { error: `Masih ada data shift POS yang terhubung ke cabang ini.` };
+    }
+    
+    // Check if any POS transactions are assigned to this branch
+    const transactionsQuery = query(collection(db, "posTransactions"), where("branchId", "==", branchId), limit(1));
+    const transactionsSnapshot = await getDocs(transactionsQuery);
+    if (!transactionsSnapshot.empty) {
+      return { error: `Masih ada data transaksi POS yang terhubung ke cabang ini.` };
+    }
+
+
     const branchRef = doc(db, "branches", branchId);
     await deleteDoc(branchRef);
-    // Consider what happens to users assigned to this branch
-    // Potentially query users and set their branchId to null
   } catch (error: any) {
     console.error("Error deleting branch:", error);
     return { error: error.message || "Gagal menghapus cabang." };
   }
 }
+
 
 interface FirebaseBranchData extends Omit<Branch, 'id'> {
   createdAt?: Timestamp;
@@ -162,10 +189,10 @@ export async function getBranches(): Promise<Branch[]> {
     const q = query(collection(db, "branches"), orderBy("name"));
     const querySnapshot = await getDocs(q);
     const branches: Branch[] = [];
-    querySnapshot.forEach((doc) => {
-      const data = doc.data() as FirebaseBranchData;
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data() as FirebaseBranchData;
       branches.push({
-        id: doc.id,
+        id: docSnap.id,
         name: data.name,
         invoiceName: data.invoiceName || data.name,
         currency: data.currency || "IDR",
@@ -181,6 +208,31 @@ export async function getBranches(): Promise<Branch[]> {
   }
 }
 
+export async function getBranchById(branchId: string): Promise<Branch | null> {
+  if (!branchId) return null;
+  try {
+    const branchRef = doc(db, "branches", branchId);
+    const docSnap = await getDoc(branchRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data() as FirebaseBranchData;
+      return {
+        id: docSnap.id,
+        name: data.name,
+        invoiceName: data.invoiceName || data.name,
+        currency: data.currency || "IDR",
+        taxRate: data.taxRate === undefined ? 0 : data.taxRate,
+        address: data.address || "",
+        phoneNumber: data.phoneNumber || "",
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching branch by ID:", error);
+    return null;
+  }
+}
+
+
 // --- Inventory Item Types ---
 export interface InventoryItem {
   id: string;
@@ -191,7 +243,7 @@ export interface InventoryItem {
   branchId: string;
   quantity: number;
   price: number;
-  costPrice: number; // Harga Pokok
+  costPrice: number;
   imageUrl?: string;
   imageHint?: string;
   createdAt: Timestamp;
@@ -216,7 +268,7 @@ export async function addInventoryCategory(categoryData: InventoryCategoryInput)
       ...categoryData,
       createdAt: serverTimestamp(),
     });
-    const createdAt = Timestamp.now(); // Approximate for return
+    const createdAt = Timestamp.now();
     return { id: categoryRef.id, ...categoryData, createdAt };
   } catch (error: any) {
     console.error("Error adding inventory category:", error);
@@ -230,8 +282,8 @@ export async function getInventoryCategories(branchId: string): Promise<Inventor
     const q = query(collection(db, "inventoryCategories"), where("branchId", "==", branchId), orderBy("name"));
     const querySnapshot = await getDocs(q);
     const categories: InventoryCategory[] = [];
-    querySnapshot.forEach((doc) => {
-      categories.push({ id: doc.id, ...doc.data() } as InventoryCategory);
+    querySnapshot.forEach((docSnap) => {
+      categories.push({ id: docSnap.id, ...docSnap.data() } as InventoryCategory);
     });
     return categories;
   } catch (error) {
@@ -263,12 +315,11 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
   if (itemData.price < 0) return { error: "Harga tidak boleh negatif."};
   if (itemData.costPrice < 0) return { error: "Harga pokok tidak boleh negatif."};
 
-
   try {
     const now = serverTimestamp() as Timestamp;
     const itemRef = await addDoc(collection(db, "inventoryItems"), {
       ...itemData,
-      costPrice: itemData.costPrice || 0, // Ensure costPrice is set
+      costPrice: itemData.costPrice || 0,
       categoryName,
       createdAt: now,
       updatedAt: now,
@@ -294,9 +345,9 @@ export async function getInventoryItems(branchId: string): Promise<InventoryItem
     const q = query(collection(db, "inventoryItems"), where("branchId", "==", branchId), orderBy("name"));
     const querySnapshot = await getDocs(q);
     const items: InventoryItem[] = [];
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      items.push({ id: doc.id, ...data, costPrice: data.costPrice || 0 } as InventoryItem); // Ensure costPrice defaults to 0 if not present
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      items.push({ id: docSnap.id, ...data, costPrice: data.costPrice || 0 } as InventoryItem);
     });
     return items;
   } catch (error) {
@@ -311,13 +362,10 @@ export async function updateInventoryItem(itemId: string, updates: Partial<Omit<
     const itemRef = doc(db, "inventoryItems", itemId);
     const payload: any = { ...updates, updatedAt: serverTimestamp() };
     if (updates.costPrice === undefined || updates.costPrice === null || isNaN(Number(updates.costPrice))) {
-      // If costPrice is being explicitly set to undefined/null/NaN, ensure it defaults to 0 or handle as error
-      // For now, let's assume it might be an optional update, so we don't force it to 0 unless it's part of the explicit update.
-      // If it's in `updates` and invalid, it should be caught by form validation earlier.
+      // No change or invalid cost price
     } else {
       payload.costPrice = Number(updates.costPrice);
     }
-
 
     if (newCategoryName && updates.categoryId) {
       payload.categoryName = newCategoryName;
@@ -361,7 +409,6 @@ export interface PosShift {
   actualCashAtEnd?: number;
   cashDifference?: number;
   totalSalesByPaymentMethod?: Record<PaymentMethod, number>;
-  // transactions?: string[]; // Array of transaction IDs
 }
 
 export async function startNewShift(userId: string, branchId: string, initialCash: number): Promise<PosShift | { error: string }> {
@@ -374,10 +421,10 @@ export async function startNewShift(userId: string, branchId: string, initialCas
       startTime: serverTimestamp() as Timestamp,
       initialCash,
       status: 'active',
-      totalSalesByPaymentMethod: { cash: 0, card: 0, transfer: 0}, // Initialize
+      totalSalesByPaymentMethod: { cash: 0, card: 0, transfer: 0},
     };
     const shiftRef = await addDoc(collection(db, "posShifts"), shiftData);
-    return { id: shiftRef.id, ...shiftData, startTime: Timestamp.now() }; // Return with client-side timestamp approximation
+    return { id: shiftRef.id, ...shiftData, startTime: Timestamp.now() };
   } catch (error: any) {
     console.error("Error starting new shift:", error);
     return { error: error.message || "Gagal memulai shift baru." };
@@ -436,8 +483,8 @@ export interface TransactionItem {
   productId: string;
   productName: string;
   quantity: number;
-  price: number; // Price per unit at the time of sale
-  costPrice: number; // Cost price per unit at the time of sale
+  price: number;
+  costPrice: number;
   total: number;
 }
 
@@ -445,19 +492,20 @@ export interface PosTransaction {
   id: string;
   shiftId: string;
   branchId: string;
-  userId: string; // Cashier ID
+  userId: string;
   timestamp: Timestamp;
   items: TransactionItem[];
   subtotal: number;
   taxAmount: number;
   totalAmount: number;
-  totalCost: number; // Total cost of goods sold for this transaction
+  totalCost: number;
   paymentMethod: PaymentMethod;
-  amountPaid: number; // For cash, this might be > totalAmount
-  changeGiven: number; // For cash
+  amountPaid: number;
+  changeGiven: number;
+  invoiceNumber: string;
 }
 
-export async function recordTransaction(transactionData: Omit<PosTransaction, 'id'>): Promise<PosTransaction | { error: string }> {
+export async function recordTransaction(transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' >): Promise<PosTransaction | { error: string }> {
   if (!transactionData.shiftId || !transactionData.branchId || !transactionData.userId) {
     return { error: "Shift ID, Branch ID, dan User ID diperlukan untuk transaksi." };
   }
@@ -466,27 +514,21 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
   const batch = writeBatch(db);
 
   try {
-    // 1. Create Transaction Document
     const transactionRef = doc(collection(db, "posTransactions"));
-    const dataToSave = {
+    const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
+    const dataToSave: Omit<PosTransaction, 'id'> = {
       ...transactionData,
+      invoiceNumber,
       timestamp: serverTimestamp() as Timestamp,
     };
     batch.set(transactionRef, dataToSave);
 
-    // 2. Update Inventory Stock
     for (const item of transactionData.items) {
       const productRef = doc(db, "inventoryItems", item.productId);
-      const productSnap = await getDoc(productRef); // Get current stock
+      const productSnap = await getDoc(productRef);
       if (productSnap.exists()) {
         const currentStock = productSnap.data().quantity as number;
         const newStock = currentStock - item.quantity;
-        if (newStock < 0) {
-          // This should ideally be prevented by UI or earlier checks
-          console.warn(`Stock for product ${item.productName} (${item.productId}) would go negative. Transaction recorded, but stock not updated to negative.`);
-          // Optionally, you could throw an error here to stop the transaction if strict stock control is needed
-          // return { error: `Stok tidak cukup untuk produk ${item.productName}.`};
-        }
         batch.update(productRef, { quantity: newStock < 0 ? 0 : newStock, updatedAt: serverTimestamp() });
       } else {
         console.warn(`Product with ID ${item.productId} not found in inventory. Stock not updated.`);
@@ -502,14 +544,108 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
 }
 
 
+export async function getTransactionById(transactionId: string): Promise<PosTransaction | null> {
+    if (!transactionId) return null;
+    try {
+        const transactionRef = doc(db, "posTransactions", transactionId);
+        const docSnap = await getDoc(transactionRef);
+        if (docSnap.exists()) {
+            return { id: docSnap.id, ...docSnap.data() } as PosTransaction;
+        }
+        return null;
+    } catch (error) {
+        console.error("Error fetching transaction by ID:", error);
+        return null;
+    }
+}
+
+interface QueryOptions {
+    limit?: number;
+    orderByField?: string | FieldPath;
+    orderDirection?: OrderByDirection;
+    // lastVisible?: DocumentSnapshot; // For pagination
+}
+
+export async function getTransactionsForUserByBranch(
+    userId: string,
+    branchId: string,
+    options: QueryOptions = {}
+): Promise<PosTransaction[]> {
+    if (!userId || !branchId) return [];
+    try {
+        const constraints = [
+            where("userId", "==", userId),
+            where("branchId", "==", branchId)
+        ];
+        if (options.orderByField) {
+            constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
+        } else {
+            constraints.push(orderBy("timestamp", "desc")); // Default order
+        }
+        if (options.limit) {
+            constraints.push(limit(options.limit));
+        }
+        // if (options.lastVisible) {
+        //     constraints.push(startAfter(options.lastVisible));
+        // }
+
+        const q = query(collection(db, "posTransactions"), ...constraints);
+        const querySnapshot = await getDocs(q);
+        const transactions: PosTransaction[] = [];
+        querySnapshot.forEach((docSnap) => {
+            transactions.push({ id: docSnap.id, ...docSnap.data() } as PosTransaction);
+        });
+        return transactions;
+    } catch (error) {
+        console.error("Error fetching transactions for user by branch:", error);
+        return [];
+    }
+}
+
+
+export async function getShiftsForUserByBranch(
+    userId: string,
+    branchId: string,
+    options: QueryOptions = {}
+): Promise<PosShift[]> {
+    if (!userId || !branchId) return [];
+    try {
+        const constraints = [
+            where("userId", "==", userId),
+            where("branchId", "==", branchId)
+        ];
+        if (options.orderByField) {
+            constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
+        } else {
+            constraints.push(orderBy("startTime", "desc")); // Default order
+        }
+        if (options.limit) {
+            constraints.push(limit(options.limit));
+        }
+        // if (options.lastVisible) {
+        //     constraints.push(startAfter(options.lastVisible));
+        // }
+        const q = query(collection(db, "posShifts"), ...constraints);
+        const querySnapshot = await getDocs(q);
+        const shifts: PosShift[] = [];
+        querySnapshot.forEach((docSnap) => {
+            shifts.push({ id: docSnap.id, ...docSnap.data() } as PosShift);
+        });
+        return shifts;
+    } catch (error) {
+        console.error("Error fetching shifts for user by branch:", error);
+        return [];
+    }
+}
+
 export async function getTransactionsForShift(shiftId: string): Promise<PosTransaction[]> {
   if (!shiftId) return [];
   try {
     const q = query(collection(db, "posTransactions"), where("shiftId", "==", shiftId), orderBy("timestamp", "asc"));
     const querySnapshot = await getDocs(q);
     const transactions: PosTransaction[] = [];
-    querySnapshot.forEach((doc) => {
-      transactions.push({ id: doc.id, ...doc.data() } as PosTransaction);
+    querySnapshot.forEach((docSnap) => {
+      transactions.push({ id: docSnap.id, ...docSnap.data() } as PosTransaction);
     });
     return transactions;
   } catch (error) {
@@ -517,3 +653,5 @@ export async function getTransactionsForShift(shiftId: string): Promise<PosTrans
     return [];
   }
 }
+
+    
