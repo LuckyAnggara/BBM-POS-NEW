@@ -15,7 +15,14 @@ import {
   History, 
   PackageSearch, // New icon for Stock Mutation
 } from "lucide-react";
-import { SidebarMenu, SidebarMenuItem, SidebarMenuButton } from "@/components/ui/sidebar";
+import { 
+  SidebarMenu, 
+  SidebarMenuItem, 
+  SidebarMenuButton, 
+  SidebarMenuSub, // Added import
+  SidebarMenuSubItem, // Added import
+  SidebarMenuSubButton // Added import
+} from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
 import SidebarHeaderBrand from "./sidebar-header-brand";
 import { useAuth } from "@/contexts/auth-context";
@@ -30,10 +37,10 @@ const navItems = [
   { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
   { 
     href: "/reports", 
-    label: "Laporan Penjualan", 
+    label: "Laporan", // Changed label to be more generic for the group
     icon: BarChart3, 
     adminOnly: false,
-    subItems: [ // Making reports a group
+    subItems: [ 
       { href: "/reports", label: "Ringkasan Penjualan", icon: BarChart3, exactMatch: true },
       { href: "/reports/stock-mutation", label: "Mutasi Stok", icon: PackageSearch },
     ]
@@ -75,9 +82,7 @@ export default function AppSidebarNav() {
                          isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                       )}
                       isActive={pathname.startsWith(item.href) && !isNavItemDisabled}
-                      // Removed tooltip for parent group items for now, can be added if needed
-                      // tooltip={isNavItemDisabled ? undefined : {children: item.label, side: "right", align: "center"}}
-                      asChild={false} // Parent is not a link
+                      asChild={false} 
                       onClick={(e) => { if(isNavItemDisabled) e.preventDefault(); }}
                       aria-disabled={isNavItemDisabled}
                       tabIndex={isNavItemDisabled ? -1 : undefined}
@@ -94,8 +99,6 @@ export default function AppSidebarNav() {
                               aria-disabled={isNavItemDisabled}
                               className={cn(isNavItemDisabled && "cursor-not-allowed")}
                            >
-                            {/* Sub-item icon can be added here if desired, or use a generic one */}
-                            {/* <subItem.icon className="mr-2 h-4 w-4" />  */}
                             <span>{subItem.label}</span>
                            </SidebarMenuSubButton>
                          </Link>
