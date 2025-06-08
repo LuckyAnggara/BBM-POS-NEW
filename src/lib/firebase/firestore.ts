@@ -994,12 +994,156 @@ export async function updateSupplier(supplierId: string, updates: Partial<Suppli
 
 export async function deleteSupplier(supplierId: string): Promise<void | { error: string }> {
   if (!supplierId) return { error: "ID Pemasok tidak valid." };
-  // TODO: Check if supplier is linked to any purchase orders before deleting.
-  // For now, simple delete.
   try {
     await deleteDoc(doc(db, "suppliers", supplierId));
   } catch (error: any) {
     console.error("Error deleting supplier:", error);
     return { error: error.message || "Gagal menghapus pemasok." };
   }
+}
+
+// --- Purchase Order Management ---
+export interface PurchaseOrderItemInput {
+  productId: string;
+  productName: string; // Denormalized
+  orderedQuantity: number;
+  purchasePrice: number; // Price per unit
+}
+
+export interface PurchaseOrderItem extends PurchaseOrderItemInput {
+  receivedQuantity: number;
+  totalPrice: number; // orderedQuantity * purchasePrice
+}
+
+export interface PurchaseOrderInput {
+  branchId: string;
+  supplierId: string;
+  orderDate: Timestamp;
+  expectedDeliveryDate?: Timestamp;
+  items: PurchaseOrderItemInput[];
+  notes?: string;
+  status: 'draft' | 'ordered' | 'partially_received' | 'fully_received' | 'cancelled';
+  createdById: string;
+}
+
+export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
+  id: string;
+  poNumber: string; // Auto-generated or manual
+  supplierName: string; // Denormalized
+  items: PurchaseOrderItem[];
+  subtotal: number;
+  shippingCost?: number;
+  taxAmount?: number;
+  totalAmount: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  // Fields related to receiving might be added here or in a separate sub-collection
+}
+
+export async function addPurchaseOrder(
+  poData: PurchaseOrderInput,
+  supplierName: string
+): Promise<PurchaseOrder | { error: string }> {
+  if (!poData.branchId) return { error: "ID Cabang diperlukan." };
+  if (!poData.supplierId) return { error: "Pemasok harus dipilih." };
+  if (!poData.orderDate) return { error: "Tanggal pemesanan harus diisi." };
+  if (poData.items.length === 0) return { error: "Pesanan pembelian harus memiliki minimal satu item." };
+  if (!poData.createdById) return { error: "ID Pengguna pembuat PO diperlukan." };
+
+  try {
+    const now = serverTimestamp() as Timestamp;
+    const poRef = doc(collection(db, "purchaseOrders")); // Auto-generate ID
+
+    const processedItems: PurchaseOrderItem[] = poData.items.map(item => ({
+      ...item,
+      receivedQuantity: 0, // Initially 0
+      totalPrice: item.orderedQuantity * item.purchasePrice,
+    }));
+
+    const subtotal = processedItems.reduce((sum, item) => sum + item.totalPrice, 0);
+    // For now, totalAmount is same as subtotal. Shipping and tax can be added later.
+    const totalAmount = subtotal; 
+    const poNumber = `PO-${poRef.id.substring(0, 8).toUpperCase()}`;
+
+    const dataToSave: Omit<PurchaseOrder, 'id'> = {
+      poNumber,
+      branchId: poData.branchId,
+      supplierId: poData.supplierId,
+      supplierName, // Denormalized supplier name
+      orderDate: poData.orderDate,
+      expectedDeliveryDate: poData.expectedDeliveryDate,
+      items: processedItems,
+      notes: poData.notes || "",
+      status: poData.status || 'draft', // Default to draft
+      createdById: poData.createdById,
+      subtotal,
+      shippingCost: 0, // Placeholder
+      taxAmount: 0,    // Placeholder
+      totalAmount,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await setDoc(poRef, dataToSave);
+    
+    const clientTimestamp = Timestamp.now();
+    return {
+      id: poRef.id,
+      ...dataToSave,
+      createdAt: clientTimestamp, // Use client-side timestamp for immediate return
+      updatedAt: clientTimestamp,
+    };
+  } catch (error: any) {
+    console.error("Error adding purchase order:", error);
+    return { error: error.message || "Gagal menambah pesanan pembelian." };
+  }
+}
+
+export async function getPurchaseOrdersByBranch(
+  branchId: string,
+  options: QueryOptions = {}
+): Promise<PurchaseOrder[]> {
+  if (!branchId) return [];
+  
+  const constraints: any[] = [
+      where("branchId", "==", branchId)
+  ];
+
+  if (options.orderByField) {
+      constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
+  } else {
+      constraints.push(orderBy("orderDate", "desc")); 
+  }
+
+  if (options.limit) {
+      constraints.push(limit(options.limit));
+  }
+  
+  try {
+      const q = query(collection(db, "purchaseOrders"), ...constraints);
+      const querySnapshot = await getDocs(q);
+      const purchaseOrders: PurchaseOrder[] = [];
+      querySnapshot.forEach((docSnap) => {
+          purchaseOrders.push({ id: docSnap.id, ...docSnap.data() } as PurchaseOrder);
+      });
+      return purchaseOrders;
+  } catch (error) {
+      console.error("Error fetching purchase orders by branch:", error);
+      return [];
+  }
+}
+
+export async function getPurchaseOrderById(poId: string): Promise<PurchaseOrder | null> {
+    if (!poId) return null;
+    try {
+        const poRef = doc(db, "purchaseOrders", poId);
+        const docSnap = await getDoc(poRef);
+        if (docSnap.exists()) {
+            return { id: docSnap.id, ...docSnap.data() } as PurchaseOrder;
+        }
+        return null;
+    } catch (error) {
+        console.error("Error fetching purchase order by ID:", error);
+        return null;
+    }
 }

@@ -15,6 +15,7 @@ import {
   History, 
   PackageSearch,
   Truck, // Icon for Suppliers
+  ClipboardList, // Icon for Purchase Orders
 } from "lucide-react";
 import { 
   SidebarMenu, 
@@ -34,6 +35,7 @@ const navItems = [
   { href: "/pos", label: "Point of Sale", icon: ShoppingCart, adminOnly: false },
   { href: "/inventory", label: "Inventaris", icon: Archive, adminOnly: false },
   { href: "/suppliers", label: "Pemasok", icon: Truck, adminOnly: false },
+  { href: "/purchase-orders", label: "Pesanan Pembelian", icon: ClipboardList, adminOnly: false },
   { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
   { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false }, 
