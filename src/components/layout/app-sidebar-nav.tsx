@@ -8,12 +8,13 @@ import {
   LayoutDashboard,
   ShoppingCart,
   Archive,
-  CreditCard, // Icon for Expenses
+  CreditCard, 
   BarChart3,
   Settings,
   Receipt, 
   History, 
   PackageSearch,
+  Truck, // Icon for Suppliers
 } from "lucide-react";
 import { 
   SidebarMenu, 
@@ -32,9 +33,10 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
   { href: "/pos", label: "Point of Sale", icon: ShoppingCart, adminOnly: false },
   { href: "/inventory", label: "Inventaris", icon: Archive, adminOnly: false },
+  { href: "/suppliers", label: "Pemasok", icon: Truck, adminOnly: false },
   { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
-  { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false }, // New Expenses Item
+  { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false }, 
   { 
     href: "/reports", 
     label: "Laporan", 
