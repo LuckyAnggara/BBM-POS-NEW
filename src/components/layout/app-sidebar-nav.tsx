@@ -14,9 +14,10 @@ import {
   Receipt, 
   History, 
   PackageSearch,
-  Truck, // Icon for Suppliers
-  ClipboardList, // Icon for Purchase Orders
-  PackageOpen, // Icon for Stock Movement
+  Truck, 
+  ClipboardList, 
+  PackageOpen, 
+  Users, // Icon for Customers
 } from "lucide-react";
 import { 
   SidebarMenu, 
@@ -35,6 +36,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
   { href: "/pos", label: "Point of Sale", icon: ShoppingCart, adminOnly: false },
   { href: "/inventory", label: "Inventaris", icon: Archive, adminOnly: false },
+  { href: "/customers", label: "Pelanggan", icon: Users, adminOnly: false }, // New Customer Menu
   { href: "/suppliers", label: "Pemasok", icon: Truck, adminOnly: false },
   { href: "/purchase-orders", label: "Pesanan Pembelian", icon: ClipboardList, adminOnly: false },
   { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
@@ -46,7 +48,7 @@ const navItems = [
     icon: BarChart3, 
     adminOnly: false,
     subItems: [ 
-      { href: "/reports", label: "Ringkasan Keuangan", icon: BarChart3, exactMatch: true }, // Updated label to be more generic for the main reports page
+      { href: "/reports", label: "Ringkasan Keuangan", icon: BarChart3, exactMatch: true },
       { href: "/reports/stock-mutation", label: "Mutasi Stok Global", icon: PackageSearch },
       { href: "/reports/stock-movement", label: "Pergerakan Stok Produk", icon: PackageOpen },
     ]

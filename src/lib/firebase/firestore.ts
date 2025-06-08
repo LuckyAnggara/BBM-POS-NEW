@@ -395,7 +395,10 @@ export async function deleteInventoryItem(itemId: string): Promise<void | { erro
 }
 
 // --- POS Shift Management ---
-export type PaymentMethod = 'cash' | 'card' | 'transfer';
+export type PaymentMethod = 'cash' | 'card' | 'transfer'; // To be deprecated by paymentTerms
+export type PaymentTerms = 'cash' | 'card' | 'transfer' | 'credit';
+export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid' | 'overdue';
+
 
 export interface PosShift {
   id: string;
@@ -408,7 +411,7 @@ export interface PosShift {
   expectedCashAtEnd?: number;
   actualCashAtEnd?: number;
   cashDifference?: number;
-  totalSalesByPaymentMethod?: Record<PaymentMethod, number>;
+  totalSalesByPaymentMethod?: Record<PaymentMethod, number>; // This should be updated if paymentTerms change
 }
 
 export async function startNewShift(userId: string, branchId: string, initialCash: number): Promise<PosShift | { error: string }> {
@@ -499,12 +502,17 @@ export interface PosTransaction {
   taxAmount: number;
   totalAmount: number;
   totalCost: number;
-  paymentMethod: PaymentMethod;
+  paymentTerms: PaymentTerms; // Changed from paymentMethod
+  customerId?: string;
+  customerName?: string; // Denormalized
+  creditDueDate?: Timestamp;
+  isCreditSale?: boolean;
+  outstandingAmount?: number;
+  paymentStatus?: PaymentStatus;
   amountPaid: number; 
   changeGiven: number;
-  customerName?: string; 
   invoiceNumber: string;
-  status: 'completed' | 'returned'; // Added status for returns
+  status: 'completed' | 'returned'; 
   returnedAt?: Timestamp;
   returnReason?: string;
   returnedByUserId?: string;
@@ -531,19 +539,24 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
       taxAmount: transactionData.taxAmount,
       totalAmount: transactionData.totalAmount,
       totalCost: transactionData.totalCost,
-      paymentMethod: transactionData.paymentMethod,
+      paymentTerms: transactionData.paymentTerms,
+      customerId: transactionData.customerId,
+      customerName: transactionData.customerName,
+      creditDueDate: transactionData.creditDueDate,
+      isCreditSale: transactionData.isCreditSale || false,
+      outstandingAmount: transactionData.isCreditSale ? transactionData.totalAmount : 0,
+      paymentStatus: transactionData.isCreditSale ? 'unpaid' : 'paid',
       amountPaid: transactionData.amountPaid,
       changeGiven: transactionData.changeGiven,
-      customerName: transactionData.customerName || "", 
       invoiceNumber,
-      status: 'completed', // Default status
+      status: 'completed', 
       timestamp: serverTimestamp() as Timestamp,
     };
     batch.set(transactionRef, dataToSave);
 
     for (const item of transactionData.items) {
       const productRef = doc(db, "inventoryItems", item.productId);
-      const productSnap = await getDoc(productRef); // Must be awaited to get actual data
+      const productSnap = await getDoc(productRef); 
       if (productSnap.exists()) {
         const currentStock = productSnap.data().quantity as number;
         const newStock = currentStock - item.quantity;
@@ -586,6 +599,8 @@ export async function processFullTransactionReturn(transactionId: string, reason
       returnReason: reason,
       returnedAt: serverTimestamp(),
       returnedByUserId: returnedByUserId,
+      outstandingAmount: 0, // Assuming full return means no outstanding amount
+      paymentStatus: 'returned', // Or a more specific status if needed
     });
 
     for (const item of transactionData.items) {
@@ -663,7 +678,12 @@ export async function getTransactionById(transactionId: string): Promise<PosTran
         const transactionRef = doc(db, "posTransactions", transactionId);
         const docSnap = await getDoc(transactionRef);
         if (docSnap.exists()) {
-            return { id: docSnap.id, ...docSnap.data() } as PosTransaction;
+            const data = docSnap.data();
+            return { 
+                id: docSnap.id, 
+                ...data,
+                paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback for older data
+             } as PosTransaction;
         }
         return null;
     } catch (error) {
@@ -716,7 +736,12 @@ export async function getTransactionsForUserByBranch(
         const querySnapshot = await getDocs(q);
         const transactions: PosTransaction[] = [];
         querySnapshot.forEach((docSnap) => {
-            transactions.push({ id: docSnap.id, ...docSnap.data() } as PosTransaction);
+            const data = docSnap.data();
+            transactions.push({ 
+                id: docSnap.id, 
+                ...data,
+                paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback for older data
+            } as PosTransaction);
         });
         return transactions;
     } catch (error) {
@@ -766,7 +791,12 @@ export async function getTransactionsForShift(shiftId: string): Promise<PosTrans
     const querySnapshot = await getDocs(q);
     const transactions: PosTransaction[] = [];
     querySnapshot.forEach((docSnap) => {
-      transactions.push({ id: docSnap.id, ...docSnap.data() } as PosTransaction);
+      const data = docSnap.data();
+      transactions.push({ 
+          id: docSnap.id, 
+          ...data,
+          paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback
+      } as PosTransaction);
     });
     return transactions;
   } catch (error) {
@@ -797,7 +827,12 @@ export async function getTransactionsByDateRangeAndBranch(
     const querySnapshot = await getDocs(q);
     const transactions: PosTransaction[] = [];
     querySnapshot.forEach((docSnap) => {
-      transactions.push({ id: docSnap.id, ...docSnap.data() } as PosTransaction);
+      const data = docSnap.data();
+      transactions.push({ 
+          id: docSnap.id, 
+          ...data,
+          paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback
+       } as PosTransaction);
     });
     return transactions;
   } catch (error) {
@@ -810,7 +845,7 @@ export async function getTransactionsByDateRangeAndBranch(
 export interface Expense {
   id: string;
   branchId: string;
-  userId: string; // User who recorded the expense
+  userId: string; 
   date: Timestamp;
   category: string;
   amount: number;
@@ -984,6 +1019,12 @@ export async function updateSupplier(supplierId: string, updates: Partial<Suppli
 export async function deleteSupplier(supplierId: string): Promise<void | { error: string }> {
   if (!supplierId) return { error: "ID Pemasok tidak valid." };
   try {
+    // Tambahkan pengecekan jika supplier masih terkait dengan Purchase Orders
+    const poQuery = query(collection(db, "purchaseOrders"), where("supplierId", "==", supplierId), limit(1));
+    const poSnapshot = await getDocs(poQuery);
+    if (!poSnapshot.empty) {
+      return { error: "Pemasok ini masih terkait dengan Pesanan Pembelian. Hapus atau ubah PO terlebih dahulu." };
+    }
     await deleteDoc(doc(db, "suppliers", supplierId));
   } catch (error: any) {
     console.error("Error deleting supplier:", error);
@@ -1244,3 +1285,82 @@ export async function receivePurchaseOrderItems(
     return { error: error.message || "Gagal memproses penerimaan barang." };
   }
 }
+
+
+// --- Customer Management ---
+export interface Customer {
+  id: string;
+  branchId: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  notes?: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export type CustomerInput = Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>;
+
+export async function addCustomer(customerData: CustomerInput): Promise<Customer | { error: string }> {
+  if (!customerData.branchId) return { error: "ID Cabang diperlukan." };
+  if (!customerData.name.trim()) return { error: "Nama pelanggan tidak boleh kosong." };
+
+  try {
+    const now = serverTimestamp() as Timestamp;
+    const dataToSave = {
+      ...customerData,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const customerRef = await addDoc(collection(db, "customers"), dataToSave);
+    const clientTimestamp = Timestamp.now();
+    return { id: customerRef.id, ...customerData, createdAt: clientTimestamp, updatedAt: clientTimestamp };
+  } catch (error: any) {
+    console.error("Error adding customer:", error);
+    return { error: error.message || "Gagal menambah pelanggan." };
+  }
+}
+
+export async function getCustomers(branchId: string): Promise<Customer[]> {
+  if (!branchId) return [];
+  try {
+    const q = query(collection(db, "customers"), where("branchId", "==", branchId), orderBy("name"));
+    const querySnapshot = await getDocs(q);
+    const customers: Customer[] = [];
+    querySnapshot.forEach((docSnap) => {
+      customers.push({ id: docSnap.id, ...docSnap.data() } as Customer);
+    });
+    return customers;
+  } catch (error) {
+    console.error("Error fetching customers:", error);
+    return [];
+  }
+}
+
+export async function updateCustomer(customerId: string, updates: Partial<CustomerInput>): Promise<void | { error: string }> {
+  if (!customerId) return { error: "ID Pelanggan tidak valid." };
+  try {
+    const customerRef = doc(db, "customers", customerId);
+    await updateDoc(customerRef, {
+      ...updates,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error: any) {
+    console.error("Error updating customer:", error);
+    return { error: error.message || "Gagal memperbarui pelanggan." };
+  }
+}
+
+export async function deleteCustomer(customerId: string): Promise<void | { error: string }> {
+  if (!customerId) return { error: "ID Pelanggan tidak valid." };
+  try {
+    // TODO: Add check if customer is associated with any transactions before deleting
+    // For now, direct deletion
+    await deleteDoc(doc(db, "customers", customerId));
+  } catch (error: any) {
+    console.error("Error deleting customer:", error);
+    return { error: error.message || "Gagal menghapus pelanggan." };
+  }
+}
+
