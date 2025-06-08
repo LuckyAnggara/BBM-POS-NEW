@@ -13,6 +13,7 @@ export interface Branch {
   invoiceName?: string;
   address?: string;
   phoneNumber?: string;
+  transactionDeletionPassword?: string; // Added field
 }
 
 interface BranchContextType {

@@ -99,6 +99,7 @@ export async function createBranch(branchData: BranchInput): Promise<Branch | { 
       taxRate: branchData.taxRate === undefined || branchData.taxRate === null || isNaN(Number(branchData.taxRate)) ? 0 : Number(branchData.taxRate),
       address: branchData.address?.trim() || "",
       phoneNumber: branchData.phoneNumber?.trim() || "",
+      transactionDeletionPassword: branchData.transactionDeletionPassword || "", // Initialize if provided
       createdAt: serverTimestamp() as Timestamp,
     };
     const branchRef = await addDoc(collection(db, "branches"), dataToSave);
@@ -109,7 +110,8 @@ export async function createBranch(branchData: BranchInput): Promise<Branch | { 
         currency: dataToSave.currency,
         taxRate: dataToSave.taxRate,
         address: dataToSave.address,
-        phoneNumber: dataToSave.phoneNumber
+        phoneNumber: dataToSave.phoneNumber,
+        transactionDeletionPassword: dataToSave.transactionDeletionPassword
     };
   } catch (error: any) {
     console.error("Error creating branch:", error);
@@ -127,8 +129,10 @@ export async function updateBranch(branchId: string, updates: Partial<BranchInpu
   if (updates.taxRate !== undefined && updates.taxRate !== null && !isNaN(Number(updates.taxRate))) dataToUpdate.taxRate = Number(updates.taxRate);
   if (updates.address !== undefined) dataToUpdate.address = updates.address.trim();
   if (updates.phoneNumber !== undefined) dataToUpdate.phoneNumber = updates.phoneNumber.trim();
+  if (updates.transactionDeletionPassword !== undefined) dataToUpdate.transactionDeletionPassword = updates.transactionDeletionPassword;
 
-  if (Object.keys(dataToUpdate).length === 0 && !(updates.hasOwnProperty('invoiceName') || updates.hasOwnProperty('address') || updates.hasOwnProperty('phoneNumber') || updates.hasOwnProperty('currency') || updates.hasOwnProperty('taxRate'))) {
+
+  if (Object.keys(dataToUpdate).length === 0 && !(updates.hasOwnProperty('invoiceName') || updates.hasOwnProperty('address') || updates.hasOwnProperty('phoneNumber') || updates.hasOwnProperty('currency') || updates.hasOwnProperty('taxRate') || updates.hasOwnProperty('transactionDeletionPassword'))) {
      return;
   }
 
@@ -193,6 +197,7 @@ export async function getBranches(): Promise<Branch[]> {
         taxRate: data.taxRate === undefined ? 0 : data.taxRate,
         address: data.address || "",
         phoneNumber: data.phoneNumber || "",
+        transactionDeletionPassword: data.transactionDeletionPassword || ""
       });
     });
     return branches;
@@ -217,6 +222,7 @@ export async function getBranchById(branchId: string): Promise<Branch | null> {
         taxRate: data.taxRate === undefined ? 0 : data.taxRate,
         address: data.address || "",
         phoneNumber: data.phoneNumber || "",
+        transactionDeletionPassword: data.transactionDeletionPassword || ""
       };
     }
     return null;
@@ -594,9 +600,6 @@ export async function processFullTransactionReturn(transactionId: string, reason
         const newStock = currentStock + item.quantity;
         batch.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
       } else {
-        // This case should ideally not happen if data integrity is maintained
-        // Or, it implies the product was deleted after the transaction.
-        // Log a warning or handle as per business rules (e.g., create a placeholder adjustment)
         console.warn(`Product with ID ${item.productId} not found while processing return. Stock not restored.`);
       }
     }
@@ -605,6 +608,60 @@ export async function processFullTransactionReturn(transactionId: string, reason
   } catch (error: any) {
     console.error("Error processing transaction return:", error);
     return { error: error.message || "Gagal memproses retur transaksi." };
+  }
+}
+
+export async function deleteTransaction(transactionId: string, branchId: string, passwordAttempt: string): Promise<{ success?: boolean; error?: string }> {
+  if (!transactionId) return { error: "ID Transaksi tidak valid." };
+  if (!branchId) return { error: "ID Cabang tidak valid." };
+  if (!passwordAttempt) return { error: "Password hapus diperlukan." };
+
+  const batch = writeBatch(db);
+  try {
+    // 1. Fetch branch to validate password
+    const branchDoc = await getBranchById(branchId);
+    if (!branchDoc) {
+      return { error: "Data cabang tidak ditemukan." };
+    }
+    if (!branchDoc.transactionDeletionPassword) {
+      return { error: "Password hapus belum diatur untuk cabang ini. Silakan atur di Pengaturan Admin." };
+    }
+    if (branchDoc.transactionDeletionPassword !== passwordAttempt) {
+      return { error: "Password hapus transaksi salah." };
+    }
+
+    // 2. Fetch transaction to be deleted
+    const transactionRef = doc(db, "posTransactions", transactionId);
+    const transactionSnap = await getDoc(transactionRef);
+    if (!transactionSnap.exists()) {
+      return { error: "Transaksi tidak ditemukan." };
+    }
+    const transactionData = transactionSnap.data() as PosTransaction;
+
+    // 3. If transaction was not 'returned', revert stock quantities
+    if (transactionData.status !== 'returned') {
+      for (const item of transactionData.items) {
+        const productRef = doc(db, "inventoryItems", item.productId);
+        const productSnap = await getDoc(productRef);
+        if (productSnap.exists()) {
+          const currentStock = productSnap.data().quantity as number;
+          const newStock = currentStock + item.quantity; // Add back the sold quantity
+          batch.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
+        } else {
+          console.warn(`Product with ID ${item.productId} not found while deleting transaction. Stock not restored.`);
+        }
+      }
+    }
+    // If it was already 'returned', stock was already adjusted.
+
+    // 4. Delete the transaction document
+    batch.delete(transactionRef);
+
+    await batch.commit();
+    return { success: true };
+  } catch (error: any) {
+    console.error("Error deleting transaction:", error);
+    return { error: error.message || "Gagal menghapus transaksi." };
   }
 }
 
@@ -628,7 +685,8 @@ interface QueryOptions {
     limit?: number;
     orderByField?: string | FieldPath;
     orderDirection?: OrderByDirection;
-    // lastVisible?: DocumentSnapshot; 
+    startDate?: Date;
+    endDate?: Date;
 }
 
 export async function getTransactionsForUserByBranch(
@@ -637,20 +695,34 @@ export async function getTransactionsForUserByBranch(
     options: QueryOptions = {}
 ): Promise<PosTransaction[]> {
     if (!userId || !branchId) return [];
+    
+    const constraints: any[] = [
+        where("userId", "==", userId),
+        where("branchId", "==", branchId)
+    ];
+
+    if (options.startDate && options.endDate) {
+        const startTimestamp = Timestamp.fromDate(options.startDate);
+        const endOfDayEndDate = new Date(options.endDate);
+        endOfDayEndDate.setHours(23, 59, 59, 999);
+        const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
+        constraints.push(where("timestamp", ">=", startTimestamp));
+        constraints.push(where("timestamp", "<=", endTimestamp));
+    }
+    
+    if (options.orderByField) {
+        constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
+    } else {
+        // Default sort by timestamp if specific order field is not provided,
+        // or if date range is present, sorting by timestamp is natural.
+        constraints.push(orderBy("timestamp", options.orderDirection || "desc")); 
+    }
+
+    if (options.limit && !(options.startDate && options.endDate)) { // Apply limit only if not fetching by date range, to avoid complex pagination with date filters
+        constraints.push(limit(options.limit));
+    }
+    
     try {
-        const constraints: any[] = [
-            where("userId", "==", userId),
-            where("branchId", "==", branchId)
-        ];
-        if (options.orderByField) {
-            constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
-        } else {
-            constraints.push(orderBy("timestamp", "desc")); 
-        }
-        if (options.limit) {
-            constraints.push(limit(options.limit));
-        }
-        
         const q = query(collection(db, "posTransactions"), ...constraints);
         const querySnapshot = await getDocs(q);
         const transactions: PosTransaction[] = [];
@@ -816,7 +888,6 @@ export async function getExpenses(
       qConstraints.push(where("date", "<=", endTimestamp));
     }
     
-    // Default order by date descending if no specific order is needed for reports
     qConstraints.push(orderBy("date", "desc")); 
     
     const q = query(collection(db, "expenses"), ...qConstraints);

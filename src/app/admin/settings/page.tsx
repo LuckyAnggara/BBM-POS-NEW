@@ -30,7 +30,7 @@ import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, KeyRound } from "lucide-react";
 
 // Form values for creating/editing a branch
 interface BranchFormState {
@@ -40,6 +40,7 @@ interface BranchFormState {
   taxRate: string; // Store as string for input, convert to number on save
   address: string;
   phoneNumber: string;
+  transactionDeletionPassword?: string;
 }
 
 const initialBranchFormState: BranchFormState = {
@@ -49,11 +50,12 @@ const initialBranchFormState: BranchFormState = {
   taxRate: "0",
   address: "",
   phoneNumber: "",
+  transactionDeletionPassword: "",
 };
 
 export default function AdminSettingsPage() {
   const { userData, loadingAuth } = useAuth();
-  const { branches, loadingBranches, refreshBranches } = useBranch();
+  const { branches, loadingBranches, refreshBranches, selectedBranch, setSelectedBranch } = useBranch();
   const router = useRouter();
   const { toast } = useToast();
 
@@ -125,6 +127,7 @@ export default function AdminSettingsPage() {
       taxRate: parseFloat(branchForm.taxRate) || 0,
       address: branchForm.address,
       phoneNumber: branchForm.phoneNumber,
+      transactionDeletionPassword: branchForm.transactionDeletionPassword || "",
     };
     const result = await apiCreateBranch(branchInput);
     if ("error" in result) {
@@ -146,6 +149,7 @@ export default function AdminSettingsPage() {
       taxRate: (branch.taxRate || 0).toString(),
       address: branch.address || "",
       phoneNumber: branch.phoneNumber || "",
+      transactionDeletionPassword: branch.transactionDeletionPassword || "",
     });
     setIsEditModalOpen(true);
   };
@@ -162,6 +166,7 @@ export default function AdminSettingsPage() {
       taxRate: parseFloat(editBranchForm.taxRate) || 0,
       address: editBranchForm.address,
       phoneNumber: editBranchForm.phoneNumber,
+      transactionDeletionPassword: editBranchForm.transactionDeletionPassword,
     };
     const result = await apiUpdateBranch(editingBranch.id, branchUpdates);
     if (result && "error" in result) {
@@ -171,6 +176,11 @@ export default function AdminSettingsPage() {
       setIsEditModalOpen(false);
       setEditingBranch(null);
       await refreshBranches();
+      // If the currently selected branch was edited, update it in the context
+      if (selectedBranch && selectedBranch.id === editingBranch.id) {
+        const updatedBranchData = { ...selectedBranch, ...branchUpdates };
+        setSelectedBranch(updatedBranchData as Branch); // Cast because branchUpdates is partial
+      }
     }
   };
 
@@ -184,6 +194,9 @@ export default function AdminSettingsPage() {
       toast({ title: "Cabang Berhasil Dihapus" });
       await refreshBranches();
       await fetchUsers(); 
+      if (selectedBranch && selectedBranch.id === branchToDelete.id) {
+        setSelectedBranch(null); // Deselect if the deleted branch was selected
+      }
     }
     setBranchToDelete(null); 
     setIsDeletingBranch(false);
@@ -285,6 +298,22 @@ export default function AdminSettingsPage() {
                         <Label htmlFor="phoneNumber" className="text-xs">Nomor Telepon</Label>
                         <Input id="phoneNumber" name="phoneNumber" value={branchForm.phoneNumber} onChange={(e) => handleBranchFormChange(e, setBranchForm)} placeholder="08xxxxxxxxxx" className="h-9 text-xs" disabled={isSubmittingBranch} />
                     </div>
+                    <div>
+                        <Label htmlFor="transactionDeletionPasswordCreate" className="text-xs">Password Hapus Transaksi (Opsional)</Label>
+                        <div className="relative">
+                        <KeyRound className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                        <Input 
+                            id="transactionDeletionPasswordCreate" 
+                            name="transactionDeletionPassword" 
+                            type="password" 
+                            value={branchForm.transactionDeletionPassword} 
+                            onChange={(e) => handleBranchFormChange(e, setBranchForm)} 
+                            placeholder="Kosongkan jika tidak diset" 
+                            className="h-9 text-xs pl-8" 
+                            disabled={isSubmittingBranch} 
+                        />
+                        </div>
+                    </div>
                     <Button type="submit" size="sm" className="h-9 text-xs" disabled={isSubmittingBranch}>
                       {isSubmittingBranch ? "Membuat..." : "Buat Cabang"}
                     </Button>
@@ -305,6 +334,7 @@ export default function AdminSettingsPage() {
                               <TableHead className="text-xs hidden sm:table-cell">Nama di Invoice</TableHead>
                               <TableHead className="text-xs hidden md:table-cell">Mata Uang</TableHead>
                               <TableHead className="text-xs hidden md:table-cell">Pajak (%)</TableHead>
+                              <TableHead className="text-xs hidden lg:table-cell">Pass. Hapus</TableHead>
                               <TableHead className="text-xs text-right">Aksi</TableHead>
                             </TableRow>
                           </TableHeader>
@@ -315,6 +345,7 @@ export default function AdminSettingsPage() {
                                 <TableCell className="text-xs py-2 hidden sm:table-cell">{branch.invoiceName || branch.name}</TableCell>
                                 <TableCell className="text-xs py-2 hidden md:table-cell">{branch.currency || "IDR"}</TableCell>
                                 <TableCell className="text-xs py-2 hidden md:table-cell">{branch.taxRate !== undefined ? branch.taxRate : 0}%</TableCell>
+                                <TableCell className="text-xs py-2 hidden lg:table-cell">{branch.transactionDeletionPassword ? "Terpasang" : "Tidak Ada"}</TableCell>
                                 <TableCell className="text-right py-2">
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenEditModal(branch)}>
                                     <Pencil className="h-3.5 w-3.5" />
@@ -487,6 +518,22 @@ export default function AdminSettingsPage() {
                <div>
                   <Label htmlFor="editPhoneNumber" className="text-xs">Nomor Telepon</Label>
                   <Input id="editPhoneNumber" name="phoneNumber" value={editBranchForm.phoneNumber} onChange={(e) => handleBranchFormChange(e, setEditBranchForm)} className="text-xs h-9" />
+              </div>
+              <div>
+                <Label htmlFor="transactionDeletionPasswordEdit" className="text-xs">Password Hapus Transaksi</Label>
+                <div className="relative">
+                <KeyRound className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input 
+                    id="transactionDeletionPasswordEdit" 
+                    name="transactionDeletionPassword" 
+                    type="password" 
+                    value={editBranchForm.transactionDeletionPassword} 
+                    onChange={(e) => handleBranchFormChange(e, setEditBranchForm)} 
+                    placeholder="Kosongkan untuk tidak mengubah" 
+                    className="h-9 text-xs pl-8" 
+                />
+                </div>
+                 <p className="text-xs text-muted-foreground mt-1">Kosongkan jika tidak ingin mengubah password yang sudah ada. Mengisi akan menimpa password lama.</p>
               </div>
             </div>
             <DialogFooter>
