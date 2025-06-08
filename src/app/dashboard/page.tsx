@@ -11,39 +11,39 @@ export default function DashboardPage() {
 
   return (
     <MainLayout>
-      <div className="space-y-6">
-        <h1 className="text-2xl md:text-3xl font-bold font-headline">
+      <div className="space-y-4"> {/* Reduced spacing */}
+        <h1 className="text-xl md:text-2xl font-semibold font-headline"> {/* Reduced font size */}
           Dashboard {selectedBranch ? `- ${selectedBranch.name}` : ''}
         </h1>
         
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+              <CardTitle className="text-xs font-medium">Total Revenue</CardTitle> {/* Reduced font size */}
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">$45,231.89</div>
+              <div className="text-lg font-bold">$45,231.89</div> {/* Reduced font size */}
               <p className="text-xs text-muted-foreground">+20.1% from last month</p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Expenses</CardTitle>
+              <CardTitle className="text-xs font-medium">Total Expenses</CardTitle> {/* Reduced font size */}
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">$12,543.20</div>
+              <div className="text-lg font-bold">$12,543.20</div> {/* Reduced font size */}
               <p className="text-xs text-muted-foreground">+5.2% from last month</p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Active Sales</CardTitle>
+              <CardTitle className="text-xs font-medium">Active Sales</CardTitle> {/* Reduced font size */}
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">+2350</div>
+              <div className="text-lg font-bold">+2350</div> {/* Reduced font size */}
               <p className="text-xs text-muted-foreground">+180.1% from last month</p>
             </CardContent>
           </Card>
@@ -52,8 +52,8 @@ export default function DashboardPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           <Card className="lg:col-span-1">
             <CardHeader>
-              <CardTitle className="text-lg font-semibold">Sales Trends</CardTitle>
-              <CardDescription>Overview of sales performance over time.</CardDescription>
+              <CardTitle className="text-base font-semibold">Sales Trends</CardTitle> {/* Reduced font size */}
+              <CardDescription className="text-xs">Overview of sales performance over time.</CardDescription> {/* Reduced font size */}
             </CardHeader>
             <CardContent className="h-[300px] flex items-center justify-center bg-muted/20 rounded-lg p-4">
               <Image src="https://placehold.co/600x300.png" alt="Sales Trend Placeholder" width={600} height={300} className="rounded-md object-cover" data-ai-hint="sales graph" />
@@ -61,23 +61,23 @@ export default function DashboardPage() {
           </Card>
           <Card className="lg:col-span-1">
             <CardHeader>
-              <CardTitle className="text-lg font-semibold">Inventory Status</CardTitle>
-              <CardDescription>Quick look at stock levels.</CardDescription>
+              <CardTitle className="text-base font-semibold">Inventory Status</CardTitle> {/* Reduced font size */}
+              <CardDescription className="text-xs">Quick look at stock levels.</CardDescription> {/* Reduced font size */}
             </CardHeader>
-            <CardContent className="space-y-4">
-                <div className="flex items-center justify-between p-3 bg-muted/20 rounded-md">
+            <CardContent className="space-y-3"> {/* Reduced spacing */}
+                <div className="flex items-center justify-between p-2.5 bg-muted/20 rounded-md"> {/* Reduced padding */}
                     <div>
-                        <h3 className="font-medium">Low Stock Items</h3>
-                        <p className="text-sm text-muted-foreground">5 items are running low</p>
+                        <h3 className="font-medium text-xs">Low Stock Items</h3> {/* Reduced font size */}
+                        <p className="text-xs text-muted-foreground">5 items are running low</p>
                     </div>
-                    <AlertTriangle className="h-6 w-6 text-destructive" />
+                    <AlertTriangle className="h-5 w-5 text-destructive" /> {/* Adjusted icon size */}
                 </div>
-                <div className="flex items-center justify-between p-3 bg-muted/20 rounded-md">
+                <div className="flex items-center justify-between p-2.5 bg-muted/20 rounded-md"> {/* Reduced padding */}
                     <div>
-                        <h3 className="font-medium">Total Products</h3>
-                        <p className="text-sm text-muted-foreground">1,280 unique products</p>
+                        <h3 className="font-medium text-xs">Total Products</h3> {/* Reduced font size */}
+                        <p className="text-xs text-muted-foreground">1,280 unique products</p>
                     </div>
-                    <Package className="h-6 w-6 text-primary" />
+                    <Package className="h-5 w-5 text-primary" /> {/* Adjusted icon size */}
                 </div>
             </CardContent>
           </Card>

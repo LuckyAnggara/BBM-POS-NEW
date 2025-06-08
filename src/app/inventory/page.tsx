@@ -21,52 +21,52 @@ export default function InventoryPage() {
 
   return (
     <MainLayout>
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-          <h1 className="text-2xl md:text-3xl font-bold font-headline">
+      <div className="space-y-4"> {/* Reduced spacing */}
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-3"> {/* Reduced gap */}
+          <h1 className="text-xl md:text-2xl font-semibold font-headline"> {/* Reduced font size */}
             Inventory {selectedBranch ? `- ${selectedBranch.name}` : ''}
           </h1>
           <div className="flex gap-2 w-full sm:w-auto">
             <div className="relative flex-grow sm:flex-grow-0">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input type="search" placeholder="Search inventory..." className="pl-9 w-full sm:w-64 rounded-md" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" /> {/* Adjusted icon */}
+              <Input type="search" placeholder="Search inventory..." className="pl-8 w-full sm:w-56 rounded-md h-9 text-xs" /> {/* text-xs, h-9 */}
             </div>
-            <Button className="rounded-md">
-              <PlusCircle className="mr-2 h-4 w-4" /> Add Product
+            <Button size="sm" className="rounded-md text-xs"> {/* text-xs, size-sm */}
+              <PlusCircle className="mr-1.5 h-3.5 w-3.5" /> Add Product
             </Button>
           </div>
         </div>
 
         <div className="border rounded-lg shadow-sm overflow-hidden">
           <Table>
-            <TableCaption>A list of products in your inventory for {selectedBranch?.name || 'the selected branch'}.</TableCaption>
+            <TableCaption className="text-xs">A list of products in your inventory for {selectedBranch?.name || 'the selected branch'}.</TableCaption> {/* text-xs */}
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[60px] hidden sm:table-cell">Image</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead className="hidden md:table-cell">SKU</TableHead>
-                <TableHead className="text-right">Quantity</TableHead>
-                <TableHead className="text-right hidden sm:table-cell">Price</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="w-[50px] hidden sm:table-cell text-xs px-2">Image</TableHead> {/* text-xs, reduced padding */}
+                <TableHead className="text-xs px-2">Name</TableHead> {/* text-xs, reduced padding */}
+                <TableHead className="hidden md:table-cell text-xs px-2">SKU</TableHead> {/* text-xs, reduced padding */}
+                <TableHead className="text-right text-xs px-2">Quantity</TableHead> {/* text-xs, reduced padding */}
+                <TableHead className="text-right hidden sm:table-cell text-xs px-2">Price</TableHead> {/* text-xs, reduced padding */}
+                <TableHead className="text-right text-xs px-2">Actions</TableHead> {/* text-xs, reduced padding */}
               </TableRow>
             </TableHeader>
             <TableBody>
               {dummyInventory.map((product) => (
                 <TableRow key={product.id}>
-                  <TableCell className="hidden sm:table-cell py-2">
-                    <Image src={product.image} alt={product.name} width={40} height={40} className="rounded" data-ai-hint={product.hint} />
+                  <TableCell className="hidden sm:table-cell py-1.5 px-2"> {/* Reduced padding */}
+                    <Image src={product.image} alt={product.name} width={32} height={32} className="rounded" data-ai-hint={product.hint} /> {/* Adjusted image size */}
                   </TableCell>
-                  <TableCell className="font-medium py-2">{product.name}</TableCell>
-                  <TableCell className="hidden md:table-cell py-2">{product.sku}</TableCell>
-                  <TableCell className="text-right py-2">{product.quantity}</TableCell>
-                  <TableCell className="text-right hidden sm:table-cell py-2">${product.price.toFixed(2)}</TableCell>
-                  <TableCell className="text-right py-2">
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <FilePenLine className="h-4 w-4" />
+                  <TableCell className="font-medium py-1.5 px-2 text-xs">{product.name}</TableCell> {/* text-xs, reduced padding */}
+                  <TableCell className="hidden md:table-cell py-1.5 px-2 text-xs">{product.sku}</TableCell> {/* text-xs, reduced padding */}
+                  <TableCell className="text-right py-1.5 px-2 text-xs">{product.quantity}</TableCell> {/* text-xs, reduced padding */}
+                  <TableCell className="text-right hidden sm:table-cell py-1.5 px-2 text-xs">${product.price.toFixed(2)}</TableCell> {/* text-xs, reduced padding */}
+                  <TableCell className="text-right py-1.5 px-2"> {/* Reduced padding */}
+                    <Button variant="ghost" size="icon" className="h-7 w-7"> {/* Reduced size */}
+                      <FilePenLine className="h-3.5 w-3.5" /> {/* Reduced icon size */}
                       <span className="sr-only">Edit</span>
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive/80">
-                      <Trash2 className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive/80"> {/* Reduced size */}
+                      <Trash2 className="h-3.5 w-3.5" /> {/* Reduced icon size */}
                       <span className="sr-only">Delete</span>
                     </Button>
                   </TableCell>
