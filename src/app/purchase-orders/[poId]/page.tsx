@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogDescription as DialogModalDescription, DialogFooter as DialogModalFooter, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea"; // Added import
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import type { PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus, ReceivedItemData, PurchaseOrderPaymentStatus, PaymentToSupplier } from "@/lib/firebase/purchaseOrders";
@@ -25,7 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { useForm, useFieldArray, Controller, type SubmitHandler } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod"; // Added import
+import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -621,3 +622,4 @@ export default function PurchaseOrderDetailPage() {
     </ProtectedRoute>
   );
 }
+
