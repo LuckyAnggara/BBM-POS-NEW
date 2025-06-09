@@ -9,13 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye } from "lucide-react";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon } from "lucide-react"; // Added HistoryIcon
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -45,6 +45,7 @@ import { Timestamp } from "firebase/firestore";
 import ScanCustomerDialog from "@/components/pos/scan-customer-dialog"; 
 import { format } from "date-fns";
 import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area"; // Added ScrollArea
 
 type ViewMode = "card" | "table";
 
@@ -110,6 +111,8 @@ export default function POSPage() {
   const [shiftTransactions, setShiftTransactions] = useState<PosTransaction[]>([]);
   const [loadingShiftTransactions, setLoadingShiftTransactions] = useState(false);
   const [showBankHistoryDialog, setShowBankHistoryDialog] = useState(false);
+  const [showShiftCashDetailsDialog, setShowShiftCashDetailsDialog] = useState(false);
+  const [showAllShiftTransactionsDialog, setShowAllShiftTransactionsDialog] = useState(false);
 
 
    useEffect(() => {
@@ -232,13 +235,18 @@ export default function POSPage() {
   const prepareEndShiftCalculations = async () => {
     if (!activeShift) return;
     setIsEndingShift(true);
-    const transactions = shiftTransactions; 
+    // Ensure shiftTransactions is up-to-date before calculating
+    await fetchShiftTransactions(); 
+    const currentShiftTransactions = shiftTransactions; // Use the state after potential fetch
+
     const salesByPayment: Record<ShiftPaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
 
-    transactions.forEach(tx => {
+    currentShiftTransactions.forEach(tx => {
         if (tx.paymentTerms === 'cash' || tx.paymentTerms === 'card' || tx.paymentTerms === 'transfer') {
-            const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod; 
-            salesByPayment[paymentMethodForShift] = (salesByPayment[paymentMethodForShift] || 0) + tx.totalAmount;
+             if (tx.status === 'completed') { // Only count completed sales for shift end
+                const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod; 
+                salesByPayment[paymentMethodForShift] = (salesByPayment[paymentMethodForShift] || 0) + tx.totalAmount;
+             }
         }
     });
     
@@ -614,6 +622,18 @@ export default function POSPage() {
     return format(date, includeTime ? "dd MMM yy, HH:mm" : "dd MMM yyyy");
   };
 
+  const totalSalesShift = useMemo(() => {
+    return shiftTransactions
+      .filter(tx => tx.status === 'completed')
+      .reduce((sum, tx) => sum + tx.totalAmount, 0);
+  }, [shiftTransactions]);
+
+  const totalReturnsShift = useMemo(() => {
+    return shiftTransactions
+      .filter(tx => tx.status === 'returned')
+      .reduce((sum, tx) => sum + tx.totalAmount, 0);
+  }, [shiftTransactions]);
+
 
   if (!posModeActive || loadingShift ) {
     return <div className="flex h-screen items-center justify-center">Memuat Mode POS...</div>;
@@ -632,29 +652,10 @@ export default function POSPage() {
             </div>
             
             {activeShift ? (
-              <div className="col-span-1 text-xs text-center border rounded-md p-1.5 shadow-sm bg-muted/20">
-                 <p className="text-green-600 font-medium flex items-center justify-center mb-1">
-                    <PlayCircle className="h-3.5 w-3.5 mr-1" /> Shift Aktif
+              <div className="col-span-1 text-center">
+                 <p className="text-green-600 font-medium flex items-center justify-center text-sm">
+                    <PlayCircle className="h-4 w-4 mr-1.5" /> Shift Aktif
                 </p>
-                <Separator className="my-1"/>
-                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
-                  <p className="text-left">Modal Awal:</p>
-                  <p className="font-semibold text-right">{currencySymbol}{(activeShift.initialCash || 0).toLocaleString('id-ID')}</p>
-                  
-                  <p className="text-left">Kas Seharusnya:</p>
-                  <p className="font-semibold text-right">{currencySymbol}{estimatedCashInDrawer.toLocaleString('id-ID')}</p>
-                  
-                  <p className="text-left">Total Kartu:</p>
-                  <p className="font-semibold text-right">{currencySymbol}{totalCardSalesInShift.toLocaleString('id-ID')}</p>
-                  
-                  <div className="text-left">Total Transfer:</div>
-                  <div className="flex items-center justify-end">
-                    <span className="font-semibold">{currencySymbol}{totalTransferSalesInShift.toLocaleString('id-ID')}</span>
-                    <Button variant="link" size="sm" className="h-auto p-0 ml-1 text-[0.65rem] text-blue-600 hover:text-blue-800" onClick={() => setShowBankHistoryDialog(true)} disabled={bankTransactionsInShift.length === 0}>
-                       (Detail)
-                    </Button>
-                  </div>
-                </div>
               </div>
             ) : (
                  <div className="col-span-1 text-center">
@@ -666,9 +667,17 @@ export default function POSPage() {
 
             <div className="col-span-1 flex justify-end items-center gap-2">
                 {activeShift && (
-                     <Button variant="destructive" size="sm" className="text-xs h-8" onClick={prepareEndShiftCalculations} disabled={isEndingShift}>
+                  <>
+                    <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setShowAllShiftTransactionsDialog(true)}>
+                        <HistoryIcon className="mr-1.5 h-3.5 w-3.5" /> Riwayat Shift Ini
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setShowShiftCashDetailsDialog(true)}>
+                        <Info className="mr-1.5 h-3.5 w-3.5" /> Info Kas Shift
+                    </Button>
+                    <Button variant="destructive" size="sm" className="text-xs h-8" onClick={prepareEndShiftCalculations} disabled={isEndingShift}>
                         {isEndingShift ? "Memproses..." : <><StopCircle className="mr-1.5 h-3.5 w-3.5" /> Akhiri Shift</>}
                     </Button>
+                  </>
                 )}
                 <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => router.push('/dashboard')}>
                   <LogOut className="mr-1.5 h-3.5 w-3.5" /> Keluar
@@ -810,7 +819,7 @@ export default function POSPage() {
                 Menampilkan semua transaksi dengan metode pembayaran transfer bank selama shift berjalan.
               </DialogDescription>
             </DialogHeader>
-            <div className="py-3 max-h-[60vh] overflow-y-auto">
+            <ScrollArea className="max-h-[60vh] py-3">
               {loadingShiftTransactions ? (
                 <Skeleton className="h-20 w-full" />
               ) : bankTransactionsInShift.length > 0 ? (
@@ -841,7 +850,7 @@ export default function POSPage() {
                   Belum ada transaksi transfer bank pada shift ini.
                 </p>
               )}
-            </div>
+            </ScrollArea>
             <DialogFooter>
               <DialogClose asChild>
                 <Button type="button" variant="outline" className="text-xs h-8">Tutup</Button>
@@ -850,8 +859,113 @@ export default function POSPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={showShiftCashDetailsDialog} onOpenChange={setShowShiftCashDetailsDialog}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle className="text-base">Informasi Kas Shift Saat Ini</DialogTitle>
+                    <DialogDescription className="text-xs">
+                        Detail keuangan untuk shift yang sedang berjalan.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="py-3 space-y-2 text-sm">
+                    <div className="flex justify-between p-2 bg-muted/30 rounded-md">
+                        <span>Modal Awal Shift:</span>
+                        <span className="font-semibold">{currencySymbol}{(activeShift?.initialCash || 0).toLocaleString('id-ID')}</span>
+                    </div>
+                    <Separator/>
+                    <div className="flex justify-between p-2">
+                        <span>Total Penjualan Tunai:</span>
+                        <span className="font-semibold">{currencySymbol}{totalCashSalesInShift.toLocaleString('id-ID')}</span>
+                    </div>
+                     <div className="flex justify-between p-2 bg-muted/30 rounded-md">
+                        <span>Estimasi Kas di Laci:</span>
+                        <span className="font-semibold">{currencySymbol}{estimatedCashInDrawer.toLocaleString('id-ID')}</span>
+                    </div>
+                    <Separator/>
+                    <div className="flex justify-between p-2">
+                        <span>Total Penjualan Kartu:</span>
+                        <span className="font-semibold">{currencySymbol}{totalCardSalesInShift.toLocaleString('id-ID')}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-2 bg-muted/30 rounded-md">
+                        <span>Total Penjualan Transfer:</span>
+                        <div className="flex items-center gap-2">
+                           <span className="font-semibold">{currencySymbol}{totalTransferSalesInShift.toLocaleString('id-ID')}</span>
+                           <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => {setShowShiftCashDetailsDialog(false); setShowBankHistoryDialog(true);}} disabled={bankTransactionsInShift.length === 0}>
+                                Detail
+                           </Button>
+                        </div>
+                    </div>
+                </div>
+                <DialogFooter>
+                    <DialogClose asChild>
+                        <Button type="button" variant="outline" className="text-xs h-8">Tutup</Button>
+                    </DialogClose>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+        
+        <Dialog open={showAllShiftTransactionsDialog} onOpenChange={setShowAllShiftTransactionsDialog}>
+            <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle className="text-base">Riwayat Transaksi Shift Ini</DialogTitle>
+                    <DialogDescription className="text-xs">
+                        Semua transaksi yang tercatat selama shift ini.
+                    </DialogDescription>
+                </DialogHeader>
+                <ScrollArea className="max-h-[60vh] py-3">
+                     {loadingShiftTransactions ? (
+                        <Skeleton className="h-40 w-full" />
+                    ) : shiftTransactions.length > 0 ? (
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead className="text-xs">No. Inv</TableHead>
+                                    <TableHead className="text-xs hidden sm:table-cell">Waktu</TableHead>
+                                    <TableHead className="text-xs">Pelanggan</TableHead>
+                                    <TableHead className="text-xs">Metode</TableHead>
+                                    <TableHead className="text-xs text-right">Total</TableHead>
+                                    <TableHead className="text-xs text-center">Status</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {shiftTransactions.map((tx) => (
+                                <TableRow key={tx.id} className={cn(tx.status === 'returned' && "bg-muted/40")}>
+                                    <TableCell className="text-xs py-1.5 font-medium">{tx.invoiceNumber}</TableCell>
+                                    <TableCell className="text-xs hidden sm:table-cell py-1.5">{formatDateTimestamp(tx.timestamp)}</TableCell>
+                                    <TableCell className="text-xs py-1.5">{tx.customerName || '-'}</TableCell>
+                                    <TableCell className="text-xs py-1.5 capitalize">{tx.paymentTerms}</TableCell>
+                                    <TableCell className="text-xs text-right py-1.5">{currencySymbol}{tx.totalAmount.toLocaleString('id-ID')}</TableCell>
+                                    <TableCell className="text-xs text-center py-1.5">
+                                        <span className={cn("px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium",
+                                            tx.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                        )}>
+                                            {tx.status === 'completed' ? 'Selesai' : 'Diretur'}
+                                        </span>
+                                    </TableCell>
+                                </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    ) : (
+                        <p className="text-sm text-muted-foreground text-center py-6">Belum ada transaksi pada shift ini.</p>
+                    )}
+                </ScrollArea>
+                 <DialogFooter className="items-center pt-3 border-t">
+                     <div className="text-xs text-muted-foreground mr-auto">
+                        <p>Total Penjualan (Bersih): {currencySymbol}{totalSalesShift.toLocaleString('id-ID')} ({shiftTransactions.filter(tx => tx.status === 'completed').length} transaksi)</p>
+                        <p>Total Retur: {currencySymbol}{totalReturnsShift.toLocaleString('id-ID')} ({shiftTransactions.filter(tx => tx.status === 'returned').length} transaksi)</p>
+                    </div>
+                    <DialogClose asChild>
+                        <Button type="button" variant="outline" className="text-xs h-8">Tutup</Button>
+                    </DialogClose>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+
       </MainLayout>
     </ProtectedRoute>
   );
 }
 
+
+    
