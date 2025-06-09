@@ -15,7 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown } from "lucide-react";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -23,12 +23,12 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { InventoryItem } from "@/lib/firebase/inventory"; // Updated import
-import type { Customer } from "@/lib/firebase/customers"; // Updated import
-import type { BankAccount } from "@/lib/firebase/bankAccounts"; // Updated import
-import { getInventoryItems } from "@/lib/firebase/inventory"; // Updated import
-import { getCustomers } from "@/lib/firebase/customers"; // Updated import
-import { getBankAccounts } from "@/lib/firebase/bankAccounts"; // Updated import
+import type { InventoryItem } from "@/lib/firebase/inventory";
+import type { Customer } from "@/lib/firebase/customers";
+import type { BankAccount } from "@/lib/firebase/bankAccounts";
+import { getInventoryItems } from "@/lib/firebase/inventory";
+import { getCustomers } from "@/lib/firebase/customers";
+import { getBankAccounts } from "@/lib/firebase/bankAccounts";
 import { 
   startNewShift, 
   getActiveShift, 
@@ -40,14 +40,17 @@ import {
   type TransactionItem, 
   type PaymentTerms,
   type ShiftPaymentMethod 
-} from "@/lib/firebase/pos"; // Updated import
+} from "@/lib/firebase/pos";
 import { Timestamp } from "firebase/firestore";
 import ScanCustomerDialog from "@/components/pos/scan-customer-dialog"; 
 import { format } from "date-fns";
+import { Separator } from "@/components/ui/separator";
 
 type ViewMode = "card" | "table";
 
 interface CartItem extends TransactionItem {}
+
+const COMMON_BANKS = ["BCA", "Mandiri", "BRI", "BNI", "CIMB Niaga", "Danamon", "Lainnya"];
 
 export default function POSPage() {
   const { selectedBranch } = useBranch();
@@ -103,6 +106,10 @@ export default function POSPage() {
   const [selectedBankName, setSelectedBankName] = useState<string>(""); 
   const [bankRefNumberInput, setBankRefNumberInput] = useState("");
   const [customerNameInputBank, setCustomerNameInputBank] = useState("");
+
+  const [shiftTransactions, setShiftTransactions] = useState<PosTransaction[]>([]);
+  const [loadingShiftTransactions, setLoadingShiftTransactions] = useState(false);
+  const [showBankHistoryDialog, setShowBankHistoryDialog] = useState(false);
 
 
    useEffect(() => {
@@ -163,6 +170,21 @@ export default function POSPage() {
     }
   }, [customerSearchTerm, allCustomers]);
 
+  const fetchShiftTransactions = useCallback(async () => {
+    if (activeShift) {
+      setLoadingShiftTransactions(true);
+      const transactions = await getTransactionsForShift(activeShift.id);
+      setShiftTransactions(transactions);
+      setLoadingShiftTransactions(false);
+    } else {
+      setShiftTransactions([]);
+    }
+  }, [activeShift]);
+
+  useEffect(() => {
+    fetchShiftTransactions();
+  }, [fetchShiftTransactions, lastTransactionId]);
+
 
   const checkForActiveShift = useCallback(async () => {
     if (!currentUser || !selectedBranch) {
@@ -210,7 +232,7 @@ export default function POSPage() {
   const prepareEndShiftCalculations = async () => {
     if (!activeShift) return;
     setIsEndingShift(true);
-    const transactions = await getTransactionsForShift(activeShift.id);
+    const transactions = await getTransactionsForShift(activeShift.id); // Reuse fetched transactions if already up-to-date
     const salesByPayment: Record<ShiftPaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
 
     transactions.forEach(tx => {
@@ -256,6 +278,7 @@ export default function POSPage() {
       setEndShiftCalculations(null);
       setShowEndShiftModal(false);
       setCartItems([]); 
+      setShiftTransactions([]);
     }
     setIsEndingShift(false);
   };
@@ -559,6 +582,39 @@ export default function POSPage() {
     product.sku?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const totalCashSalesInShift = useMemo(() => {
+    return shiftTransactions
+      .filter(tx => tx.paymentTerms === 'cash' && tx.status === 'completed')
+      .reduce((sum, tx) => sum + tx.totalAmount, 0);
+  }, [shiftTransactions]);
+
+  const totalCardSalesInShift = useMemo(() => {
+    return shiftTransactions
+      .filter(tx => tx.paymentTerms === 'card' && tx.status === 'completed')
+      .reduce((sum, tx) => sum + tx.totalAmount, 0);
+  }, [shiftTransactions]);
+
+  const totalTransferSalesInShift = useMemo(() => {
+    return shiftTransactions
+      .filter(tx => tx.paymentTerms === 'transfer' && tx.status === 'completed')
+      .reduce((sum, tx) => sum + tx.totalAmount, 0);
+  }, [shiftTransactions]);
+  
+  const estimatedCashInDrawer = useMemo(() => {
+    return (activeShift?.initialCash || 0) + totalCashSalesInShift;
+  }, [activeShift, totalCashSalesInShift]);
+
+  const bankTransactionsInShift = useMemo(() => {
+    return shiftTransactions.filter(tx => tx.paymentTerms === 'transfer' && tx.status === 'completed');
+  }, [shiftTransactions]);
+
+  const formatDateTimestamp = (timestamp?: Timestamp, includeTime = true) => {
+    if (!timestamp) return "N/A";
+    const date = timestamp.toDate();
+    return format(date, includeTime ? "dd MMM yy, HH:mm" : "dd MMM yyyy");
+  };
+
+
   if (!posModeActive || loadingShift ) {
     return <div className="flex h-screen items-center justify-center">Memuat Mode POS...</div>;
   }
@@ -567,31 +623,49 @@ export default function POSPage() {
     <ProtectedRoute>
       <MainLayout focusMode={true}>
         <div className="flex flex-col h-screen bg-background">
-          <header className="flex items-center justify-between p-3 border-b bg-card shadow-sm sticky top-0 z-10">
-            <div className="flex items-center gap-2">
+          <header className="grid grid-cols-3 items-center justify-between p-3 border-b bg-card shadow-sm sticky top-0 z-10 gap-3">
+            <div className="flex items-center gap-2 col-span-1">
                 <DollarSign className="h-6 w-6 text-primary" />
                 <h1 className="text-lg font-semibold font-headline">
                     POS {selectedBranch ? `- ${selectedBranch.name}` : '(Pilih Cabang)'}
                 </h1>
             </div>
             {activeShift ? (
-                <div className="flex items-center gap-3">
-                    <span className="text-xs text-green-600 font-medium bg-green-100 px-2 py-1 rounded-full flex items-center">
-                        <PlayCircle className="h-3.5 w-3.5 mr-1" /> Shift Aktif (Modal: {currencySymbol}{activeShift.initialCash.toLocaleString('id-ID')})
-                    </span>
-                    <Button variant="destructive" size="sm" className="text-xs h-8" onClick={prepareEndShiftCalculations} disabled={isEndingShift}>
+              <div className="col-span-1 text-xs text-center space-y-0.5">
+                 <p className="text-green-600 font-medium flex items-center justify-center">
+                    <PlayCircle className="h-3.5 w-3.5 mr-1" /> Shift Aktif
+                </p>
+                <Separator className="my-0.5"/>
+                <div className="grid grid-cols-2 gap-x-2">
+                  <p>Modal Awal: <span className="font-semibold">{currencySymbol}{(activeShift.initialCash || 0).toLocaleString('id-ID')}</span></p>
+                  <p>Kas Seharusnya: <span className="font-semibold">{currencySymbol}{estimatedCashInDrawer.toLocaleString('id-ID')}</span></p>
+                  <p>Total Kartu: <span className="font-semibold">{currencySymbol}{totalCardSalesInShift.toLocaleString('id-ID')}</span></p>
+                  <p>
+                    Total Transfer: <span className="font-semibold">{currencySymbol}{totalTransferSalesInShift.toLocaleString('id-ID')}</span>
+                    <Button variant="link" size="sm" className="h-auto p-0 ml-1 text-xs text-blue-600 hover:text-blue-800" onClick={() => setShowBankHistoryDialog(true)} disabled={bankTransactionsInShift.length === 0}>
+                       (Lihat Detail)
+                    </Button>
+                  </p>
+                </div>
+              </div>
+            ) : (
+                 <div className="col-span-1 text-center">
+                     <Button variant="default" size="sm" className="text-xs h-8" onClick={() => setShowStartShiftModal(true)} disabled={!selectedBranch || !currentUser}>
+                        <PlayCircle className="mr-1.5 h-3.5 w-3.5" /> Mulai Shift
+                    </Button>
+                 </div>
+            )}
+            <div className="col-span-1 flex justify-end items-center gap-2">
+                {activeShift && (
+                     <Button variant="destructive" size="sm" className="text-xs h-8" onClick={prepareEndShiftCalculations} disabled={isEndingShift}>
                         {isEndingShift ? "Memproses..." : <><StopCircle className="mr-1.5 h-3.5 w-3.5" /> Akhiri Shift</>}
                     </Button>
-                </div>
-            ) : (
-                <Button variant="default" size="sm" className="text-xs h-8" onClick={() => setShowStartShiftModal(true)} disabled={!selectedBranch || !currentUser}>
-                    <PlayCircle className="mr-1.5 h-3.5 w-3.5" /> Mulai Shift
+                )}
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => router.push('/dashboard')}>
+                  <ExitIcon className="h-5 w-5" />
+                  <span className="sr-only">Keluar dari Mode POS</span>
                 </Button>
-            )}
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => router.push('/dashboard')}>
-              <ExitIcon className="h-5 w-5" />
-              <span className="sr-only">Keluar dari Mode POS</span>
-            </Button>
+            </div>
           </header>
 
           <div className="flex flex-1 overflow-hidden">
@@ -718,9 +792,57 @@ export default function POSPage() {
                 <DialogFooter className="sm:justify-center"><Button type="button" variant="outline" className="text-xs h-8" onClick={() => {setShowPrintInvoiceDialog(false); setLastTransactionId(null);}}>Tutup</Button><Button onClick={handlePrintInvoice} className="text-xs h-8" disabled={!lastTransactionId}><Printer className="mr-1.5 h-4 w-4" /> Cetak Invoice</Button></DialogFooter></DialogContent></Dialog>
         
         <ScanCustomerDialog isOpen={showScanCustomerDialog} onClose={() => setShowScanCustomerDialog(false)} onScanSuccess={handleScanCustomerSuccess} branchId={selectedBranch?.id || ""}/>
+      
+        <Dialog open={showBankHistoryDialog} onOpenChange={setShowBankHistoryDialog}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="text-base">Riwayat Transaksi Transfer Bank (Shift Ini)</DialogTitle>
+              <DialogDescription className="text-xs">
+                Menampilkan semua transaksi dengan metode pembayaran transfer bank selama shift berjalan.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-3 max-h-[60vh] overflow-y-auto">
+              {loadingShiftTransactions ? (
+                <Skeleton className="h-20 w-full" />
+              ) : bankTransactionsInShift.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">No. Inv</TableHead>
+                      <TableHead className="text-xs">Tanggal</TableHead>
+                      <TableHead className="text-xs">Bank</TableHead>
+                      <TableHead className="text-xs hidden sm:table-cell">Ref.</TableHead>
+                      <TableHead className="text-xs text-right">Jumlah</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {bankTransactionsInShift.map((tx) => (
+                      <TableRow key={tx.id}>
+                        <TableCell className="text-xs py-1.5 font-medium">{tx.invoiceNumber}</TableCell>
+                        <TableCell className="text-xs py-1.5">{formatDateTimestamp(tx.timestamp)}</TableCell>
+                        <TableCell className="text-xs py-1.5">{tx.bankName || "-"}</TableCell>
+                        <TableCell className="text-xs hidden sm:table-cell py-1.5">{tx.bankTransactionRef || "-"}</TableCell>
+                        <TableCell className="text-xs text-right py-1.5">{currencySymbol}{tx.totalAmount.toLocaleString('id-ID')}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  Belum ada transaksi transfer bank pada shift ini.
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline" className="text-xs h-8">Tutup</Button>
+              </DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
       </MainLayout>
     </ProtectedRoute>
   );
 }
 
-    
