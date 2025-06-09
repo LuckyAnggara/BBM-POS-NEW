@@ -68,9 +68,11 @@ export default function PurchaseOrdersPage() {
   const [statusPoFilter, setStatusPoFilter] = useState<PurchaseOrderStatus | "all">("all");
   const [paymentStatusPoFilter, setPaymentStatusPoFilter] = useState<PurchaseOrderPaymentStatus | "all">("all");
 
-
-  const fetchPurchaseOrders = useCallback(async () => {
-    if (!selectedBranch) {
+  const fetchPurchaseOrdersWithDateFilters = useCallback(async () => {
+    if (!selectedBranch || !startDate || !endDate) {
+      // This case should ideally be handled by UI disabling apply button
+      // or by calling loadDefaultForBranch if no dates are set.
+      // For now, if called without dates, it implies an error or clears data.
       setAllFetchedPOs([]);
       setFilteredPOs([]);
       setLoadingPOs(false);
@@ -78,37 +80,52 @@ export default function PurchaseOrdersPage() {
     }
     setLoadingPOs(true);
     try {
-      // Fetch based on date range if provided, otherwise fetch all/limited by default
-      const fetchedPOs = await getPurchaseOrdersByBranch(selectedBranch.id, { 
-        startDate: startDate, 
+      const fetchedPOs = await getPurchaseOrdersByBranch(selectedBranch.id, {
+        startDate: startDate,
         endDate: endDate,
-        orderByField: "orderDate", // Ensure fetching by orderDate for filtering
-        orderDirection: "desc"
+        orderByField: "orderDate",
+        orderDirection: "desc",
       });
       setAllFetchedPOs(fetchedPOs);
       setLoadingPOs(false);
-      if (fetchedPOs.length === 0 && (startDate || endDate)) {
-        toast({title: "Tidak Ada Pesanan", description: "Tidak ada pesanan pembelian ditemukan untuk filter tanggal yang dipilih.", variant: "default"});
+      if (fetchedPOs.length === 0) {
+        toast({ title: "Tidak Ada Pesanan", description: "Tidak ada pesanan pembelian ditemukan untuk filter tanggal yang dipilih.", variant: "default" });
       }
     } catch (error) {
-      console.error("Error fetching purchase orders:", error);
+      console.error("Error fetching purchase orders with date filters:", error);
       toast({ title: "Gagal Memuat Pesanan", description: "Terjadi kesalahan saat mengambil data pesanan pembelian.", variant: "destructive" });
       setLoadingPOs(false);
     }
   }, [selectedBranch, startDate, endDate, toast]);
 
+  const loadDefaultForBranch = useCallback(async (branchId: string) => {
+    setLoadingPOs(true);
+    const initialPOs = await getPurchaseOrdersByBranch(branchId, {
+      limit: 50,
+      orderByField: "createdAt",
+      orderDirection: "desc"
+    });
+    setAllFetchedPOs(initialPOs);
+    setLoadingPOs(false);
+  }, []);
+
+
   useEffect(() => {
-    // Initial fetch without date filters to show some data or if branch changes
-    if (selectedBranch && !startDate && !endDate) {
-        const initialFetch = async () => {
-            setLoadingPOs(true);
-            const initialPOs = await getPurchaseOrdersByBranch(selectedBranch.id, {limit: 50, orderByField: "createdAt", orderDirection: "desc"});
-            setAllFetchedPOs(initialPOs);
-            setLoadingPOs(false);
-        };
-        initialFetch();
+    if (selectedBranch) {
+      if (startDate && endDate) {
+        // If date filters are active, fetch using them
+        fetchPurchaseOrdersWithDateFilters();
+      } else {
+        // Otherwise, load default (e.g., on initial load or after clearing date filters)
+        loadDefaultForBranch(selectedBranch.id);
+      }
+    } else {
+      // No branch selected, clear data
+      setAllFetchedPOs([]);
+      setFilteredPOs([]);
+      setLoadingPOs(false);
     }
-  }, [selectedBranch]);
+  }, [selectedBranch, startDate, endDate, fetchPurchaseOrdersWithDateFilters, loadDefaultForBranch]);
 
 
   useEffect(() => {
@@ -142,14 +159,12 @@ export default function PurchaseOrdersPage() {
   const handleApplyFilters = () => {
       if (!startDate || !endDate) {
           toast({ title: "Pilih Rentang Tanggal", description: "Silakan pilih tanggal mulai dan akhir untuk filter tanggal.", variant: "destructive"});
-          // Optionally, if you still want to filter by other criteria without dates, remove this return
-          // and fetch all data if dates are not set, then filter client-side.
-          // For now, we assume date range is primary for fetching.
-          // If no dates, fetch all/recent then apply other filters.
-          if (allFetchedPOs.length === 0) fetchPurchaseOrders(); // Fetch if no data at all
           return;
       }
-      fetchPurchaseOrders();
+      // The useEffect dependent on startDate and endDate will trigger fetchPurchaseOrdersWithDateFilters
+      // No need to call it directly here if the state update is sufficient to trigger the effect.
+      // However, to ensure immediate fetch on apply, explicitly call it:
+      fetchPurchaseOrdersWithDateFilters();
   };
 
   const handleClearFilters = () => {
@@ -158,27 +173,24 @@ export default function PurchaseOrdersPage() {
     setSearchTerm("");
     setStatusPoFilter("all");
     setPaymentStatusPoFilter("all");
-    // Fetch initial/default set of POs after clearing
-    const initialFetch = async () => {
-        if (!selectedBranch) return;
-        setLoadingPOs(true);
-        const initialPOs = await getPurchaseOrdersByBranch(selectedBranch.id, {limit: 50, orderByField: "createdAt", orderDirection: "desc"});
-        setAllFetchedPOs(initialPOs);
-        setLoadingPOs(false);
-    };
-    initialFetch();
+    // useEffect will handle fetching default data when startDate/endDate become undefined
   };
 
 
   const handleUpdateStatus = async () => {
-    if (!poToUpdate) return;
+    if (!poToUpdate || !selectedBranch) return;
     setIsUpdatingStatus(true);
     const result = await updatePurchaseOrderStatus(poToUpdate.id, poToUpdate.newStatus);
     if (result && "error" in result) {
       toast({ title: "Gagal Update Status", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Status Diperbarui", description: `Status PO ${poToUpdate.poNumber} telah diubah menjadi ${getPOStatusText(poToUpdate.newStatus)}.` });
-      await fetchPurchaseOrders(); // Refetch based on current date filters or all
+      // Refetch data based on current filters (could be date-filtered or default)
+      if (startDate && endDate) {
+        await fetchPurchaseOrdersWithDateFilters();
+      } else {
+        await loadDefaultForBranch(selectedBranch.id);
+      }
     }
     setIsUpdatingStatus(false);
     setShowConfirmDialog(false);
@@ -297,7 +309,7 @@ export default function PurchaseOrdersPage() {
                             {endDate ? format(endDate, "dd MMM yyyy") : <span>Pilih tanggal</span>}
                             </Button>
                         </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={endDate} onSelect={setEndDate} initialFocus disabled={{ before: startDate }} /></PopoverContent>
+                        <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={endDate} onSelect={setEndDate} initialFocus disabled={startDate ? { before: startDate } : undefined} /></PopoverContent>
                         </Popover>
                     </div>
                      <div>
@@ -329,10 +341,10 @@ export default function PurchaseOrdersPage() {
                         </Select>
                     </div>
                    <div className="flex gap-2 items-end lg:col-start-4 lg:col-span-2">
-                        <Button onClick={handleApplyFilters} size="sm" className="h-8 text-xs flex-grow" disabled={loadingPOs}>
+                        <Button onClick={handleApplyFilters} size="sm" className="h-8 text-xs flex-grow" disabled={loadingPOs || !selectedBranch}>
                             <Filter className="mr-1.5 h-3.5 w-3.5"/> Terapkan
                         </Button>
-                         <Button onClick={handleClearFilters} variant="outline" size="sm" className="h-8 text-xs flex-grow" disabled={loadingPOs}>
+                         <Button onClick={handleClearFilters} variant="outline" size="sm" className="h-8 text-xs flex-grow" disabled={loadingPOs || !selectedBranch}>
                             <FilterX className="mr-1.5 h-3.5 w-3.5"/> Reset
                         </Button>
                     </div>
@@ -480,3 +492,6 @@ export default function PurchaseOrdersPage() {
     </ProtectedRoute>
   );
 }
+
+    
+    
