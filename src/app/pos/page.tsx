@@ -15,7 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye } from "lucide-react";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -232,7 +232,7 @@ export default function POSPage() {
   const prepareEndShiftCalculations = async () => {
     if (!activeShift) return;
     setIsEndingShift(true);
-    const transactions = await getTransactionsForShift(activeShift.id); // Reuse fetched transactions if already up-to-date
+    const transactions = shiftTransactions; 
     const salesByPayment: Record<ShiftPaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
 
     transactions.forEach(tx => {
@@ -630,22 +630,30 @@ export default function POSPage() {
                     POS {selectedBranch ? `- ${selectedBranch.name}` : '(Pilih Cabang)'}
                 </h1>
             </div>
+            
             {activeShift ? (
-              <div className="col-span-1 text-xs text-center space-y-0.5">
-                 <p className="text-green-600 font-medium flex items-center justify-center">
+              <div className="col-span-1 text-xs text-center border rounded-md p-1.5 shadow-sm bg-muted/20">
+                 <p className="text-green-600 font-medium flex items-center justify-center mb-1">
                     <PlayCircle className="h-3.5 w-3.5 mr-1" /> Shift Aktif
                 </p>
-                <Separator className="my-0.5"/>
-                <div className="grid grid-cols-2 gap-x-2">
-                  <p>Modal Awal: <span className="font-semibold">{currencySymbol}{(activeShift.initialCash || 0).toLocaleString('id-ID')}</span></p>
-                  <p>Kas Seharusnya: <span className="font-semibold">{currencySymbol}{estimatedCashInDrawer.toLocaleString('id-ID')}</span></p>
-                  <p>Total Kartu: <span className="font-semibold">{currencySymbol}{totalCardSalesInShift.toLocaleString('id-ID')}</span></p>
-                  <p>
-                    Total Transfer: <span className="font-semibold">{currencySymbol}{totalTransferSalesInShift.toLocaleString('id-ID')}</span>
-                    <Button variant="link" size="sm" className="h-auto p-0 ml-1 text-xs text-blue-600 hover:text-blue-800" onClick={() => setShowBankHistoryDialog(true)} disabled={bankTransactionsInShift.length === 0}>
-                       (Lihat Detail)
+                <Separator className="my-1"/>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+                  <p className="text-left">Modal Awal:</p>
+                  <p className="font-semibold text-right">{currencySymbol}{(activeShift.initialCash || 0).toLocaleString('id-ID')}</p>
+                  
+                  <p className="text-left">Kas Seharusnya:</p>
+                  <p className="font-semibold text-right">{currencySymbol}{estimatedCashInDrawer.toLocaleString('id-ID')}</p>
+                  
+                  <p className="text-left">Total Kartu:</p>
+                  <p className="font-semibold text-right">{currencySymbol}{totalCardSalesInShift.toLocaleString('id-ID')}</p>
+                  
+                  <div className="text-left">Total Transfer:</div>
+                  <div className="flex items-center justify-end">
+                    <span className="font-semibold">{currencySymbol}{totalTransferSalesInShift.toLocaleString('id-ID')}</span>
+                    <Button variant="link" size="sm" className="h-auto p-0 ml-1 text-[0.65rem] text-blue-600 hover:text-blue-800" onClick={() => setShowBankHistoryDialog(true)} disabled={bankTransactionsInShift.length === 0}>
+                       (Detail)
                     </Button>
-                  </p>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -655,14 +663,15 @@ export default function POSPage() {
                     </Button>
                  </div>
             )}
+
             <div className="col-span-1 flex justify-end items-center gap-2">
                 {activeShift && (
                      <Button variant="destructive" size="sm" className="text-xs h-8" onClick={prepareEndShiftCalculations} disabled={isEndingShift}>
                         {isEndingShift ? "Memproses..." : <><StopCircle className="mr-1.5 h-3.5 w-3.5" /> Akhiri Shift</>}
                     </Button>
                 )}
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => router.push('/dashboard')}>
-                  <ExitIcon className="h-5 w-5" />
+                <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => router.push('/dashboard')}>
+                  <LogOut className="mr-1.5 h-3.5 w-3.5" /> Keluar
                   <span className="sr-only">Keluar dari Mode POS</span>
                 </Button>
             </div>
