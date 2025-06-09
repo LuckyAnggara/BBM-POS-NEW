@@ -37,31 +37,31 @@ export default function DashboardPage() {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-xs font-medium">Total Pendapatan</CardTitle>
+                <CardTitle className="text-xs font-medium">Total Pendapatan (Bulan Ini)</CardTitle>
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-lg font-bold">$45,231.89</div>
+                <div className="text-lg font-bold">Rp 45.231.890</div>
                 <p className="text-xs text-muted-foreground">+20.1% dari bulan lalu</p>
               </CardContent>
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-xs font-medium">Total Pengeluaran</CardTitle>
+                <CardTitle className="text-xs font-medium">Total Pengeluaran (Bulan Ini)</CardTitle>
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-lg font-bold">$12,543.20</div>
+                <div className="text-lg font-bold">Rp 12.543.200</div>
                 <p className="text-xs text-muted-foreground">+5.2% dari bulan lalu</p>
               </CardContent>
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-xs font-medium">Penjualan Aktif</CardTitle>
+                <CardTitle className="text-xs font-medium">Transaksi Selesai (Bulan Ini)</CardTitle>
                 <TrendingUp className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-lg font-bold">+2350</div>
+                <div className="text-lg font-bold">+2.350</div>
                 <p className="text-xs text-muted-foreground">+180.1% dari bulan lalu</p>
               </CardContent>
             </Card>
@@ -70,8 +70,8 @@ export default function DashboardPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card className="lg:col-span-1">
               <CardHeader>
-                <CardTitle className="text-base font-semibold">Tren Penjualan</CardTitle>
-                <CardDescription className="text-xs">Gambaran umum performa penjualan dari waktu ke waktu.</CardDescription>
+                <CardTitle className="text-base font-semibold">Tren Penjualan Mingguan</CardTitle>
+                <CardDescription className="text-xs">Gambaran umum performa penjualan selama seminggu terakhir.</CardDescription>
               </CardHeader>
               <CardContent className="h-[300px] flex items-center justify-center bg-muted/20 rounded-lg p-4">
                 <Image src="https://placehold.co/600x300.png" alt="Sales Trend Placeholder" width={600} height={300} className="rounded-md object-cover" data-ai-hint="sales graph" />
@@ -80,7 +80,7 @@ export default function DashboardPage() {
             <Card className="lg:col-span-1">
               <CardHeader>
                 <CardTitle className="text-base font-semibold">Status Inventaris</CardTitle>
-                <CardDescription className="text-xs">Ringkasan level stok.</CardDescription>
+                <CardDescription className="text-xs">Ringkasan level stok terkini.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                   <div className="flex items-center justify-between p-2.5 bg-muted/20 rounded-md">
@@ -92,8 +92,8 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex items-center justify-between p-2.5 bg-muted/20 rounded-md">
                       <div>
-                          <h3 className="font-medium text-xs">Total Produk</h3>
-                          <p className="text-xs text-muted-foreground">1,280 produk unik</p>
+                          <h3 className="font-medium text-xs">Total Produk Unik</h3>
+                          <p className="text-xs text-muted-foreground">1.280 produk terdaftar</p>
                       </div>
                       <Package className="h-5 w-5 text-primary" />
                   </div>
