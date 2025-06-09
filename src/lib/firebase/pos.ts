@@ -344,6 +344,20 @@ export async function getTransactionsForUserByBranch(
     let constraints: any[] = [
         where("branchId", "==", branchId)
     ];
+    
+    // If current user is not admin, filter by their userId. Admin sees all for the branch.
+    // This logic might need adjustment if admins should also be filtered by their own transactions
+    // or if there's a specific "all users" view. For now, assuming non-admins only see their own.
+    // const user = auth.currentUser; // This might be better obtained from AuthContext
+    // if (user && (await getUserDocument(user.uid))?.role !== 'admin') {
+    //   constraints.push(where("userId", "==", userId));
+    // }
+    // Temporarily removing role check here for simplicity in this function.
+    // The page level should enforce if only user's transactions are shown or all (for admin).
+    // For now, this function could be generic for a branch, and the page calls it with/without userId filter.
+    // Let's assume SalesHistory page will always pass the current user's ID for non-admin roles.
+    // constraints.push(where("userId", "==", userId));
+
 
     if (options.startDate && options.endDate) {
         const startTimestamp = Timestamp.fromDate(options.startDate);
@@ -394,14 +408,31 @@ export async function getShiftsForUserByBranch(
             where("userId", "==", userId),
             where("branchId", "==", branchId)
         ];
+
+        if (options.startDate && options.endDate) {
+            const startOfDayStartDate = new Date(options.startDate);
+            startOfDayStartDate.setHours(0, 0, 0, 0);
+            const startTimestamp = Timestamp.fromDate(startOfDayStartDate);
+
+            const endOfDayEndDate = new Date(options.endDate);
+            endOfDayEndDate.setHours(23, 59, 59, 999);
+            const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
+            
+            constraints.push(where("startTime", ">=", startTimestamp));
+            constraints.push(where("startTime", "<=", endTimestamp));
+        }
+
+
         if (options.orderByField) {
             constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
         } else {
-            constraints.push(orderBy("startTime", "desc"));
+            constraints.push(orderBy("startTime", "desc")); // Default order
         }
-        if (options.limit) {
+
+        if (options.limit && !(options.startDate && options.endDate)) { // Apply limit only if not a specific date range
             constraints.push(limit(options.limit));
         }
+
 
         const q = query(collection(db, "posShifts"), ...constraints);
         const querySnapshot = await getDocs(q);
