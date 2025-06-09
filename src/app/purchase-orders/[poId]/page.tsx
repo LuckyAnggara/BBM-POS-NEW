@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { useForm, useFieldArray, Controller, type SubmitHandler } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod"; // Added import
 import { z } from "zod";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -290,7 +291,7 @@ export default function PurchaseOrderDetailPage() {
       case 'paid': text = "Lunas"; break;
       case 'unpaid': text = "Belum Bayar"; break;
       case 'partially_paid': text = "Bayar Sebagian"; break;
-      case 'overdue': text = "Jatuh Tempo"; break;
+      case 'overdue': text = "Jatuh Tempo"; break; // This might not be a direct status from DB, but calculated
       default: text = status;
     }
     if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
@@ -620,5 +621,3 @@ export default function PurchaseOrderDetailPage() {
     </ProtectedRoute>
   );
 }
-
-    
