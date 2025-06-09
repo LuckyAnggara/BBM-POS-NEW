@@ -12,7 +12,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode } from "lucide-react";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, X as ExitIcon, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -20,9 +23,6 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
-import { format } from "date-fns";
 import type { InventoryItem, Customer } from "@/lib/firebase/firestore";
 import { 
   getInventoryItems, 
@@ -39,13 +39,16 @@ import {
   type ShiftPaymentMethod 
 } from "@/lib/firebase/firestore";
 import { Timestamp } from "firebase/firestore";
-import ScanCustomerDialog from "@/components/pos/scan-customer-dialog"; // Import the new component
+import ScanCustomerDialog from "@/components/pos/scan-customer-dialog"; 
+import { format } from "date-fns";
 
 type ViewMode = "card" | "table";
 
 interface CartItem extends TransactionItem {
   // Inherits productId, productName, quantity, price, total, costPrice
 }
+
+const COMMON_BANKS = ["BCA", "Mandiri", "BNI", "BRI", "CIMB Niaga", "Danamon", "Lainnya"];
 
 
 export default function POSPage() {
@@ -84,17 +87,26 @@ export default function POSPage() {
   // States for Cash Payment Modal
   const [showCashPaymentModal, setShowCashPaymentModal] = useState(false);
   const [cashAmountPaidInput, setCashAmountPaidInput] = useState("");
-  const [customerNameInputCash, setCustomerNameInputCash] = useState(""); // Renamed to avoid conflict
+  const [customerNameInputCash, setCustomerNameInputCash] = useState(""); 
   const [calculatedChange, setCalculatedChange] = useState<number | null>(null);
 
-  // States for Credit Sale
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  // States for Credit Sale / Customer Selection
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([]); // All customers for combobox
+  const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]); // Filtered for display
   const [loadingCustomers, setLoadingCustomers] = useState(true);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | undefined>(undefined);
   const [creditDueDate, setCreditDueDate] = useState<Date | undefined>(undefined);
+  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
+  const [isCustomerComboboxOpen, setIsCustomerComboboxOpen] = useState(false);
 
   // State for QR Scanner Dialog
   const [showScanCustomerDialog, setShowScanCustomerDialog] = useState(false);
+
+  // States for Bank Payment Modal
+  const [showBankPaymentModal, setShowBankPaymentModal] = useState(false);
+  const [selectedBank, setSelectedBank] = useState<string>("");
+  const [bankRefNumberInput, setBankRefNumberInput] = useState("");
+  const [customerNameInputBank, setCustomerNameInputBank] = useState("");
 
 
    useEffect(() => {
@@ -109,7 +121,7 @@ export default function POSPage() {
   const fetchBranchData = useCallback(async () => {
     if (!selectedBranch) {
       setProducts([]);
-      setCustomers([]);
+      setAllCustomers([]);
       setLoadingProducts(false);
       setLoadingCustomers(false);
       return;
@@ -122,7 +134,8 @@ export default function POSPage() {
         getCustomers(selectedBranch.id)
       ]);
       setProducts(items);
-      setCustomers(fetchedCustomers);
+      setAllCustomers(fetchedCustomers);
+      setFilteredCustomers(fetchedCustomers.slice(0,5)); // Initial 5 for combobox
     } catch (error) {
         console.error("Error fetching branch data for POS:", error);
         toast({title: "Gagal Memuat Data", description: "Tidak dapat memuat produk atau pelanggan.", variant: "destructive"});
@@ -131,6 +144,23 @@ export default function POSPage() {
         setLoadingCustomers(false);
     }
   }, [selectedBranch, toast]);
+
+  useEffect(() => {
+    if (!customerSearchTerm.trim()) {
+      setFilteredCustomers(allCustomers.slice(0, 5));
+    } else {
+      const lowerSearch = customerSearchTerm.toLowerCase();
+      setFilteredCustomers(
+        allCustomers.filter(
+          (customer) =>
+            customer.name.toLowerCase().includes(lowerSearch) ||
+            (customer.id && customer.id.toLowerCase().includes(lowerSearch)) ||
+            (customer.phone && customer.phone.includes(lowerSearch))
+        )
+      );
+    }
+  }, [customerSearchTerm, allCustomers]);
+
 
   const checkForActiveShift = useCallback(async () => {
     if (!currentUser || !selectedBranch) {
@@ -183,7 +213,7 @@ export default function POSPage() {
 
     transactions.forEach(tx => {
         if (tx.paymentTerms === 'cash' || tx.paymentTerms === 'card' || tx.paymentTerms === 'transfer') {
-            const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod; // Cast is safe here
+            const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod; 
             salesByPayment[paymentMethodForShift] = (salesByPayment[paymentMethodForShift] || 0) + tx.totalAmount;
         }
     });
@@ -368,6 +398,59 @@ export default function POSPage() {
     }
   };
 
+  const handleConfirmBankPayment = async () => {
+     if (!activeShift || !selectedBranch || !currentUser) {
+      toast({ title: "Kesalahan", description: "Shift, cabang, atau pengguna tidak aktif.", variant: "destructive" });
+      return;
+    }
+    if (!selectedBank) {
+      toast({ title: "Bank Diperlukan", description: "Pilih nama bank.", variant: "destructive" });
+      return;
+    }
+    if (!bankRefNumberInput.trim()) {
+      toast({ title: "No. Referensi Diperlukan", description: "Masukkan nomor referensi transaksi bank.", variant: "destructive" });
+      return;
+    }
+
+    setIsProcessingSale(true);
+    const transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp'> = {
+      shiftId: activeShift.id,
+      branchId: selectedBranch.id,
+      userId: currentUser.uid,
+      items: cartItems,
+      subtotal,
+      taxAmount: tax,
+      totalAmount: total,
+      totalCost: totalCost,
+      paymentTerms: 'transfer',
+      amountPaid: total, 
+      changeGiven: 0,
+      customerName: customerNameInputBank.trim() || undefined,
+      status: 'completed',
+      bankName: selectedBank,
+      bankTransactionRef: bankRefNumberInput.trim(),
+    };
+
+    const result = await recordTransaction(transactionData);
+    setIsProcessingSale(false);
+    setShowBankPaymentModal(false);
+
+    if ("error" in result || !result.id) {
+      toast({ title: "Gagal Merekam Transaksi", description: result.error || "ID transaksi tidak ditemukan.", variant: "destructive" });
+      setLastTransactionId(null);
+    } else {
+      toast({ title: "Transaksi Berhasil", description: "Penjualan transfer telah direkam." });
+      setLastTransactionId(result.id);
+      setShowPrintInvoiceDialog(true);
+      setCartItems([]);
+      setSelectedPaymentTerms('cash'); // Reset payment term
+      setSelectedBank("");
+      setBankRefNumberInput("");
+      setCustomerNameInputBank("");
+      await fetchBranchData(); 
+    }
+  };
+
 
   const handleCompleteSale = async () => {
     if (!activeShift || !selectedBranch || !currentUser) {
@@ -383,6 +466,14 @@ export default function POSPage() {
       openCashPaymentModal();
       return; 
     }
+    if (selectedPaymentTerms === 'transfer') {
+      setSelectedBank("");
+      setBankRefNumberInput("");
+      setCustomerNameInputBank("");
+      setShowBankPaymentModal(true);
+      return;
+    }
+
 
     let customerNameForTx: string | undefined = undefined;
     if (selectedPaymentTerms === 'credit') {
@@ -394,7 +485,7 @@ export default function POSPage() {
             toast({ title: "Tanggal Jatuh Tempo Diperlukan", description: "Pilih tanggal jatuh tempo untuk penjualan kredit.", variant: "destructive" });
             return;
         }
-        const cust = customers.find(c => c.id === selectedCustomerId);
+        const cust = allCustomers.find(c => c.id === selectedCustomerId);
         customerNameForTx = cust?.name;
     }
 
@@ -433,6 +524,7 @@ export default function POSPage() {
       setSelectedPaymentTerms('cash');
       setSelectedCustomerId(undefined);
       setCreditDueDate(undefined);
+      setCustomerSearchTerm("");
       await fetchBranchData();
     }
     setIsProcessingSale(false);
@@ -447,10 +539,11 @@ export default function POSPage() {
   };
 
   const handleScanCustomerSuccess = (scannedId: string) => {
-    const foundCustomer = customers.find(c => c.id === scannedId || c.qrCodeId === scannedId);
+    const foundCustomer = allCustomers.find(c => c.id === scannedId || c.qrCodeId === scannedId);
     if (foundCustomer) {
         setSelectedCustomerId(foundCustomer.id);
-        setSelectedPaymentTerms('credit'); // Optionally switch to credit term
+        setCustomerSearchTerm(foundCustomer.name); // Update search term to show selected customer
+        setSelectedPaymentTerms('credit'); 
         toast({title: "Pelanggan Ditemukan", description: `Pelanggan "${foundCustomer.name}" dipilih.`});
     } else {
         toast({title: "Pelanggan Tidak Ditemukan", description: "ID pelanggan dari QR code tidak terdaftar.", variant: "destructive"});
@@ -548,7 +641,7 @@ export default function POSPage() {
                     <Card 
                         key={product.id} 
                         className={cn(
-                            "overflow-hidden shadow-sm hover:shadow-md transition-shadow rounded-md",
+                            "overflow-hidden shadow-sm hover:shadow-md transition-shadow rounded-md cursor-pointer",
                             product.quantity <= 0 && "opacity-60 cursor-not-allowed"
                         )}
                         onClick={() => product.quantity > 0 && handleAddToCart(product)}
@@ -663,29 +756,28 @@ export default function POSPage() {
                 
                 <div className="w-full mt-2 pt-2 border-t">
                     <Label className="text-xs font-medium mb-1 block">Termin Pembayaran:</Label>
-                    <div className="flex gap-2">
-                        {(['cash', 'card', 'transfer', 'credit'] as PaymentTerms[]).map(term => (
-                            <Button 
-                                key={term}
-                                variant={selectedPaymentTerms === term ? "secondary" : "outline"} 
-                                size="sm" 
-                                className="text-xs flex-1 capitalize" 
-                                disabled={!activeShift || cartItems.length === 0}
-                                onClick={() => {
-                                    setSelectedPaymentTerms(term);
-                                    if (term !== 'credit') {
-                                        setSelectedCustomerId(undefined);
-                                        setCreditDueDate(undefined);
-                                    }
-                                }}
-                            >
-                                {term === 'cash' && <DollarSign className="mr-1.5 h-3.5 w-3.5"/>}
-                                {(term === 'card' || term === 'transfer') && <CreditCard className="mr-1.5 h-3.5 w-3.5"/>}
-                                {term === 'credit' && <UserPlus className="mr-1.5 h-3.5 w-3.5"/>}
-                                {term}
-                            </Button>
-                        ))}
-                    </div>
+                     <Select 
+                        value={selectedPaymentTerms} 
+                        onValueChange={(value) => {
+                            setSelectedPaymentTerms(value as PaymentTerms);
+                            if (value !== 'credit') {
+                                setSelectedCustomerId(undefined);
+                                setCreditDueDate(undefined);
+                                setCustomerSearchTerm("");
+                            }
+                        }}
+                        disabled={!activeShift || cartItems.length === 0}
+                    >
+                        <SelectTrigger className="h-9 text-xs">
+                            <SelectValue placeholder="Pilih termin pembayaran" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="cash" className="text-xs"><DollarSign className="inline-block mr-2 h-4 w-4" />Tunai</SelectItem>
+                            <SelectItem value="card" className="text-xs"><CreditCard className="inline-block mr-2 h-4 w-4" />Kartu</SelectItem>
+                            <SelectItem value="transfer" className="text-xs"><Banknote className="inline-block mr-2 h-4 w-4" />Transfer Bank</SelectItem>
+                            <SelectItem value="credit" className="text-xs"><UserPlus className="inline-block mr-2 h-4 w-4" />Kredit</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 {selectedPaymentTerms === 'credit' && (
@@ -693,18 +785,59 @@ export default function POSPage() {
                         <div className="flex items-center gap-2">
                             <div className="flex-grow">
                                 <Label htmlFor="selectedCustomer" className="text-xs">Pelanggan</Label>
-                                <Select 
-                                    value={selectedCustomerId} 
-                                    onValueChange={setSelectedCustomerId}
-                                    disabled={loadingCustomers || customers.length === 0}
-                                >
-                                    <SelectTrigger className="h-8 text-xs mt-1 w-full">
-                                        <SelectValue placeholder={loadingCustomers ? "Memuat..." : (customers.length === 0 ? "Tidak ada pelanggan" : "Pilih Pelanggan")} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {customers.map(c => <SelectItem key={c.id} value={c.id} className="text-xs">{c.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                <Popover open={isCustomerComboboxOpen} onOpenChange={setIsCustomerComboboxOpen}>
+                                    <PopoverTrigger asChild>
+                                        <Button
+                                            variant="outline"
+                                            role="combobox"
+                                            aria-expanded={isCustomerComboboxOpen}
+                                            className="w-full justify-between h-8 text-xs mt-1 font-normal"
+                                            disabled={loadingCustomers || allCustomers.length === 0}
+                                        >
+                                            {selectedCustomerId
+                                                ? allCustomers.find((customer) => customer.id === selectedCustomerId)?.name
+                                                : (loadingCustomers ? "Memuat..." : (allCustomers.length === 0 ? "Tidak ada pelanggan" : "Pilih Pelanggan"))}
+                                            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                                        <Command shouldFilter={false}>
+                                            <CommandInput 
+                                                placeholder="Cari pelanggan (nama/ID)..." 
+                                                value={customerSearchTerm}
+                                                onValueChange={setCustomerSearchTerm}
+                                                className="h-9 text-xs"
+                                            />
+                                            <CommandEmpty className="p-2 text-xs text-center">
+                                                {loadingCustomers ? "Memuat..." : "Pelanggan tidak ditemukan."}
+                                            </CommandEmpty>
+                                            <CommandList>
+                                                <CommandGroup>
+                                                    {filteredCustomers.map((customer) => (
+                                                    <CommandItem
+                                                        key={customer.id}
+                                                        value={customer.id}
+                                                        onSelect={(currentValue) => {
+                                                            setSelectedCustomerId(currentValue === selectedCustomerId ? undefined : currentValue);
+                                                            setCustomerSearchTerm(currentValue === selectedCustomerId ? "" : customer.name);
+                                                            setIsCustomerComboboxOpen(false);
+                                                        }}
+                                                        className="text-xs"
+                                                    >
+                                                        <CheckCircle
+                                                        className={cn(
+                                                            "mr-2 h-3.5 w-3.5",
+                                                            selectedCustomerId === customer.id ? "opacity-100" : "opacity-0"
+                                                        )}
+                                                        />
+                                                        {customer.name}
+                                                    </CommandItem>
+                                                    ))}
+                                                </CommandGroup>
+                                            </CommandList>
+                                        </Command>
+                                    </PopoverContent>
+                                </Popover>
                             </div>
                             <Button type="button" variant="outline" size="icon" className="h-8 w-8 mt-[18px]" onClick={() => setShowScanCustomerDialog(true)} disabled={loadingCustomers}>
                                 <QrCode className="h-4 w-4"/>
@@ -845,6 +978,69 @@ export default function POSPage() {
                 onClick={handleConfirmCashPayment} 
                 className="text-xs h-8" 
                 disabled={isProcessingSale || calculatedChange === null || calculatedChange < 0}
+              >
+                {isProcessingSale ? "Memproses..." : "Konfirmasi Pembayaran"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={showBankPaymentModal} onOpenChange={setShowBankPaymentModal}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-base">Pembayaran via Transfer Bank</DialogTitle>
+              <DialogDescription className="text-xs">
+                Total Belanja: <span className="font-semibold">{currencySymbol}{total.toLocaleString('id-ID')}</span>
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-3 space-y-3">
+              <div>
+                <Label htmlFor="selectedBank" className="text-xs">Nama Bank*</Label>
+                <Select value={selectedBank} onValueChange={setSelectedBank}>
+                  <SelectTrigger id="selectedBank" className="h-9 text-xs mt-1">
+                    <SelectValue placeholder="Pilih bank tujuan" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COMMON_BANKS.map(bank => (
+                      <SelectItem key={bank} value={bank} className="text-xs">{bank}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="bankRefNumberInput" className="text-xs">Nomor Referensi Transaksi*</Label>
+                <Input 
+                  id="bankRefNumberInput" 
+                  type="text" 
+                  value={bankRefNumberInput} 
+                  onChange={(e) => setBankRefNumberInput(e.target.value)} 
+                  placeholder="Masukkan nomor referensi" 
+                  className="h-9 text-sm mt-1" 
+                />
+              </div>
+               <div>
+                <Label htmlFor="customerNameInputBank" className="text-xs">Nama Pelanggan (Opsional)</Label>
+                 <div className="flex items-center mt-1">
+                    <UserPlus className="h-4 w-4 mr-2 text-muted-foreground"/>
+                    <Input 
+                    id="customerNameInputBank" 
+                    type="text" 
+                    value={customerNameInputBank} 
+                    onChange={(e) => setCustomerNameInputBank(e.target.value)} 
+                    placeholder="Masukkan nama pelanggan" 
+                    className="h-9 text-sm flex-1" 
+                    />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline" className="text-xs h-8" onClick={() => setShowBankPaymentModal(false)}>Batal</Button>
+              </DialogClose>
+              <Button 
+                onClick={handleConfirmBankPayment} 
+                className="text-xs h-8" 
+                disabled={isProcessingSale || !selectedBank || !bankRefNumberInput.trim()}
               >
                 {isProcessingSale ? "Memproses..." : "Konfirmasi Pembayaran"}
               </Button>

@@ -516,6 +516,8 @@ export interface PosTransaction {
   returnedAt?: Timestamp;
   returnReason?: string;
   returnedByUserId?: string;
+  bankName?: string; // New field
+  bankTransactionRef?: string; // New field
 }
 
 export async function recordTransaction(transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId'>): Promise<PosTransaction | { error: string }> {
@@ -551,6 +553,8 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
       invoiceNumber,
       status: 'completed', 
       timestamp: serverTimestamp() as Timestamp,
+      bankName: transactionData.bankName, // Save bank name
+      bankTransactionRef: transactionData.bankTransactionRef, // Save bank ref
     };
     batch.set(transactionRef, dataToSave);
 
@@ -1388,4 +1392,3 @@ export async function deleteCustomer(customerId: string): Promise<void | { error
     return { error: error.message || "Gagal menghapus pelanggan." };
   }
 }
-
