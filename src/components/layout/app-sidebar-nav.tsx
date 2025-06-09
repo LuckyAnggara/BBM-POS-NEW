@@ -8,21 +8,23 @@ import {
   LayoutDashboard,
   ShoppingCart,
   Archive,
-  CreditCard, 
+  CreditCard,
   BarChart3,
   Settings,
-  Receipt, 
-  History, 
+  Receipt,
+  History,
   PackageSearch,
-  Truck, 
-  ClipboardList, 
-  PackageOpen, 
-  Users, // Icon for Customers
+  Truck,
+  ClipboardList,
+  PackageOpen,
+  Users,
+  ListChecks, // New icon for Accounts Receivable
+  Database, // New icon for Master Data
 } from "lucide-react";
-import { 
-  SidebarMenu, 
-  SidebarMenuItem, 
-  SidebarMenuButton, 
+import {
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton
@@ -36,18 +38,26 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
   { href: "/pos", label: "Point of Sale", icon: ShoppingCart, adminOnly: false },
   { href: "/inventory", label: "Inventaris", icon: Archive, adminOnly: false },
-  { href: "/customers", label: "Pelanggan", icon: Users, adminOnly: false }, // New Customer Menu
-  { href: "/suppliers", label: "Pemasok", icon: Truck, adminOnly: false },
+  {
+    label: "Master Data",
+    icon: Database,
+    adminOnly: false,
+    subItems: [
+      { href: "/customers", label: "Pelanggan", icon: Users },
+      { href: "/suppliers", label: "Pemasok", icon: Truck },
+    ]
+  },
   { href: "/purchase-orders", label: "Pesanan Pembelian", icon: ClipboardList, adminOnly: false },
   { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
+  { href: "/accounts-receivable", label: "Piutang Usaha", icon: ListChecks, adminOnly: false },
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
-  { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false }, 
-  { 
-    href: "/reports", 
-    label: "Laporan", 
-    icon: BarChart3, 
+  { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
+  {
+    href: "/reports",
+    label: "Laporan",
+    icon: BarChart3,
     adminOnly: false,
-    subItems: [ 
+    subItems: [
       { href: "/reports", label: "Ringkasan Keuangan", icon: BarChart3, exactMatch: true },
       { href: "/reports/stock-mutation", label: "Mutasi Stok Global", icon: PackageSearch },
       { href: "/reports/stock-movement", label: "Pergerakan Stok Produk", icon: PackageOpen },
@@ -63,7 +73,7 @@ export default function AppSidebarNav() {
   return (
     <nav className="flex flex-col h-full">
       <SidebarHeaderBrand />
-      
+
       <div className="flex-grow overflow-y-auto p-2 space-y-1 mt-1">
         <SidebarMenu>
           {navItems.map((item) => {
@@ -85,11 +95,11 @@ export default function AppSidebarNav() {
                       size="default"
                       className={cn(
                         "w-full justify-start text-sm font-medium",
-                         pathname.startsWith(item.href) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
+                         (item.href && pathname.startsWith(item.href)) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
                          isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                       )}
-                      isActive={pathname.startsWith(item.href) && !isNavItemDisabled}
-                      asChild={false} 
+                      isActive={(item.href && pathname.startsWith(item.href)) && !isNavItemDisabled}
+                      asChild={false}
                       onClick={(e) => { if(isNavItemDisabled) e.preventDefault(); }}
                       aria-disabled={isNavItemDisabled}
                       tabIndex={isNavItemDisabled ? -1 : undefined}
@@ -100,7 +110,7 @@ export default function AppSidebarNav() {
                   <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
                     {item.subItems.map(subItem => (
                        <SidebarMenuSubItem key={subItem.href}>
-                         <Link href={isNavItemDisabled ? "#" : subItem.href} asChild>
+                         <Link href={isNavItemDisabled ? "#" : subItem.href} passHref legacyBehavior>
                            <SidebarMenuSubButton
                               isActive={ (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isNavItemDisabled}
                               aria-disabled={isNavItemDisabled}
@@ -116,11 +126,13 @@ export default function AppSidebarNav() {
               );
             }
 
+            // Regular menu item (no sub-items)
+            if (!item.href) return null; // Should not happen for non-group items
 
             return (
               <SidebarMenuItem key={item.label}>
-                <Link 
-                  href={isNavItemDisabled ? "#" : item.href} 
+                <Link
+                  href={isNavItemDisabled ? "#" : item.href}
                   onClick={(e) => {
                     if (isNavItemDisabled) e.preventDefault();
                   }}
@@ -130,16 +142,16 @@ export default function AppSidebarNav() {
                 >
                   <SidebarMenuButton
                     variant="default"
-                    size="default" 
+                    size="default"
                     className={cn(
-                      "w-full justify-start text-sm", 
+                      "w-full justify-start text-sm",
                       pathname === item.href && !isNavItemDisabled ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-sidebar-accent/50",
                       isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                     )}
                     isActive={!isNavItemDisabled && pathname === item.href}
                     tooltip={isNavItemDisabled ? undefined : {children: item.label, side: "right", align: "center"}}
                   >
-                    <item.icon className="mr-2.5 h-4.5 w-4.5" /> 
+                    <item.icon className="mr-2.5 h-4.5 w-4.5" />
                     <span className="truncate">{item.label}</span>
                   </SidebarMenuButton>
                 </Link>
@@ -148,9 +160,8 @@ export default function AppSidebarNav() {
           })}
         </SidebarMenu>
       </div>
-      
+
       <SidebarUserProfile />
     </nav>
   );
 }
-    

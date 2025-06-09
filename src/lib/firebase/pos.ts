@@ -1,5 +1,5 @@
 
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion } from "firebase/firestore";
 import { db } from "./config";
 import type { InventoryItem } from "./inventory";
 import type { Branch } from "@/contexts/branch-context";
@@ -63,7 +63,7 @@ export async function getActiveShift(userId: string, branchId: string): Promise<
       return { id: querySnapshot.docs[0].id, ...docData } as PosShift;
     }
     return null;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching active shift:", error);
     return null;
   }
@@ -102,6 +102,14 @@ export interface TransactionItem {
   total: number;
 }
 
+export interface TransactionPayment {
+  paymentDate: Timestamp;
+  amountPaid: number;
+  paymentMethod: 'cash' | 'transfer' | 'card' | 'other';
+  notes?: string;
+  recordedByUserId: string;
+}
+
 export interface PosTransaction {
   id: string;
   shiftId: string;
@@ -115,15 +123,16 @@ export interface PosTransaction {
   totalCost: number;
   paymentTerms: PaymentTerms;
   customerId?: string;
-  customerName?: string; 
+  customerName?: string;
   creditDueDate?: Timestamp;
   isCreditSale?: boolean;
   outstandingAmount?: number;
   paymentStatus?: PaymentStatus;
-  amountPaid: number; 
+  paymentsMade?: TransactionPayment[];
+  amountPaid: number;
   changeGiven: number;
   invoiceNumber: string;
-  status: 'completed' | 'returned'; 
+  status: 'completed' | 'returned';
   returnedAt?: Timestamp;
   returnReason?: string;
   returnedByUserId?: string;
@@ -132,7 +141,7 @@ export interface PosTransaction {
 }
 
 export async function recordTransaction(
-  transactionInput: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId'>
+  transactionInput: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId' | 'paymentsMade'>
 ): Promise<PosTransaction | { error: string }> {
   if (!transactionInput.shiftId || !transactionInput.branchId || !transactionInput.userId) {
     return { error: "Shift ID, Branch ID, dan User ID diperlukan untuk transaksi." };
@@ -144,7 +153,7 @@ export async function recordTransaction(
   try {
     const transactionRef = doc(collection(db, "posTransactions"));
     const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
-    
+
     const dataToSave: Omit<PosTransaction, 'id'> = {
       shiftId: transactionInput.shiftId,
       branchId: transactionInput.branchId,
@@ -158,26 +167,39 @@ export async function recordTransaction(
       amountPaid: transactionInput.amountPaid,
       changeGiven: transactionInput.changeGiven,
       invoiceNumber,
-      status: 'completed', 
+      status: 'completed',
+      paymentsMade: [],
       timestamp: serverTimestamp() as Timestamp,
     };
 
     if (transactionInput.customerId) dataToSave.customerId = transactionInput.customerId;
     if (transactionInput.customerName) dataToSave.customerName = transactionInput.customerName;
     if (transactionInput.creditDueDate) dataToSave.creditDueDate = transactionInput.creditDueDate;
-    if (transactionInput.isCreditSale !== undefined) dataToSave.isCreditSale = transactionInput.isCreditSale;
-    if (transactionInput.outstandingAmount !== undefined) dataToSave.outstandingAmount = transactionInput.outstandingAmount;
-    if (transactionInput.paymentStatus) dataToSave.paymentStatus = transactionInput.paymentStatus;
-    
+    if (transactionInput.isCreditSale !== undefined) {
+        dataToSave.isCreditSale = transactionInput.isCreditSale;
+        if (transactionInput.isCreditSale) {
+            dataToSave.paymentStatus = 'unpaid';
+            dataToSave.outstandingAmount = transactionInput.totalAmount;
+            dataToSave.paymentsMade = [];
+        } else {
+            dataToSave.paymentStatus = 'paid';
+            dataToSave.outstandingAmount = 0;
+        }
+    } else {
+        dataToSave.paymentStatus = 'paid'; // Default to paid if not credit sale
+        dataToSave.outstandingAmount = 0;
+    }
+
+
     if (transactionInput.bankName && transactionInput.bankName.trim() !== "") dataToSave.bankName = transactionInput.bankName;
     if (transactionInput.bankTransactionRef && transactionInput.bankTransactionRef.trim() !== "") dataToSave.bankTransactionRef = transactionInput.bankTransactionRef;
-    
+
 
     batch.set(transactionRef, dataToSave);
 
     for (const item of transactionInput.items) {
       const productRef = doc(db, "inventoryItems", item.productId);
-      const productSnap = await getDoc(productRef); 
+      const productSnap = await getDoc(productRef);
       if (productSnap.exists()) {
         const currentStock = productSnap.data().quantity as number;
         const newStock = currentStock - item.quantity;
@@ -220,13 +242,13 @@ export async function processFullTransactionReturn(transactionId: string, reason
       returnReason: reason,
       returnedAt: serverTimestamp(),
       returnedByUserId: returnedByUserId,
-      outstandingAmount: 0, 
-      paymentStatus: 'returned', 
+      outstandingAmount: 0,
+      paymentStatus: 'returned',
     });
 
     for (const item of transactionData.items) {
       const productRef = doc(db, "inventoryItems", item.productId);
-      const productSnap = await getDoc(productRef); 
+      const productSnap = await getDoc(productRef);
       if (productSnap.exists()) {
         const currentStock = productSnap.data().quantity as number;
         const newStock = currentStock + item.quantity;
@@ -274,7 +296,7 @@ export async function deleteTransaction(transactionId: string, branchId: string,
         const productSnap = await getDoc(productRef);
         if (productSnap.exists()) {
           const currentStock = productSnap.data().quantity as number;
-          const newStock = currentStock + item.quantity; 
+          const newStock = currentStock + item.quantity;
           batch.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
         } else {
           console.warn(`Product with ID ${item.productId} not found while deleting transaction. Stock not restored.`);
@@ -300,11 +322,10 @@ export async function getTransactionById(transactionId: string): Promise<PosTran
         const docSnap = await getDoc(transactionRef);
         if (docSnap.exists()) {
             const data = docSnap.data();
-            return { 
-                id: docSnap.id, 
+            return {
+                id: docSnap.id,
                 ...data,
-                paymentTerms: data.paymentTerms || data.paymentMethod, 
-             } as PosTransaction;
+            } as PosTransaction;
         }
         return null;
     } catch (error) {
@@ -319,7 +340,7 @@ export async function getTransactionsForUserByBranch(
     options: QueryOptions = {}
 ): Promise<PosTransaction[]> {
     if (!userId || !branchId) return [];
-    
+
     let constraints: any[] = [
         where("branchId", "==", branchId)
     ];
@@ -332,27 +353,26 @@ export async function getTransactionsForUserByBranch(
         constraints.push(where("timestamp", ">=", startTimestamp));
         constraints.push(where("timestamp", "<=", endTimestamp));
     }
-    
+
     if (options.orderByField) {
         constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
     } else {
-        constraints.push(orderBy("timestamp", options.orderDirection || "desc")); 
+        constraints.push(orderBy("timestamp", options.orderDirection || "desc"));
     }
 
-    if (options.limit && !(options.startDate && options.endDate)) { 
+    if (options.limit && !(options.startDate && options.endDate)) {
         constraints.push(limit(options.limit));
     }
-    
+
     try {
         const q = query(collection(db, "posTransactions"), ...constraints);
         const querySnapshot = await getDocs(q);
         const transactions: PosTransaction[] = [];
         querySnapshot.forEach((docSnap) => {
             const data = docSnap.data();
-            transactions.push({ 
-                id: docSnap.id, 
+            transactions.push({
+                id: docSnap.id,
                 ...data,
-                paymentTerms: data.paymentTerms || data.paymentMethod, 
             } as PosTransaction);
         });
         return transactions;
@@ -377,12 +397,12 @@ export async function getShiftsForUserByBranch(
         if (options.orderByField) {
             constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
         } else {
-            constraints.push(orderBy("startTime", "desc")); 
+            constraints.push(orderBy("startTime", "desc"));
         }
         if (options.limit) {
             constraints.push(limit(options.limit));
         }
-        
+
         const q = query(collection(db, "posShifts"), ...constraints);
         const querySnapshot = await getDocs(q);
         const shifts: PosShift[] = [];
@@ -404,10 +424,9 @@ export async function getTransactionsForShift(shiftId: string): Promise<PosTrans
     const transactions: PosTransaction[] = [];
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      transactions.push({ 
-          id: docSnap.id, 
+      transactions.push({
+          id: docSnap.id,
           ...data,
-          paymentTerms: data.paymentTerms || data.paymentMethod, 
        } as PosTransaction);
     });
     return transactions;
@@ -440,10 +459,9 @@ export async function getTransactionsByDateRangeAndBranch(
     const transactions: PosTransaction[] = [];
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data();
-      transactions.push({ 
-          id: docSnap.id, 
+      transactions.push({
+          id: docSnap.id,
           ...data,
-          paymentTerms: data.paymentTerms || data.paymentMethod, 
        } as PosTransaction);
     });
     return transactions;
@@ -453,4 +471,88 @@ export async function getTransactionsByDateRangeAndBranch(
   }
 }
 
-    
+
+export async function getOutstandingCreditSalesByBranch(
+  branchId: string,
+  options: QueryOptions = {}
+): Promise<PosTransaction[]> {
+  if (!branchId) return [];
+
+  const constraints: any[] = [
+    where("branchId", "==", branchId),
+    where("isCreditSale", "==", true),
+    where("paymentStatus", "in", ["unpaid", "partially_paid"]), // Only get sales that are not fully paid or returned
+  ];
+
+  if (options.orderByField) {
+    constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
+  } else {
+    constraints.push(orderBy("timestamp", "desc"));
+  }
+
+  if (options.limit) {
+    constraints.push(limit(options.limit));
+  }
+
+  try {
+    const q = query(collection(db, "posTransactions"), ...constraints);
+    const querySnapshot = await getDocs(q);
+    const transactions: PosTransaction[] = [];
+    querySnapshot.forEach((docSnap) => {
+      transactions.push({ id: docSnap.id, ...docSnap.data() } as PosTransaction);
+    });
+    return transactions;
+  } catch (error) {
+    console.error("Error fetching outstanding credit sales:", error);
+    return [];
+  }
+}
+
+export async function recordPaymentForCreditSale(
+  transactionId: string,
+  paymentDetails: Omit<TransactionPayment, 'paymentDate'> & { paymentDate: Date, recordedByUserId: string }
+): Promise<void | { error: string }> {
+  if (!transactionId) return { error: "ID Transaksi tidak valid." };
+  if (!paymentDetails.amountPaid || paymentDetails.amountPaid <= 0) {
+    return { error: "Jumlah pembayaran tidak valid." };
+  }
+
+  const transactionRef = doc(db, "posTransactions", transactionId);
+
+  try {
+    const transactionSnap = await getDoc(transactionRef);
+    if (!transactionSnap.exists()) {
+      return { error: "Transaksi penjualan kredit tidak ditemukan." };
+    }
+    const transactionData = transactionSnap.data() as PosTransaction;
+
+    if (transactionData.paymentStatus === 'paid' || transactionData.paymentStatus === 'returned') {
+        return { error: `Transaksi ini sudah ${transactionData.paymentStatus === 'paid' ? 'lunas' : 'diretur'}.`};
+    }
+
+    const newOutstandingAmount = (transactionData.outstandingAmount || 0) - paymentDetails.amountPaid;
+    let newPaymentStatus: PaymentStatus = transactionData.paymentStatus || 'unpaid';
+
+    if (newOutstandingAmount <= 0) {
+      newPaymentStatus = 'paid';
+    } else {
+      newPaymentStatus = 'partially_paid';
+    }
+
+    const paymentRecord: TransactionPayment = {
+      ...paymentDetails,
+      paymentDate: Timestamp.fromDate(paymentDetails.paymentDate),
+    };
+
+    await updateDoc(transactionRef, {
+      outstandingAmount: newOutstandingAmount < 0 ? 0 : newOutstandingAmount,
+      paymentStatus: newPaymentStatus,
+      paymentsMade: arrayUnion(paymentRecord),
+      updatedAt: serverTimestamp(),
+    });
+
+  } catch (error: any) {
+    console.error("Error recording payment for credit sale:", error);
+    return { error: error.message || "Gagal merekam pembayaran." };
+  }
+}
