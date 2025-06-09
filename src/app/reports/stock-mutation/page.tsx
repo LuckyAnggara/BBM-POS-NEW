@@ -15,7 +15,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { CalendarIcon, Download } from "lucide-react";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getInventoryItems, getTransactionsByDateRangeAndBranch, getPurchaseOrdersByBranch, type InventoryItem, type PosTransaction, type PurchaseOrder } from "@/lib/firebase/firestore";
+import { getInventoryItems, type InventoryItem } from "@/lib/firebase/inventory"; // Updated imports
+import { getTransactionsByDateRangeAndBranch, type PosTransaction } from "@/lib/firebase/pos"; // Updated imports
+import { getPurchaseOrdersByBranch, type PurchaseOrder } from "@/lib/firebase/purchaseOrders"; // Updated imports
 
 interface StockMutationReportItem {
   productId: string;
@@ -59,11 +61,10 @@ export default function StockMutationReportPage() {
       const inventoryItems = await getInventoryItems(selectedBranch.id);
       const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
       
-      // Fetch POs updated within the period
       const purchaseOrdersUpdatedInPeriod = await getPurchaseOrdersByBranch(selectedBranch.id, {
         startDate,
         endDate,
-        orderByField: "updatedAt", // Filter based on when PO was updated (likely when items were received)
+        orderByField: "updatedAt", 
         orderDirection: "desc",
       });
 
@@ -88,9 +89,6 @@ export default function StockMutationReportPage() {
       purchaseOrdersUpdatedInPeriod.forEach(po => {
         if (po.status === 'partially_received' || po.status === 'fully_received') {
           po.items.forEach(poItem => {
-            // This sums up the *total* received quantity for items in POs updated in the period.
-            // This is an approximation of stock received *during* the period.
-            // A more precise method would track individual receipt events with timestamps.
             stockInFromPOMap.set(poItem.productId, (stockInFromPOMap.get(poItem.productId) || 0) + poItem.receivedQuantity);
           });
         }
@@ -100,7 +98,7 @@ export default function StockMutationReportPage() {
         const stockSold = soldQuantitiesMap.get(item.id) || 0;
         const stockReturned = returnedQuantitiesMap.get(item.id) || 0;
         const stockInFromPOForPeriod = stockInFromPOMap.get(item.id) || 0; 
-        const finalStock = item.quantity; // Current stock from inventory item
+        const finalStock = item.quantity; 
         
         const initialStock = finalStock - stockInFromPOForPeriod + stockSold - stockReturned;
 
@@ -306,3 +304,5 @@ export default function StockMutationReportPage() {
     </ProtectedRoute>
   );
 }
+
+    

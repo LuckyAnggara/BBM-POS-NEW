@@ -6,7 +6,8 @@ import MainLayout from "@/components/layout/main-layout";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/contexts/auth-context";
 import { useBranch } from "@/contexts/branch-context";
-import { getShiftsForUserByBranch, type PosShift, type PaymentMethod } from "@/lib/firebase/firestore";
+import { getShiftsForUserByBranch, type PosShift } from "@/lib/firebase/pos"; // Updated import
+import type { PaymentMethod } from "@/lib/firebase/types"; // Updated import
 import { Timestamp } from "firebase/firestore";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";

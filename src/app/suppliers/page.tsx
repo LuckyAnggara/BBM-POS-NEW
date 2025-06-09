@@ -19,8 +19,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Supplier, SupplierInput } from "@/lib/firebase/firestore";
-import { addSupplier, getSuppliers, updateSupplier, deleteSupplier } from "@/lib/firebase/firestore";
+import type { Supplier, SupplierInput } from "@/lib/firebase/suppliers"; // Updated import
+import { addSupplier, getSuppliers, updateSupplier, deleteSupplier } from "@/lib/firebase/suppliers"; // Updated import
 
 const supplierFormSchema = z.object({
   name: z.string().min(2, { message: "Nama pemasok minimal 2 karakter." }),
@@ -242,7 +242,6 @@ export default function SuppliersPage() {
           )}
         </div>
 
-        {/* Add/Edit Supplier Dialog */}
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
@@ -291,3 +290,5 @@ export default function SuppliersPage() {
     </ProtectedRoute>
   );
 }
+
+    

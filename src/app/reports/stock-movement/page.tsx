@@ -15,25 +15,29 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { CalendarIcon, Download, Package, AlertTriangle, Info } from "lucide-react";
 import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
-import Image from "next/image"; // Added missing import
+import Image from "next/image"; 
 import { 
   getInventoryItems, 
-  getTransactionsByDateRangeAndBranch, 
-  getPurchaseOrdersByBranch, 
   type InventoryItem, 
-  type PosTransaction, 
+} from "@/lib/firebase/inventory"; // Updated imports
+import {
+  getTransactionsByDateRangeAndBranch, 
+  type PosTransaction,
+} from "@/lib/firebase/pos"; // Updated imports
+import {
+  getPurchaseOrdersByBranch, 
   type PurchaseOrder,
   type PurchaseOrderItem
-} from "@/lib/firebase/firestore";
+} from "@/lib/firebase/purchaseOrders"; // Updated imports
 import { Timestamp } from "firebase/firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface StockMovement {
   date: Timestamp;
-  type: "Stok Awal" | "Penjualan" | "Retur Jual" | "Penerimaan PO" | "Penyesuaian"; // Added Penyesuaian for future use
-  documentId?: string; // Invoice number or PO number
-  notes?: string; // For return reason, etc.
-  quantityChange: number; // Positive for stock in, negative for stock out
+  type: "Stok Awal" | "Penjualan" | "Retur Jual" | "Penerimaan PO" | "Penyesuaian"; 
+  documentId?: string; 
+  notes?: string; 
+  quantityChange: number; 
   stockBefore: number;
   stockAfter: number;
 }
@@ -104,59 +108,48 @@ export default function StockMovementReportPage() {
       const currentStock = product.quantity;
       let movements: Omit<StockMovement, 'stockBefore' | 'stockAfter'>[] = [];
 
-      // Fetch Sales and Returns
       const salesTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
       salesTransactions.forEach(tx => {
         tx.items.forEach(item => {
           if (item.productId === selectedProductId) {
             if (tx.status === 'returned') {
               movements.push({
-                date: tx.returnedAt || tx.timestamp, // Prefer returnedAt if available
+                date: tx.returnedAt || tx.timestamp, 
                 type: "Retur Jual",
                 documentId: tx.invoiceNumber,
                 notes: tx.returnReason,
-                quantityChange: item.quantity, // Positive as it's stock in
+                quantityChange: item.quantity, 
               });
-            } else { // completed
+            } else { 
               movements.push({
                 date: tx.timestamp,
                 type: "Penjualan",
                 documentId: tx.invoiceNumber,
-                quantityChange: -item.quantity, // Negative for stock out
+                quantityChange: -item.quantity, 
               });
             }
           }
         });
       });
 
-      // Fetch Purchase Order Receipts (approximation based on PO update time and status)
       const purchaseOrders = await getPurchaseOrdersByBranch(selectedBranch.id, { startDate, endDate, orderByField: "updatedAt" });
       purchaseOrders.forEach(po => {
         if (po.status === 'partially_received' || po.status === 'fully_received') {
           po.items.forEach(poItem => {
             if (poItem.productId === selectedProductId && poItem.receivedQuantity > 0) {
-              // To get quantity received *within* the period is complex without per-receipt logs.
-              // This simplified version assumes all receivedQuantity for POs updated in period happened in period.
-              // A more accurate system would track each receipt event.
-              // For this version, we'll take the total received quantity for the item in this PO
-              // if the PO was updated in the period, as a proxy for stock received.
-              // This could be refined by storing previous received quantity and calculating delta.
-              // However, this is a good starting point.
               movements.push({
-                date: po.updatedAt, // Use PO update time as proxy for receipt time
+                date: po.updatedAt, 
                 type: "Penerimaan PO",
                 documentId: po.poNumber,
-                quantityChange: poItem.receivedQuantity, // This is total received on PO, not necessarily in period
+                quantityChange: poItem.receivedQuantity, 
               });
             }
           });
         }
       });
       
-      // Sort movements by date
       movements.sort((a, b) => a.date.toMillis() - b.date.toMillis());
 
-      // Calculate initial stock by working backwards from current stock
       let calculatedInitialStock = currentStock;
       for (let i = movements.length - 1; i >= 0; i--) {
         calculatedInitialStock -= movements[i].quantityChange;
@@ -164,9 +157,9 @@ export default function StockMovementReportPage() {
       
       const processedMovements: StockMovement[] = [];
       processedMovements.push({
-        date: Timestamp.fromDate(startDate), // Start of the period
+        date: Timestamp.fromDate(startDate), 
         type: "Stok Awal",
-        quantityChange: 0, // No change, just a starting point
+        quantityChange: 0, 
         stockBefore: calculatedInitialStock,
         stockAfter: calculatedInitialStock,
       });
@@ -184,7 +177,7 @@ export default function StockMovementReportPage() {
 
       setReportData({ product, movements: processedMovements, currentStock });
 
-      if (processedMovements.length <= 1 && movements.length === 0) { // Only initial stock
+      if (processedMovements.length <= 1 && movements.length === 0) { 
         toast({ title: "Tidak Ada Pergerakan", description: `Tidak ada pergerakan stok untuk ${product.name} pada periode ini.`, variant: "default" });
       }
 
@@ -396,3 +389,4 @@ export default function StockMovementReportPage() {
   );
 }
 
+    

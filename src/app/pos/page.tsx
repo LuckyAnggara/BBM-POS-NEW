@@ -23,11 +23,13 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { InventoryItem, Customer, BankAccount } from "@/lib/firebase/firestore";
+import type { InventoryItem } from "@/lib/firebase/inventory"; // Updated import
+import type { Customer } from "@/lib/firebase/customers"; // Updated import
+import type { BankAccount } from "@/lib/firebase/bankAccounts"; // Updated import
+import { getInventoryItems } from "@/lib/firebase/inventory"; // Updated import
+import { getCustomers } from "@/lib/firebase/customers"; // Updated import
+import { getBankAccounts } from "@/lib/firebase/bankAccounts"; // Updated import
 import { 
-  getInventoryItems, 
-  getCustomers,
-  getBankAccounts, // Added import
   startNewShift, 
   getActiveShift, 
   endShift, 
@@ -38,18 +40,14 @@ import {
   type TransactionItem, 
   type PaymentTerms,
   type ShiftPaymentMethod 
-} from "@/lib/firebase/firestore";
+} from "@/lib/firebase/pos"; // Updated import
 import { Timestamp } from "firebase/firestore";
 import ScanCustomerDialog from "@/components/pos/scan-customer-dialog"; 
 import { format } from "date-fns";
 
 type ViewMode = "card" | "table";
 
-interface CartItem extends TransactionItem {
-  // Inherits productId, productName, quantity, price, total, costPrice
-}
-
-// Removed COMMON_BANKS, will fetch dynamically
+interface CartItem extends TransactionItem {}
 
 export default function POSPage() {
   const { selectedBranch } = useBranch();
@@ -84,13 +82,11 @@ export default function POSPage() {
   const [lastTransactionId, setLastTransactionId] = useState<string | null>(null);
   const [showPrintInvoiceDialog, setShowPrintInvoiceDialog] = useState(false);
 
-  // States for Cash Payment Modal
   const [showCashPaymentModal, setShowCashPaymentModal] = useState(false);
   const [cashAmountPaidInput, setCashAmountPaidInput] = useState("");
   const [customerNameInputCash, setCustomerNameInputCash] = useState(""); 
   const [calculatedChange, setCalculatedChange] = useState<number | null>(null);
 
-  // States for Credit Sale / Customer Selection
   const [allCustomers, setAllCustomers] = useState<Customer[]>([]); 
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]); 
   const [loadingCustomers, setLoadingCustomers] = useState(true);
@@ -99,14 +95,12 @@ export default function POSPage() {
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
   const [isCustomerComboboxOpen, setIsCustomerComboboxOpen] = useState(false);
 
-  // State for QR Scanner Dialog
   const [showScanCustomerDialog, setShowScanCustomerDialog] = useState(false);
 
-  // States for Bank Payment Modal
   const [availableBankAccounts, setAvailableBankAccounts] = useState<BankAccount[]>([]);
   const [loadingBankAccounts, setLoadingBankAccounts] = useState(false);
   const [showBankPaymentModal, setShowBankPaymentModal] = useState(false);
-  const [selectedBankName, setSelectedBankName] = useState<string>(""); // Store bank name directly
+  const [selectedBankName, setSelectedBankName] = useState<string>(""); 
   const [bankRefNumberInput, setBankRefNumberInput] = useState("");
   const [customerNameInputBank, setCustomerNameInputBank] = useState("");
 
@@ -137,7 +131,7 @@ export default function POSPage() {
       const [items, fetchedCustomers, fetchedBankAccounts] = await Promise.all([
         getInventoryItems(selectedBranch.id),
         getCustomers(selectedBranch.id),
-        getBankAccounts({ branchId: selectedBranch.id, isActive: true }) // Fetch active bank accounts for the branch
+        getBankAccounts({ branchId: selectedBranch.id, isActive: true }) 
       ]);
       setProducts(items);
       setAllCustomers(fetchedCustomers);
@@ -164,7 +158,7 @@ export default function POSPage() {
             customer.name.toLowerCase().includes(lowerSearch) ||
             (customer.id && customer.id.toLowerCase().includes(lowerSearch)) ||
             (customer.phone && customer.phone.includes(lowerSearch))
-        ).slice(0,10) // Limit search results for performance
+        ).slice(0,10) 
       );
     }
   }, [customerSearchTerm, allCustomers]);
@@ -411,7 +405,7 @@ export default function POSPage() {
       toast({ title: "Kesalahan", description: "Shift, cabang, atau pengguna tidak aktif.", variant: "destructive" });
       return;
     }
-    if (!selectedBankName) { // Use selectedBankName for validation
+    if (!selectedBankName) { 
       toast({ title: "Bank Diperlukan", description: "Pilih nama bank.", variant: "destructive" });
       return;
     }
@@ -435,7 +429,7 @@ export default function POSPage() {
       changeGiven: 0,
       customerName: customerNameInputBank.trim() || undefined,
       status: 'completed',
-      bankName: selectedBankName, // Store the selected bank name
+      bankName: selectedBankName, 
       bankTransactionRef: bankRefNumberInput.trim(),
     };
 
@@ -475,7 +469,7 @@ export default function POSPage() {
       return; 
     }
     if (selectedPaymentTerms === 'transfer') {
-      setSelectedBankName(""); // Reset for new selection
+      setSelectedBankName(""); 
       setBankRefNumberInput("");
       setCustomerNameInputBank("");
       setShowBankPaymentModal(true);
@@ -728,3 +722,5 @@ export default function POSPage() {
     </ProtectedRoute>
   );
 }
+
+    

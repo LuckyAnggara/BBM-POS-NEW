@@ -6,7 +6,7 @@ import MainLayout from "@/components/layout/main-layout";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/contexts/auth-context";
 import { useBranch } from "@/contexts/branch-context";
-import { getTransactionsForUserByBranch, processFullTransactionReturn, deleteTransaction as apiDeleteTransaction, type PosTransaction } from "@/lib/firebase/firestore";
+import { getTransactionsForUserByBranch, processFullTransactionReturn, deleteTransaction as apiDeleteTransaction, type PosTransaction } from "@/lib/firebase/pos"; // Updated import
 import { Timestamp } from "firebase/firestore";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -195,7 +195,6 @@ export default function SalesHistoryPage() {
         </span>
       );
     }
-    // Consider undefined status as completed for older transactions
     return (
       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
         <CheckCircle className="mr-1 h-3 w-3" /> Selesai
@@ -311,7 +310,7 @@ export default function SalesHistoryPage() {
                           <TableCell className="text-xs font-medium py-2">{tx.invoiceNumber || tx.id.substring(0, 8).toUpperCase()}</TableCell>
                           <TableCell className="text-xs py-2">{formatDateDisplay(tx.timestamp)}</TableCell>
                           <TableCell className="text-xs hidden md:table-cell py-2">{tx.customerName || "-"}</TableCell>
-                          <TableCell className="text-xs capitalize hidden sm:table-cell py-2">{tx.paymentMethod}</TableCell>
+                          <TableCell className="text-xs capitalize hidden sm:table-cell py-2">{tx.paymentTerms}</TableCell>
                           <TableCell className="text-xs text-right py-2">{formatCurrency(tx.totalAmount)}</TableCell>
                           <TableCell className="text-xs text-center py-2">
                             {getStatusChip(tx.status)}
@@ -434,3 +433,5 @@ export default function SalesHistoryPage() {
     </ProtectedRoute>
   );
 }
+
+    

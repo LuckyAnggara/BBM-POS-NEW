@@ -20,11 +20,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { InventoryItem, InventoryCategory, InventoryItemInput, InventoryCategoryInput } from "@/lib/firebase/firestore";
+import type { InventoryItem, InventoryCategory, InventoryItemInput, InventoryCategoryInput } from "@/lib/firebase/inventory"; // Updated import
 import {
   addInventoryItem, getInventoryItems, updateInventoryItem, deleteInventoryItem,
   addInventoryCategory, getInventoryCategories, deleteInventoryCategory
-} from "@/lib/firebase/firestore";
+} from "@/lib/firebase/inventory"; // Updated import
 import { Timestamp } from "firebase/firestore";
 
 
@@ -170,9 +170,8 @@ export default function InventoryPage() {
       toast({ title: "Gagal Menambah Kategori", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Kategori Ditambahkan", description: `Kategori "${values.name}" telah ditambahkan.` });
-      setIsCategoryManagerOpen(false); // Close manager dialog on success
+      setIsCategoryManagerOpen(false); 
       categoryForm.reset();
-      // Re-fetch categories to update dropdowns
       const fetchedCategories = await getInventoryCategories(selectedBranch.id);
       setCategories(fetchedCategories);
     }
@@ -326,7 +325,6 @@ export default function InventoryPage() {
           )}
         </div>
 
-        {/* Item Add/Edit Dialog */}
         <Dialog open={isItemDialogOpen} onOpenChange={setIsItemDialogOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
@@ -404,7 +402,6 @@ export default function InventoryPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Category Manager Dialog */}
         <Dialog open={isCategoryManagerOpen} onOpenChange={setIsCategoryManagerOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
@@ -474,3 +471,5 @@ export default function InventoryPage() {
     </ProtectedRoute>
   );
 }
+
+    

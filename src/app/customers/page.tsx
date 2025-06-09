@@ -19,8 +19,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Customer, CustomerInput } from "@/lib/firebase/firestore";
-import { addCustomer, getCustomers, updateCustomer, deleteCustomer } from "@/lib/firebase/firestore";
+import type { Customer, CustomerInput } from "@/lib/firebase/customers"; // Updated import
+import { addCustomer, getCustomers, updateCustomer, deleteCustomer } from "@/lib/firebase/customers"; // Updated import
 
 const customerFormSchema = z.object({
   name: z.string().min(2, { message: "Nama pelanggan minimal 2 karakter." }),
@@ -33,7 +33,7 @@ const customerFormSchema = z.object({
 type CustomerFormValues = z.infer<typeof customerFormSchema>;
 
 export default function CustomersPage() {
-  const { userData } = useAuth(); // Assuming userData has role or permissions
+  const { userData } = useAuth(); 
   const { selectedBranch } = useBranch();
   const { toast } = useToast();
 
@@ -239,7 +239,6 @@ export default function CustomersPage() {
           )}
         </div>
 
-        {/* Add/Edit Customer Dialog */}
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
@@ -284,3 +283,5 @@ export default function CustomersPage() {
     </ProtectedRoute>
   );
 }
+
+    

@@ -15,8 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import type { PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus, ReceivedItemData } from "@/lib/firebase/firestore";
-import { getPurchaseOrderById, updatePurchaseOrderStatus, receivePurchaseOrderItems } from "@/lib/firebase/firestore";
+import type { PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus, ReceivedItemData } from "@/lib/firebase/purchaseOrders"; // Updated import
+import { getPurchaseOrderById, updatePurchaseOrderStatus, receivePurchaseOrderItems } from "@/lib/firebase/purchaseOrders"; // Updated import
 import { Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
 import Link from "next/link";
@@ -407,4 +407,5 @@ export default function PurchaseOrderDetailPage() {
     </ProtectedRoute>
   );
 }
+
     

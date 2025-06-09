@@ -13,7 +13,9 @@ import { format, startOfMonth, endOfMonth } from "date-fns";
 import React, { useState } from "react";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useToast } from "@/hooks/use-toast";
-import { getTransactionsByDateRangeAndBranch, getExpenses, type PosTransaction, type PaymentMethod, type Expense } from "@/lib/firebase/firestore";
+import { getTransactionsByDateRangeAndBranch, type PosTransaction } from "@/lib/firebase/pos"; // Updated import
+import { getExpenses, type Expense } from "@/lib/firebase/expenses"; // Updated import
+import type { PaymentMethod } from "@/lib/firebase/types"; // Updated import
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 
@@ -22,24 +24,24 @@ type ReportType = "sales_summary" | "income_statement" | "balance_sheet";
 interface SalesSummaryData {
   grossRevenueBeforeReturns: number;
   totalValueReturned: number;
-  netRevenue: number; // Formerly totalRevenue
-  totalNetTransactions: number; // Based on completed transactions
-  averageTransactionValue: number; // Based on net revenue and net transactions
-  salesByPaymentMethod: Record<PaymentMethod, number>; // Based on completed transactions
+  netRevenue: number; 
+  totalNetTransactions: number; 
+  averageTransactionValue: number; 
+  salesByPaymentMethod: Record<PaymentMethod, number>; 
 }
 
 interface IncomeStatementData {
   grossRevenueBeforeReturns: number;
   totalValueReturned: number;
-  netRevenue: number; // Revenue from completed sales
+  netRevenue: number; 
   
   grossCOGSBeforeReturns: number;
   cogsOfReturnedItems: number;
-  netCOGS: number; // COGS from completed sales
+  netCOGS: number; 
 
-  grossProfit: number; // netRevenue - netCOGS
+  grossProfit: number; 
   totalExpenses: number;
-  netProfit: number; // grossProfit - totalExpenses
+  netProfit: number; 
   expensesBreakdown?: { category: string; amount: number }[]; 
 }
 
@@ -92,7 +94,9 @@ export default function ReportsPage() {
         
         const salesByPaymentMethod: Record<PaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
         completedTransactions.forEach(tx => {
-          salesByPaymentMethod[tx.paymentMethod] = (salesByPaymentMethod[tx.paymentMethod] || 0) + tx.totalAmount;
+          if (tx.paymentTerms === 'cash' || tx.paymentTerms === 'card' || tx.paymentTerms === 'transfer') {
+             salesByPaymentMethod[tx.paymentTerms as PaymentMethod] = (salesByPaymentMethod[tx.paymentTerms as PaymentMethod] || 0) + tx.totalAmount;
+          }
         });
 
         const totalNetTransactions = completedTransactions.length;

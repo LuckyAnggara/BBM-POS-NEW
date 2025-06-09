@@ -4,7 +4,9 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import InvoiceTemplate from "@/components/invoice/invoice-template";
-import { getTransactionById, getBranchById, type PosTransaction, type Branch } from "@/lib/firebase/firestore";
+import { getTransactionById } from "@/lib/firebase/pos"; // Updated import
+import { getBranchById, type Branch } from "@/lib/firebase/branches"; // Updated import
+import type { PosTransaction } from "@/lib/firebase/pos"; // Updated import
 import { Button } from "@/components/ui/button";
 import { Printer, ArrowLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";

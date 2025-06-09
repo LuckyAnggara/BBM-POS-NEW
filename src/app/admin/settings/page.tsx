@@ -16,20 +16,24 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { 
-  createBranch as apiCreateBranch, 
-  getAllUsers as apiGetAllUsers, 
-  updateUserBranch as apiUpdateUserBranch, 
-  updateUserRole as apiUpdateUserRole,
-  updateBranch as apiUpdateBranch,
-  deleteBranch as apiDeleteBranch,
-  addBankAccount as apiAddBankAccount,
-  getBankAccounts as apiGetBankAccounts,
-  updateBankAccount as apiUpdateBankAccount,
-  deleteBankAccount as apiDeleteBankAccount,
+  createBranch, 
+  updateBranch,
+  deleteBranch,
   type BranchInput,
+} from "@/lib/firebase/branches";
+import { 
+  getAllUsers, 
+  updateUserBranch, 
+  updateUserRole,
+} from "@/lib/firebase/users";
+import {
+  addBankAccount,
+  getBankAccounts,
+  updateBankAccount,
+  deleteBankAccount,
   type BankAccount,
   type BankAccountInput
-} from "@/lib/firebase/firestore";
+} from "@/lib/firebase/bankAccounts";
 import type { UserData } from "@/contexts/auth-context";
 import type { Branch } from "@/contexts/branch-context";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -77,13 +81,12 @@ const initialBankAccountFormState: BankAccountFormState = {
 
 export default function AdminSettingsPage() {
   const { userData, loadingAuth } = useAuth();
-  const { branches, loadingBranches, refreshBranches, selectedBranch: adminSelectedBranch, setSelectedBranch: setAdminSelectedBranch } = useBranch(); // Renamed to avoid conflict
+  const { branches, loadingBranches, refreshBranches, selectedBranch: adminSelectedBranch, setSelectedBranch: setAdminSelectedBranch } = useBranch(); 
   const router = useRouter();
   const { toast } = useToast();
 
   const [activeTab, setActiveTab] = useState("manage-branches");
 
-  // Branch Management State
   const [branchForm, setBranchForm] = useState<BranchFormState>(initialBranchFormState);
   const [isSubmittingBranch, setIsSubmittingBranch] = useState(false);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
@@ -92,13 +95,11 @@ export default function AdminSettingsPage() {
   const [branchToDelete, setBranchToDelete] = useState<Branch | null>(null);
   const [isDeletingBranch, setIsDeletingBranch] = useState(false);
 
-  // User Management State
   const [users, setUsers] = useState<UserData[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [userBranchChanges, setUserBranchChanges] = useState<Record<string, string | null>>({});
   const [userRoleChanges, setUserRoleChanges] = useState<Record<string, string>>({});
 
-  // Bank Account Management State
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loadingBankAccounts, setLoadingBankAccounts] = useState(true);
   const [bankAccountForm, setBankAccountForm] = useState<BankAccountFormState>(initialBankAccountFormState);
@@ -117,7 +118,7 @@ export default function AdminSettingsPage() {
 
   const fetchUsers = async () => {
     setLoadingUsers(true);
-    const fetchedUsers = await apiGetAllUsers();
+    const fetchedUsers = await getAllUsers();
     setUsers(fetchedUsers);
     
     const initialBranchChanges: Record<string, string | null> = {};
@@ -134,8 +135,7 @@ export default function AdminSettingsPage() {
 
   const fetchBankAccounts = useCallback(async () => {
     setLoadingBankAccounts(true);
-    // Admin sees all bank accounts, not filtered by currently selected branch in BranchContext
-    const fetchedBankAccounts = await apiGetBankAccounts(); 
+    const fetchedBankAccounts = await getBankAccounts(); 
     setBankAccounts(fetchedBankAccounts);
     setLoadingBankAccounts(false);
   }, []);
@@ -168,7 +168,6 @@ export default function AdminSettingsPage() {
     }));
   };
 
-  // Branch Handlers
   const handleCreateBranch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!branchForm.name.trim()) {
@@ -185,7 +184,7 @@ export default function AdminSettingsPage() {
       phoneNumber: branchForm.phoneNumber,
       transactionDeletionPassword: branchForm.transactionDeletionPassword || "",
     };
-    const result = await apiCreateBranch(branchInput);
+    const result = await createBranch(branchInput);
     if ("error" in result) {
       toast({ title: "Gagal Membuat Cabang", description: result.error, variant: "destructive" });
     } else {
@@ -224,7 +223,7 @@ export default function AdminSettingsPage() {
       phoneNumber: editBranchForm.phoneNumber,
       transactionDeletionPassword: editBranchForm.transactionDeletionPassword,
     };
-    const result = await apiUpdateBranch(editingBranch.id, branchUpdates);
+    const result = await updateBranch(editingBranch.id, branchUpdates);
     if (result && "error" in result) {
       toast({ title: "Gagal Memperbarui Cabang", description: result.error, variant: "destructive" });
     } else {
@@ -242,7 +241,7 @@ export default function AdminSettingsPage() {
   const handleConfirmDeleteBranch = async () => {
     if (!branchToDelete) return;
     setIsDeletingBranch(true);
-    const result = await apiDeleteBranch(branchToDelete.id);
+    const result = await deleteBranch(branchToDelete.id);
      if (result && "error" in result) {
       toast({ title: "Gagal Menghapus Cabang", description: result.error, variant: "destructive" });
     } else {
@@ -257,7 +256,6 @@ export default function AdminSettingsPage() {
     setIsDeletingBranch(false);
   };
 
-  // User Handlers
   const handleUserBranchChange = (userId: string, branchId: string) => {
     setUserBranchChanges(prev => ({ ...prev, [userId]: branchId === "UNASSIGNED" ? null : branchId }));
   };
@@ -274,14 +272,14 @@ export default function AdminSettingsPage() {
     let branchUpdated = false;
     let roleUpdated = false;
     if (newBranchId !== originalUser.branchId) {
-      const branchResult = await apiUpdateUserBranch(userId, newBranchId);
+      const branchResult = await updateUserBranch(userId, newBranchId);
       if (branchResult && "error" in branchResult) {
         toast({ title: "Gagal Update Cabang", description: branchResult.error, variant: "destructive" }); return;
       }
       branchUpdated = true;
     }
     if (newRole !== originalUser.role) {
-      const roleResult = await apiUpdateUserRole(userId, newRole);
+      const roleResult = await updateUserRole(userId, newRole);
       if (roleResult && "error" in roleResult) {
         toast({ title: "Gagal Update Peran", description: roleResult.error, variant: "destructive" }); return;
       }
@@ -295,7 +293,6 @@ export default function AdminSettingsPage() {
     }
   };
 
-  // Bank Account Handlers
   const handleOpenBankAccountModal = (bankAccount: BankAccount | null = null) => {
     setEditingBankAccount(bankAccount);
     if (bankAccount) {
@@ -321,9 +318,9 @@ export default function AdminSettingsPage() {
     };
     let result;
     if (editingBankAccount) {
-        result = await apiUpdateBankAccount(editingBankAccount.id, dataInput);
+        result = await updateBankAccount(editingBankAccount.id, dataInput);
     } else {
-        result = await apiAddBankAccount(dataInput);
+        result = await addBankAccount(dataInput);
     }
 
     if (result && "error" in result) {
@@ -339,7 +336,7 @@ export default function AdminSettingsPage() {
   const handleConfirmDeleteBankAccount = async () => {
     if (!bankAccountToDelete) return;
     setIsDeletingBankAccount(true);
-    const result = await apiDeleteBankAccount(bankAccountToDelete.id);
+    const result = await deleteBankAccount(bankAccountToDelete.id);
     if (result && "error" in result) {
       toast({ title: "Gagal Menghapus Rekening", description: result.error, variant: "destructive" });
     } else {
@@ -494,7 +491,6 @@ export default function AdminSettingsPage() {
           </Tabs>
         </div>
 
-        {/* Edit Branch Modal */}
         <Dialog open={isEditBranchModalOpen} onOpenChange={setIsEditBranchModalOpen}>
           <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>Edit Detail Cabang</DialogTitle></DialogHeader>
             <div className="space-y-3 py-3 max-h-[70vh] overflow-y-auto pr-2">
@@ -510,7 +506,6 @@ export default function AdminSettingsPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Add/Edit Bank Account Modal */}
         <Dialog open={isBankAccountModalOpen} onOpenChange={setIsBankAccountModalOpen}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader><DialogTitle>{editingBankAccount ? "Edit Rekening Bank" : "Tambah Rekening Bank Baru"}</DialogTitle></DialogHeader>
@@ -545,3 +540,5 @@ export default function AdminSettingsPage() {
     </ProtectedRoute>
   );
 }
+
+    

@@ -20,8 +20,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Supplier, InventoryItem, PurchaseOrderInput, PurchaseOrderItemInput } from "@/lib/firebase/firestore";
-import { getSuppliers, getInventoryItems, addPurchaseOrder } from "@/lib/firebase/firestore";
+import type { Supplier } from "@/lib/firebase/suppliers"; // Updated import
+import type { InventoryItem } from "@/lib/firebase/inventory"; // Updated import
+import type { PurchaseOrderInput, PurchaseOrderItemInput } from "@/lib/firebase/purchaseOrders"; // Updated import
+import { getSuppliers } from "@/lib/firebase/suppliers"; // Updated import
+import { getInventoryItems } from "@/lib/firebase/inventory"; // Updated import
+import { addPurchaseOrder } from "@/lib/firebase/purchaseOrders"; // Updated import
 import { Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
@@ -29,7 +33,7 @@ import Link from "next/link";
 
 const poItemSchema = z.object({
   productId: z.string().min(1, { message: "Produk harus dipilih." }),
-  productName: z.string(), // Will be set based on productId
+  productName: z.string(), 
   orderedQuantity: z.coerce.number().positive({ message: "Jumlah harus lebih dari 0." }),
   purchasePrice: z.coerce.number().min(0, { message: "Harga beli tidak boleh negatif." }),
 });
@@ -123,7 +127,7 @@ export default function NewPurchaseOrderPage() {
       expectedDeliveryDate: values.expectedDeliveryDate ? Timestamp.fromDate(values.expectedDeliveryDate) : undefined,
       items: poItems,
       notes: values.notes,
-      status: 'draft', // Default to draft
+      status: 'draft', 
       createdById: currentUser.uid,
     };
     
@@ -133,7 +137,7 @@ export default function NewPurchaseOrderPage() {
       toast({ title: "Gagal Membuat Pesanan", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Pesanan Pembelian Dibuat", description: `PO ${result.poNumber} berhasil disimpan sebagai draft.` });
-      router.push("/purchase-orders"); // Redirect to PO list
+      router.push("/purchase-orders"); 
     }
   };
 
@@ -323,7 +327,6 @@ export default function NewPurchaseOrderPage() {
                 </CardContent>
                  <CardFooter className="flex flex-col items-end p-3 border-t space-y-1">
                     <div className="text-sm">Subtotal: <span className="font-semibold">{currencySymbol}{subtotal.toLocaleString('id-ID')}</span></div>
-                    {/* Shipping and Tax can be added here later */}
                     <div className="text-base font-bold">Total Pesanan: <span className="font-semibold">{currencySymbol}{subtotal.toLocaleString('id-ID')}</span></div>
                 </CardFooter>
             </Card>
@@ -339,3 +342,5 @@ export default function NewPurchaseOrderPage() {
     </ProtectedRoute>
   );
 }
+
+    

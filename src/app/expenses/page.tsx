@@ -33,7 +33,7 @@ import {
   type ExpenseInput,
   EXPENSE_CATEGORIES,
   type ExpenseCategory
-} from "@/lib/firebase/firestore";
+} from "@/lib/firebase/expenses"; // Updated import
 import { format, parseISO } from "date-fns";
 
 const expenseFormSchema = z.object({
@@ -87,7 +87,7 @@ export default function ExpensesPage() {
     setEditingExpense(expense);
     if (expense) {
       expenseForm.reset({
-        date: expense.date.toDate(), // Convert Timestamp to Date
+        date: expense.date.toDate(), 
         category: expense.category,
         amount: expense.amount,
         description: expense.description,
@@ -274,7 +274,6 @@ export default function ExpensesPage() {
           )}
         </div>
 
-        {/* Add/Edit Expense Dialog */}
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
@@ -357,3 +356,5 @@ export default function ExpensesPage() {
     </ProtectedRoute>
   );
 }
+
+    

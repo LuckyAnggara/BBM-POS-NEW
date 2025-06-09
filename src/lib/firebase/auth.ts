@@ -8,7 +8,7 @@ import {
   type User as FirebaseUser,
 } from "firebase/auth";
 import { auth } from "./config";
-import { createUserDocument, getUserDocument } from "./firestore";
+import { createUserDocument, getUserDocument } from "./users"; // Updated import
 import type { UserData } from "@/contexts/auth-context";
 
 export async function registerWithEmailAndPassword(name: string, email: string, password: string): Promise<{ user: FirebaseUser; userData: UserData | null } | { error: string; errorCode?: string }> {
@@ -30,7 +30,7 @@ export async function registerWithEmailAndPassword(name: string, email: string, 
 
     return { user, userData };
   } catch (error: any) {
-    console.error("Registration error:", error); // Log the full error object
+    console.error("Registration error:", error); 
     return { error: error.message, errorCode: error.code };
   }
 }
@@ -42,7 +42,7 @@ export async function signInWithEmail(email: string, password: string): Promise<
     const userData = await getUserDocument(user.uid);
     return { user, userData };
   } catch (error: any) {
-    console.error("Login error:", error); // Log the full error object
+    console.error("Login error:", error); 
     return { error: error.message, errorCode: error.code };
   }
 }
@@ -66,3 +66,5 @@ export function onAuthStateChanged(callback: (user: FirebaseUser | null, userDat
     }
   });
 }
+
+    

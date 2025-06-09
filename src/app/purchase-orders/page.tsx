@@ -11,8 +11,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { PlusCircle, Eye, CheckCircle, XCircle, MoreHorizontal } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { PurchaseOrder, PurchaseOrderStatus } from "@/lib/firebase/firestore";
-import { getPurchaseOrdersByBranch, updatePurchaseOrderStatus } from "@/lib/firebase/firestore";
+import type { PurchaseOrder, PurchaseOrderStatus } from "@/lib/firebase/purchaseOrders"; // Updated import
+import { getPurchaseOrdersByBranch, updatePurchaseOrderStatus } from "@/lib/firebase/purchaseOrders"; // Updated import
 import Link from "next/link";
 import { Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
@@ -266,4 +266,5 @@ export default function PurchaseOrdersPage() {
     </ProtectedRoute>
   );
 }
+
     

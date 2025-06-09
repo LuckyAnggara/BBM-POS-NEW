@@ -3,23 +3,23 @@
 
 import type { ReactNode } from 'react';
 import { createContext, useContext, useState, useMemo, useEffect } from 'react';
-import { getBranches as fetchBranchesFromDB } from '@/lib/firebase/firestore'; // Import Firestore function
+import { getBranches as fetchBranchesFromDB } from '@/lib/firebase/branches'; // Updated import
 
 export interface Branch {
   id: string;
   name: string;
   currency?: string;
-  taxRate?: number; // Store as a number, e.g., 10 for 10%
+  taxRate?: number; 
   invoiceName?: string;
   address?: string;
   phoneNumber?: string;
-  transactionDeletionPassword?: string; // Added field
+  transactionDeletionPassword?: string; 
 }
 
 interface BranchContextType {
   branches: Branch[];
   selectedBranch: Branch | null;
-  setSelectedBranch: (branch: Branch | null) => void; // Allow null to deselect
+  setSelectedBranch: (branch: Branch | null) => void; 
   loadingBranches: boolean;
   refreshBranches: () => Promise<void>;
 }
@@ -40,7 +40,6 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       if (!currentSelectedStillExists) {
         setSelectedBranchState(fetchedBranches[0]);
       } else if (currentSelectedStillExists) {
-        // If selected branch still exists, update its data in case it changed
         setSelectedBranchState(currentSelectedStillExists);
       }
     } else if (fetchedBranches.length === 0) {
@@ -52,7 +51,7 @@ export function BranchProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetchBranches();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Fetch on initial mount
+  }, []); 
 
   const setSelectedBranch = (branch: Branch | null) => {
     setSelectedBranchState(branch);
@@ -81,3 +80,5 @@ export function useBranch(): BranchContextType {
   }
   return context;
 }
+
+    
