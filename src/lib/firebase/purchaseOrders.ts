@@ -37,7 +37,6 @@ export interface PurchaseOrderInput {
   notes?: string;
   status: PurchaseOrderStatus;
   createdById: string;
-  // Fields for Accounts Payable
   paymentTermsOnPO?: PurchaseOrderPaymentTerms;
   supplierInvoiceNumber?: string;
   paymentDueDateOnPO?: Timestamp;
@@ -54,7 +53,6 @@ export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
   totalAmount: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
-  // Fields for Accounts Payable
   isCreditPurchase?: boolean;
   outstandingPOAmount?: number;
   paymentStatusOnPO?: PurchaseOrderPaymentStatus;
@@ -82,7 +80,7 @@ export async function addPurchaseOrder(
     }));
 
     const subtotal = processedItems.reduce((sum, item) => sum + item.totalPrice, 0);
-    const totalAmount = subtotal; // Assuming no shipping/tax for now, can be added later
+    const totalAmount = subtotal;
     const poNumber = `PO-${poRef.id.substring(0, 8).toUpperCase()}`;
 
     const dataToSave: Omit<PurchaseOrder, 'id'> = {
@@ -132,28 +130,36 @@ export async function getPurchaseOrdersByBranch(
 ): Promise<PurchaseOrder[]> {
   if (!branchId) return [];
 
-  const constraints: any[] = [
+  let constraints: any[] = [
       where("branchId", "==", branchId)
   ];
 
-  if (options.startDate && options.endDate && options.orderByField === "updatedAt") {
+  // Date filtering based on orderDate
+  if (options.startDate && options.endDate) {
     const startTimestamp = Timestamp.fromDate(options.startDate);
+    // Adjust endDate to include the whole day
     const endOfDayEndDate = new Date(options.endDate);
     endOfDayEndDate.setHours(23, 59, 59, 999);
     const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
-    constraints.push(where("updatedAt", ">=", startTimestamp));
-    constraints.push(where("updatedAt", "<=", endTimestamp));
+    
+    constraints.push(where("orderDate", ">=", startTimestamp));
+    constraints.push(where("orderDate", "<=", endTimestamp));
   }
+
 
   if (options.orderByField) {
       constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
   } else {
-      constraints.push(orderBy("createdAt", "desc"));
+      // Default sort by createdAt if no specific order is requested,
+      // or if only date range is provided without explicit orderByField.
+      constraints.push(orderBy(options.startDate && options.endDate ? "orderDate" : "createdAt", "desc"));
   }
 
-  if (options.limit) {
+
+  if (options.limit && !(options.startDate && options.endDate)) { // Apply limit only if not doing a date range for full history
       constraints.push(limit(options.limit));
   }
+
 
   try {
       const q = query(collection(db, "purchaseOrders"), ...constraints);
@@ -253,19 +259,20 @@ export async function receivePurchaseOrderItems(
       updatedPoItems[poItemIndex] = { ...poItem, receivedQuantity: newReceivedQuantity };
 
       const inventoryItemRef = doc(db, "inventoryItems", receivedItem.productId);
-      const inventoryItemSnap = await getDoc(inventoryItemRef);
-      if (inventoryItemSnap.exists()) {
-        const inventoryItemData = inventoryItemSnap.data() as InventoryItem; // Type assertion
-        const newInventoryQuantity = inventoryItemData.quantity + receivedItem.quantityReceivedNow;
-        batch.update(inventoryItemRef, {
-          quantity: newInventoryQuantity,
-          costPrice: poItem.purchasePrice,
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        console.warn(`Inventory item ${receivedItem.productId} not found. Stock not updated.`);
-      }
+      // const inventoryItemSnap = await getDoc(inventoryItemRef); // Not strictly needed if just updating
+      batch.update(inventoryItemRef, {
+        quantity: increment(receivedItem.quantityReceivedNow), // Assuming you have an increment utility or handle it directly
+        costPrice: poItem.purchasePrice, // Update cost price on receipt
+        updatedAt: serverTimestamp(),
+      });
     }
+    
+    // Helper for Firestore increment if not available globally
+    const increment = (value: number) => {
+        const { increment: firestoreIncrement } = require("firebase/firestore");
+        return firestoreIncrement(value);
+    };
+
 
     const allItemsFullyReceived = updatedPoItems.every(item => item.receivedQuantity === item.orderedQuantity);
     const newStatus = allItemsFullyReceived ? 'fully_received' : 'partially_received';
@@ -371,5 +378,3 @@ export async function recordPaymentToSupplier(
     return { error: error.message || "Gagal merekam pembayaran ke pemasok." };
   }
 }
-
-    
