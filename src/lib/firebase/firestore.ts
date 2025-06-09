@@ -174,6 +174,12 @@ export async function deleteBranch(branchId: string): Promise<void | { error: st
       return { error: `Masih ada data transaksi POS yang terhubung ke cabang ini.` };
     }
 
+    const bankAccountsQuery = query(collection(db, "bankAccounts"), where("branchId", "==", branchId), limit(1));
+    const bankAccountsSnapshot = await getDocs(bankAccountsQuery);
+    if (!bankAccountsSnapshot.empty) {
+      return { error: `Masih ada data rekening bank yang terhubung ke cabang ini.` };
+    }
+
     const branchRef = doc(db, "branches", branchId);
     await deleteDoc(branchRef);
   } catch (error: any) {
@@ -502,9 +508,9 @@ export interface PosTransaction {
   taxAmount: number;
   totalAmount: number;
   totalCost: number;
-  paymentTerms: PaymentTerms;
+  paymentTerms: PaymentTerms; // Replaces paymentMethod
   customerId?: string;
-  customerName?: string; // Denormalized
+  customerName?: string; 
   creditDueDate?: Timestamp;
   isCreditSale?: boolean;
   outstandingAmount?: number;
@@ -516,15 +522,17 @@ export interface PosTransaction {
   returnedAt?: Timestamp;
   returnReason?: string;
   returnedByUserId?: string;
-  bankName?: string; // New field
-  bankTransactionRef?: string; // New field
+  bankName?: string;
+  bankTransactionRef?: string;
 }
 
-export async function recordTransaction(transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId'>): Promise<PosTransaction | { error: string }> {
-  if (!transactionData.shiftId || !transactionData.branchId || !transactionData.userId) {
+export async function recordTransaction(
+  transactionInput: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId'>
+): Promise<PosTransaction | { error: string }> {
+  if (!transactionInput.shiftId || !transactionInput.branchId || !transactionInput.userId) {
     return { error: "Shift ID, Branch ID, dan User ID diperlukan untuk transaksi." };
   }
-  if (transactionData.items.length === 0) return { error: "Transaksi tidak memiliki item." };
+  if (transactionInput.items.length === 0) return { error: "Transaksi tidak memiliki item." };
 
   const batch = writeBatch(db);
 
@@ -532,33 +540,38 @@ export async function recordTransaction(transactionData: Omit<PosTransaction, 'i
     const transactionRef = doc(collection(db, "posTransactions"));
     const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
     
+    // Explicitly construct dataToSave to avoid undefined fields
     const dataToSave: Omit<PosTransaction, 'id'> = {
-      shiftId: transactionData.shiftId,
-      branchId: transactionData.branchId,
-      userId: transactionData.userId,
-      items: transactionData.items,
-      subtotal: transactionData.subtotal,
-      taxAmount: transactionData.taxAmount,
-      totalAmount: transactionData.totalAmount,
-      totalCost: transactionData.totalCost,
-      paymentTerms: transactionData.paymentTerms,
-      customerId: transactionData.customerId,
-      customerName: transactionData.customerName,
-      creditDueDate: transactionData.creditDueDate,
-      isCreditSale: transactionData.isCreditSale || false,
-      outstandingAmount: transactionData.isCreditSale ? transactionData.totalAmount : 0,
-      paymentStatus: transactionData.isCreditSale ? 'unpaid' : 'paid',
-      amountPaid: transactionData.amountPaid,
-      changeGiven: transactionData.changeGiven,
+      shiftId: transactionInput.shiftId,
+      branchId: transactionInput.branchId,
+      userId: transactionInput.userId,
+      items: transactionInput.items,
+      subtotal: transactionInput.subtotal,
+      taxAmount: transactionInput.taxAmount,
+      totalAmount: transactionInput.totalAmount,
+      totalCost: transactionInput.totalCost,
+      paymentTerms: transactionInput.paymentTerms,
+      amountPaid: transactionInput.amountPaid,
+      changeGiven: transactionInput.changeGiven,
       invoiceNumber,
       status: 'completed', 
       timestamp: serverTimestamp() as Timestamp,
-      bankName: transactionData.bankName, // Save bank name
-      bankTransactionRef: transactionData.bankTransactionRef, // Save bank ref
     };
+
+    if (transactionInput.customerId) dataToSave.customerId = transactionInput.customerId;
+    if (transactionInput.customerName) dataToSave.customerName = transactionInput.customerName;
+    if (transactionInput.creditDueDate) dataToSave.creditDueDate = transactionInput.creditDueDate;
+    if (transactionInput.isCreditSale !== undefined) dataToSave.isCreditSale = transactionInput.isCreditSale;
+    if (transactionInput.outstandingAmount !== undefined) dataToSave.outstandingAmount = transactionInput.outstandingAmount;
+    if (transactionInput.paymentStatus) dataToSave.paymentStatus = transactionInput.paymentStatus;
+    
+    if (transactionInput.bankName) dataToSave.bankName = transactionInput.bankName;
+    if (transactionInput.bankTransactionRef) dataToSave.bankTransactionRef = transactionInput.bankTransactionRef;
+    
+
     batch.set(transactionRef, dataToSave);
 
-    for (const item of transactionData.items) {
+    for (const item of transactionInput.items) {
       const productRef = doc(db, "inventoryItems", item.productId);
       const productSnap = await getDoc(productRef); 
       if (productSnap.exists()) {
@@ -686,7 +699,7 @@ export async function getTransactionById(transactionId: string): Promise<PosTran
             return { 
                 id: docSnap.id, 
                 ...data,
-                paymentTerms: data.paymentTerms || data.paymentMethod, 
+                paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback for older data
              } as PosTransaction;
         }
         return null;
@@ -702,6 +715,9 @@ export interface QueryOptions {
     orderDirection?: OrderByDirection;
     startDate?: Date;
     endDate?: Date;
+    // Add more specific filter options as needed
+    status?: 'completed' | 'returned' | 'all';
+    paymentTerms?: PaymentTerms[];
 }
 
 export async function getTransactionsForUserByBranch(
@@ -711,8 +727,8 @@ export async function getTransactionsForUserByBranch(
 ): Promise<PosTransaction[]> {
     if (!userId || !branchId) return [];
     
-    const constraints: any[] = [
-        where("userId", "==", userId),
+    let constraints: any[] = [
+        // where("userId", "==", userId), // Keeping this commented if admin needs to see all user's tx in their branch
         where("branchId", "==", branchId)
     ];
 
@@ -744,7 +760,7 @@ export async function getTransactionsForUserByBranch(
             transactions.push({ 
                 id: docSnap.id, 
                 ...data,
-                paymentTerms: data.paymentTerms || data.paymentMethod, 
+                paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback for older data
             } as PosTransaction);
         });
         return transactions;
@@ -799,7 +815,7 @@ export async function getTransactionsForShift(shiftId: string): Promise<PosTrans
       transactions.push({ 
           id: docSnap.id, 
           ...data,
-          paymentTerms: data.paymentTerms || data.paymentMethod, 
+          paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback for older data
        } as PosTransaction);
     });
     return transactions;
@@ -835,7 +851,7 @@ export async function getTransactionsByDateRangeAndBranch(
       transactions.push({ 
           id: docSnap.id, 
           ...data,
-          paymentTerms: data.paymentTerms || data.paymentMethod, 
+          paymentTerms: data.paymentTerms || data.paymentMethod, // Fallback for older data
        } as PosTransaction);
     });
     return transactions;
@@ -1299,7 +1315,7 @@ export interface Customer {
   phone?: string;
   address?: string;
   notes?: string;
-  qrCodeId?: string; // For QR code identification
+  qrCodeId?: string; 
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -1312,8 +1328,8 @@ export async function addCustomer(customerData: CustomerInput): Promise<Customer
 
   try {
     const now = serverTimestamp() as Timestamp;
-    const customerRef = doc(collection(db, "customers")); // Generate ID first
-    const qrCodeId = customerData.qrCodeId || customerRef.id; // Use provided or generated ID
+    const customerRef = doc(collection(db, "customers")); 
+    const qrCodeId = customerData.qrCodeId || customerRef.id; 
 
     const dataToSave = {
       ...customerData,
@@ -1384,11 +1400,134 @@ export async function updateCustomer(customerId: string, updates: Partial<Custom
 export async function deleteCustomer(customerId: string): Promise<void | { error: string }> {
   if (!customerId) return { error: "ID Pelanggan tidak valid." };
   try {
-    // TODO: Add check if customer is associated with any transactions before deleting
-    // For now, direct deletion
     await deleteDoc(doc(db, "customers", customerId));
   } catch (error: any) {
     console.error("Error deleting customer:", error);
     return { error: error.message || "Gagal menghapus pelanggan." };
   }
 }
+
+// --- Bank Account Management ---
+export interface BankAccount {
+  id: string;
+  branchId?: string | null; // Optional: if bank account is specific to a branch
+  bankName: string;
+  accountNumber: string;
+  accountHolderName: string;
+  isActive: boolean;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+export type BankAccountInput = Omit<BankAccount, 'id' | 'createdAt' | 'updatedAt'>;
+
+export async function addBankAccount(data: BankAccountInput): Promise<BankAccount | { error: string }> {
+  if (!data.bankName.trim()) return { error: "Nama bank tidak boleh kosong." };
+  if (!data.accountNumber.trim()) return { error: "Nomor rekening tidak boleh kosong." };
+  if (!data.accountHolderName.trim()) return { error: "Nama pemilik rekening tidak boleh kosong." };
+  try {
+    const now = serverTimestamp() as Timestamp;
+    const docRef = await addDoc(collection(db, "bankAccounts"), {
+      ...data,
+      branchId: data.branchId || null, // Store null if not provided
+      isActive: data.isActive === undefined ? true : data.isActive,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const clientTimestamp = Timestamp.now();
+    return { id: docRef.id, ...data, branchId: data.branchId || null, isActive: data.isActive === undefined ? true : data.isActive, createdAt: clientTimestamp, updatedAt: clientTimestamp };
+  } catch (error: any) {
+    console.error("Error adding bank account:", error);
+    return { error: error.message || "Gagal menambah rekening bank." };
+  }
+}
+
+export async function getBankAccounts(filters?: { branchId?: string, isActive?: boolean }): Promise<BankAccount[]> {
+  try {
+    let qConstraints: any[] = [];
+    if (filters?.branchId) {
+        // This allows fetching accounts for a specific branch OR global accounts (branchId is null)
+        const branchSpecificQuery = query(
+            collection(db, "bankAccounts"), 
+            where("branchId", "==", filters.branchId), 
+            ...(filters.isActive !== undefined ? [where("isActive", "==", filters.isActive)] : []),
+            orderBy("bankName")
+        );
+        const globalAccountsQuery = query(
+            collection(db, "bankAccounts"), 
+            where("branchId", "==", null), 
+            ...(filters.isActive !== undefined ? [where("isActive", "==", filters.isActive)] : []),
+            orderBy("bankName")
+        );
+        
+        const [branchSnapshot, globalSnapshot] = await Promise.all([
+            getDocs(branchSpecificQuery),
+            getDocs(globalAccountsQuery)
+        ]);
+
+        const accounts: BankAccount[] = [];
+        const accountIds = new Set<string>();
+
+        branchSnapshot.forEach((docSnap) => {
+            if(!accountIds.has(docSnap.id)){
+                accounts.push({ id: docSnap.id, ...docSnap.data() } as BankAccount);
+                accountIds.add(docSnap.id);
+            }
+        });
+        globalSnapshot.forEach((docSnap) => {
+            if(!accountIds.has(docSnap.id)){ // Avoid duplicates if an account somehow matched both
+                accounts.push({ id: docSnap.id, ...docSnap.data() } as BankAccount);
+                accountIds.add(docSnap.id);
+            }
+        });
+        // Sort combined results if needed, though individual queries are sorted
+        accounts.sort((a, b) => a.bankName.localeCompare(b.bankName));
+        return accounts;
+
+    } else {
+        // Fetch all accounts if no branchId filter (mainly for admin view)
+        if (filters?.isActive !== undefined) {
+            qConstraints.push(where("isActive", "==", filters.isActive));
+        }
+        qConstraints.push(orderBy("bankName"));
+        const q = query(collection(db, "bankAccounts"), ...qConstraints);
+        const querySnapshot = await getDocs(q);
+        const accounts: BankAccount[] = [];
+        querySnapshot.forEach((docSnap) => {
+          accounts.push({ id: docSnap.id, ...docSnap.data() } as BankAccount);
+        });
+        return accounts;
+    }
+
+  } catch (error) {
+    console.error("Error fetching bank accounts:", error);
+    return [];
+  }
+}
+
+export async function updateBankAccount(accountId: string, updates: Partial<BankAccountInput>): Promise<void | { error: string }> {
+  if (!accountId) return { error: "ID Rekening Bank tidak valid." };
+  try {
+    const accountRef = doc(db, "bankAccounts", accountId);
+    await updateDoc(accountRef, {
+      ...updates,
+      branchId: updates.branchId === undefined ? null : updates.branchId, // Ensure null is stored if cleared
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error: any) {
+    console.error("Error updating bank account:", error);
+    return { error: error.message || "Gagal memperbarui rekening bank." };
+  }
+}
+
+export async function deleteBankAccount(accountId: string): Promise<void | { error: string }> {
+  if (!accountId) return { error: "ID Rekening Bank tidak valid." };
+  try {
+    // Add check if bank account is associated with any transactions if needed in future
+    await deleteDoc(doc(db, "bankAccounts", accountId));
+  } catch (error: any) {
+    console.error("Error deleting bank account:", error);
+    return { error: error.message || "Gagal menghapus rekening bank." };
+  }
+}
+
+export type PaymentMethod = 'cash' | 'card' | 'transfer'; // For general reporting

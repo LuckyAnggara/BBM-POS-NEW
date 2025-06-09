@@ -23,10 +23,11 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { InventoryItem, Customer } from "@/lib/firebase/firestore";
+import type { InventoryItem, Customer, BankAccount } from "@/lib/firebase/firestore";
 import { 
   getInventoryItems, 
   getCustomers,
+  getBankAccounts, // Added import
   startNewShift, 
   getActiveShift, 
   endShift, 
@@ -48,8 +49,7 @@ interface CartItem extends TransactionItem {
   // Inherits productId, productName, quantity, price, total, costPrice
 }
 
-const COMMON_BANKS = ["BCA", "Mandiri", "BNI", "BRI", "CIMB Niaga", "Danamon", "Lainnya"];
-
+// Removed COMMON_BANKS, will fetch dynamically
 
 export default function POSPage() {
   const { selectedBranch } = useBranch();
@@ -91,8 +91,8 @@ export default function POSPage() {
   const [calculatedChange, setCalculatedChange] = useState<number | null>(null);
 
   // States for Credit Sale / Customer Selection
-  const [allCustomers, setAllCustomers] = useState<Customer[]>([]); // All customers for combobox
-  const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]); // Filtered for display
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([]); 
+  const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]); 
   const [loadingCustomers, setLoadingCustomers] = useState(true);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | undefined>(undefined);
   const [creditDueDate, setCreditDueDate] = useState<Date | undefined>(undefined);
@@ -103,8 +103,10 @@ export default function POSPage() {
   const [showScanCustomerDialog, setShowScanCustomerDialog] = useState(false);
 
   // States for Bank Payment Modal
+  const [availableBankAccounts, setAvailableBankAccounts] = useState<BankAccount[]>([]);
+  const [loadingBankAccounts, setLoadingBankAccounts] = useState(false);
   const [showBankPaymentModal, setShowBankPaymentModal] = useState(false);
-  const [selectedBank, setSelectedBank] = useState<string>("");
+  const [selectedBankName, setSelectedBankName] = useState<string>(""); // Store bank name directly
   const [bankRefNumberInput, setBankRefNumberInput] = useState("");
   const [customerNameInputBank, setCustomerNameInputBank] = useState("");
 
@@ -122,26 +124,32 @@ export default function POSPage() {
     if (!selectedBranch) {
       setProducts([]);
       setAllCustomers([]);
+      setAvailableBankAccounts([]);
       setLoadingProducts(false);
       setLoadingCustomers(false);
+      setLoadingBankAccounts(false);
       return;
     }
     setLoadingProducts(true);
     setLoadingCustomers(true);
+    setLoadingBankAccounts(true);
     try {
-      const [items, fetchedCustomers] = await Promise.all([
+      const [items, fetchedCustomers, fetchedBankAccounts] = await Promise.all([
         getInventoryItems(selectedBranch.id),
-        getCustomers(selectedBranch.id)
+        getCustomers(selectedBranch.id),
+        getBankAccounts({ branchId: selectedBranch.id, isActive: true }) // Fetch active bank accounts for the branch
       ]);
       setProducts(items);
       setAllCustomers(fetchedCustomers);
-      setFilteredCustomers(fetchedCustomers.slice(0,5)); // Initial 5 for combobox
+      setFilteredCustomers(fetchedCustomers.slice(0,5)); 
+      setAvailableBankAccounts(fetchedBankAccounts);
     } catch (error) {
         console.error("Error fetching branch data for POS:", error);
-        toast({title: "Gagal Memuat Data", description: "Tidak dapat memuat produk atau pelanggan.", variant: "destructive"});
+        toast({title: "Gagal Memuat Data", description: "Tidak dapat memuat produk, pelanggan, atau rekening bank.", variant: "destructive"});
     } finally {
         setLoadingProducts(false);
         setLoadingCustomers(false);
+        setLoadingBankAccounts(false);
     }
   }, [selectedBranch, toast]);
 
@@ -156,7 +164,7 @@ export default function POSPage() {
             customer.name.toLowerCase().includes(lowerSearch) ||
             (customer.id && customer.id.toLowerCase().includes(lowerSearch)) ||
             (customer.phone && customer.phone.includes(lowerSearch))
-        )
+        ).slice(0,10) // Limit search results for performance
       );
     }
   }, [customerSearchTerm, allCustomers]);
@@ -403,7 +411,7 @@ export default function POSPage() {
       toast({ title: "Kesalahan", description: "Shift, cabang, atau pengguna tidak aktif.", variant: "destructive" });
       return;
     }
-    if (!selectedBank) {
+    if (!selectedBankName) { // Use selectedBankName for validation
       toast({ title: "Bank Diperlukan", description: "Pilih nama bank.", variant: "destructive" });
       return;
     }
@@ -427,7 +435,7 @@ export default function POSPage() {
       changeGiven: 0,
       customerName: customerNameInputBank.trim() || undefined,
       status: 'completed',
-      bankName: selectedBank,
+      bankName: selectedBankName, // Store the selected bank name
       bankTransactionRef: bankRefNumberInput.trim(),
     };
 
@@ -443,8 +451,8 @@ export default function POSPage() {
       setLastTransactionId(result.id);
       setShowPrintInvoiceDialog(true);
       setCartItems([]);
-      setSelectedPaymentTerms('cash'); // Reset payment term
-      setSelectedBank("");
+      setSelectedPaymentTerms('cash'); 
+      setSelectedBankName("");
       setBankRefNumberInput("");
       setCustomerNameInputBank("");
       await fetchBranchData(); 
@@ -467,7 +475,7 @@ export default function POSPage() {
       return; 
     }
     if (selectedPaymentTerms === 'transfer') {
-      setSelectedBank("");
+      setSelectedBankName(""); // Reset for new selection
       setBankRefNumberInput("");
       setCustomerNameInputBank("");
       setShowBankPaymentModal(true);
@@ -542,7 +550,7 @@ export default function POSPage() {
     const foundCustomer = allCustomers.find(c => c.id === scannedId || c.qrCodeId === scannedId);
     if (foundCustomer) {
         setSelectedCustomerId(foundCustomer.id);
-        setCustomerSearchTerm(foundCustomer.name); // Update search term to show selected customer
+        setCustomerSearchTerm(foundCustomer.name); 
         setSelectedPaymentTerms('credit'); 
         toast({title: "Pelanggan Ditemukan", description: `Pelanggan "${foundCustomer.name}" dipilih.`});
     } else {
@@ -607,481 +615,115 @@ export default function POSPage() {
                   />
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <Button
-                    variant={viewMode === 'card' ? 'secondary' : 'outline'}
-                    size="sm" className="h-8 w-8 p-0"
-                    onClick={() => setViewMode('card')}
-                    aria-label="Card View"
-                    disabled={!activeShift}
-                  ><LayoutGrid className="h-4 w-4" /></Button>
-                  <Button
-                    variant={viewMode === 'table' ? 'secondary' : 'outline'}
-                    size="sm" className="h-8 w-8 p-0"
-                    onClick={() => setViewMode('table')}
-                    aria-label="Table View"
-                    disabled={!activeShift}
-                  ><List className="h-4 w-4" /></Button>
+                  <Button variant={viewMode === 'card' ? 'secondary' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => setViewMode('card')} aria-label="Card View" disabled={!activeShift}><LayoutGrid className="h-4 w-4" /></Button>
+                  <Button variant={viewMode === 'table' ? 'secondary' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => setViewMode('table')} aria-label="Table View" disabled={!activeShift}><List className="h-4 w-4" /></Button>
                 </div>
               </div>
               
-              <div className={cn(
-                  "flex-grow overflow-y-auto p-0.5 -m-0.5 relative",
-                  viewMode === 'card' ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5" : ""
-              )}>
-                {loadingProducts ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
-                        {[...Array(8)].map((_,i) => <Skeleton key={i} className="h-48 w-full" />)}
-                    </div>
-                ) : filteredProducts.length === 0 ? (
-                    <div className="text-center py-10 text-muted-foreground text-sm">
-                       {products.length === 0 ? "Belum ada produk di cabang ini." : "Produk tidak ditemukan."}
-                    </div>
+              <div className={cn("flex-grow overflow-y-auto p-0.5 -m-0.5 relative", viewMode === 'card' ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5" : "")}>
+                {loadingProducts ? (<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">{[...Array(8)].map((_,i) => <Skeleton key={i} className="h-48 w-full" />)}</div>
+                ) : filteredProducts.length === 0 ? (<div className="text-center py-10 text-muted-foreground text-sm">{products.length === 0 ? "Belum ada produk di cabang ini." : "Produk tidak ditemukan."}</div>
                 ) : viewMode === 'card' ? (
                   filteredProducts.map(product => (
-                    <Card 
-                        key={product.id} 
-                        className={cn(
-                            "overflow-hidden shadow-sm hover:shadow-md transition-shadow rounded-md cursor-pointer",
-                            product.quantity <= 0 && "opacity-60 cursor-not-allowed"
-                        )}
-                        onClick={() => product.quantity > 0 && handleAddToCart(product)}
-                    >
-                      <Image 
-                          src={product.imageUrl || `https://placehold.co/150x150.png`} 
-                          alt={product.name} width={150} height={150} 
-                          className="w-full h-24 object-cover" 
-                          data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()}
-                          onError={(e) => (e.currentTarget.src = "https://placehold.co/150x150.png")}
-                      />
-                      <CardContent className="p-2">
-                        <h3 className="font-semibold text-xs truncate leading-snug">{product.name}</h3>
-                        <p className="text-primary font-bold text-sm mt-0.5">{currencySymbol}{product.price.toLocaleString('id-ID')}</p>
-                        <p className="text-xs text-muted-foreground mb-1">Stok: {product.quantity}</p>
-                        <Button 
-                            size="sm" 
-                            className="w-full text-xs h-7" 
-                            disabled={!activeShift || product.quantity <= 0}
-                            onClick={(e) => { e.stopPropagation(); if (product.quantity > 0) handleAddToCart(product); }}
-                        >
-                          <PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah
-                        </Button>
+                    <Card key={product.id} className={cn("overflow-hidden shadow-sm hover:shadow-md transition-shadow rounded-md cursor-pointer", product.quantity <= 0 && "opacity-60 cursor-not-allowed")} onClick={() => product.quantity > 0 && handleAddToCart(product)}>
+                      <Image src={product.imageUrl || `https://placehold.co/150x150.png`} alt={product.name} width={150} height={150} className="w-full h-24 object-cover" data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()} onError={(e) => (e.currentTarget.src = "https://placehold.co/150x150.png")} />
+                      <CardContent className="p-2"><h3 className="font-semibold text-xs truncate leading-snug">{product.name}</h3><p className="text-primary font-bold text-sm mt-0.5">{currencySymbol}{product.price.toLocaleString('id-ID')}</p><p className="text-xs text-muted-foreground mb-1">Stok: {product.quantity}</p>
+                        <Button size="sm" className="w-full text-xs h-7" disabled={!activeShift || product.quantity <= 0} onClick={(e) => { e.stopPropagation(); if (product.quantity > 0) handleAddToCart(product); }}><PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah</Button>
                       </CardContent>
                     </Card>
                   ))
                 ) : (
-                  <div className="border rounded-md overflow-hidden">
-                    <Table>
-                      <TableHeader><TableRow>
-                          <TableHead className="w-[40px] p-1.5 hidden sm:table-cell"></TableHead>
-                          <TableHead className="p-1.5 text-xs">Nama Produk</TableHead>
-                          <TableHead className="p-1.5 text-xs text-right">Harga</TableHead>
-                          <TableHead className="p-1.5 text-xs text-center hidden md:table-cell">Stok</TableHead>
-                          <TableHead className="p-1.5 text-xs text-center">Aksi</TableHead>
-                      </TableRow></TableHeader>
-                      <TableBody>
-                        {filteredProducts.map(product => (
-                          <TableRow key={product.id} className={cn(product.quantity <= 0 && "opacity-60")}>
-                            <TableCell className="p-1 hidden sm:table-cell">
-                              <Image src={product.imageUrl || `https://placehold.co/28x28.png`} alt={product.name} width={28} height={28} className="rounded object-cover h-7 w-7" data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()} onError={(e) => (e.currentTarget.src = "https://placehold.co/28x28.png")} />
-                            </TableCell>
-                            <TableCell className="p-1.5 text-xs font-medium">{product.name}</TableCell>
-                            <TableCell className="p-1.5 text-xs text-right">{currencySymbol}{product.price.toLocaleString('id-ID')}</TableCell>
-                            <TableCell className="p-1.5 text-xs text-center hidden md:table-cell">{product.quantity}</TableCell>
-                            <TableCell className="p-1.5 text-xs text-center">
-                              <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!activeShift || product.quantity <= 0} onClick={() => product.quantity > 0 && handleAddToCart(product)}>
-                                <PackagePlus className="mr-1 h-3 w-3" /> Tambah
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                  <div className="border rounded-md overflow-hidden"><Table><TableHeader><TableRow><TableHead className="w-[40px] p-1.5 hidden sm:table-cell"></TableHead><TableHead className="p-1.5 text-xs">Nama Produk</TableHead><TableHead className="p-1.5 text-xs text-right">Harga</TableHead><TableHead className="p-1.5 text-xs text-center hidden md:table-cell">Stok</TableHead><TableHead className="p-1.5 text-xs text-center">Aksi</TableHead></TableRow></TableHeader><TableBody>
+                        {filteredProducts.map(product => (<TableRow key={product.id} className={cn(product.quantity <= 0 && "opacity-60")}><TableCell className="p-1 hidden sm:table-cell"><Image src={product.imageUrl || `https://placehold.co/28x28.png`} alt={product.name} width={28} height={28} className="rounded object-cover h-7 w-7" data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()} onError={(e) => (e.currentTarget.src = "https://placehold.co/28x28.png")} /></TableCell><TableCell className="p-1.5 text-xs font-medium">{product.name}</TableCell><TableCell className="p-1.5 text-xs text-right">{currencySymbol}{product.price.toLocaleString('id-ID')}</TableCell><TableCell className="p-1.5 text-xs text-center hidden md:table-cell">{product.quantity}</TableCell><TableCell className="p-1.5 text-xs text-center"><Button variant="outline" size="sm" className="h-7 text-xs" disabled={!activeShift || product.quantity <= 0} onClick={() => product.quantity > 0 && handleAddToCart(product)}><PackagePlus className="mr-1 h-3 w-3" /> Tambah</Button></TableCell></TableRow>))}
+                      </TableBody></Table></div>
                 )}
-                {!activeShift && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-md z-10">
-                        <p className="text-sm font-medium text-muted-foreground p-4 bg-card border rounded-lg shadow-md">
-                            Mulai shift untuk mengaktifkan penjualan.
-                        </p>
-                    </div>
-                )}
+                {!activeShift && (<div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-md z-10"><p className="text-sm font-medium text-muted-foreground p-4 bg-card border rounded-lg shadow-md">Mulai shift untuk mengaktifkan penjualan.</p></div>)}
               </div>
             </div>
 
             <Card className="w-2/5 m-3 ml-0 flex flex-col shadow-lg rounded-lg">
               <CardHeader className="p-3 border-b"><CardTitle className="text-base font-semibold">Penjualan Saat Ini</CardTitle></CardHeader>
-              <CardContent className="flex-grow overflow-y-auto p-0">
-                <Table>
-                  <TableHeader><TableRow>
-                      <TableHead className="text-xs px-2 py-1.5">Item</TableHead>
-                      <TableHead className="text-center text-xs px-2 py-1.5 w-[90px]">Jml</TableHead>
-                      <TableHead className="text-right text-xs px-2 py-1.5">Total</TableHead>
-                      <TableHead className="text-right text-xs px-1 py-1.5 w-[30px]"> </TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {cartItems.map(item => (
-                      <TableRow key={item.productId}>
-                        <TableCell className="font-medium text-xs py-1 px-2 truncate">{item.productName}</TableCell>
-                        <TableCell className="text-center text-xs py-1 px-2">
-                          <div className="flex items-center justify-center gap-0.5">
-                            <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity - 1)}><MinusCircle className="h-3.5 w-3.5" /></Button>
-                            <Input 
-                                type="number" 
-                                value={item.quantity} 
-                                onChange={(e) => handleUpdateCartQuantity(item.productId, parseInt(e.target.value) || 0)}
-                                className="h-6 w-10 text-center text-xs p-0 border-0 focus-visible:ring-0 bg-transparent"
-                                disabled={!activeShift}
-                            />
-                            <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity + 1)}><PlusCircle className="h-3.5 w-3.5" /></Button>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right text-xs py-1 px-2">{currencySymbol}{item.total.toLocaleString('id-ID')}</TableCell>
-                        <TableCell className="text-right py-1 px-1">
-                          <Button variant="ghost" size="icon" className="h-5 w-5 text-destructive hover:text-destructive/80" disabled={!activeShift} onClick={() => handleRemoveFromCart(item.productId)}><XCircle className="h-3.5 w-3.5" /></Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {cartItems.length === 0 && (
-                      <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8 text-xs">
-                          <ShoppingCart className="mx-auto h-8 w-8 text-muted-foreground/50 mb-2" />Keranjang kosong
-                      </TableCell></TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
+              <CardContent className="flex-grow overflow-y-auto p-0"><Table><TableHeader><TableRow><TableHead className="text-xs px-2 py-1.5">Item</TableHead><TableHead className="text-center text-xs px-2 py-1.5 w-[90px]">Jml</TableHead><TableHead className="text-right text-xs px-2 py-1.5">Total</TableHead><TableHead className="text-right text-xs px-1 py-1.5 w-[30px]"> </TableHead></TableRow></TableHeader><TableBody>
+                    {cartItems.map(item => (<TableRow key={item.productId}><TableCell className="font-medium text-xs py-1 px-2 truncate">{item.productName}</TableCell><TableCell className="text-center text-xs py-1 px-2"><div className="flex items-center justify-center gap-0.5"><Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity - 1)}><MinusCircle className="h-3.5 w-3.5" /></Button><Input type="number" value={item.quantity} onChange={(e) => handleUpdateCartQuantity(item.productId, parseInt(e.target.value) || 0)} className="h-6 w-10 text-center text-xs p-0 border-0 focus-visible:ring-0 bg-transparent" disabled={!activeShift}/><Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity + 1)}><PlusCircle className="h-3.5 w-3.5" /></Button></div></TableCell><TableCell className="text-right text-xs py-1 px-2">{currencySymbol}{item.total.toLocaleString('id-ID')}</TableCell><TableCell className="text-right py-1 px-1"><Button variant="ghost" size="icon" className="h-5 w-5 text-destructive hover:text-destructive/80" disabled={!activeShift} onClick={() => handleRemoveFromCart(item.productId)}><XCircle className="h-3.5 w-3.5" /></Button></TableCell></TableRow>))}
+                    {cartItems.length === 0 && (<TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8 text-xs"><ShoppingCart className="mx-auto h-8 w-8 text-muted-foreground/50 mb-2" />Keranjang kosong</TableCell></TableRow>)}
+                  </TableBody></Table></CardContent>
               <CardFooter className="flex flex-col gap-1.5 border-t p-3">
                 <div className="flex justify-between text-xs w-full"><span>Subtotal:</span><span>{currencySymbol}{subtotal.toLocaleString('id-ID')}</span></div>
                 <div className="flex justify-between text-xs w-full"><span>Pajak ({selectedBranch?.taxRate || (taxRate*100).toFixed(0)}%):</span><span>{currencySymbol}{tax.toLocaleString('id-ID')}</span></div>
                 <div className="flex justify-between text-base font-bold w-full mt-1"><span>Total:</span><span>{currencySymbol}{total.toLocaleString('id-ID')}</span></div>
                 
-                <div className="w-full mt-2 pt-2 border-t">
-                    <Label className="text-xs font-medium mb-1 block">Termin Pembayaran:</Label>
-                     <Select 
-                        value={selectedPaymentTerms} 
-                        onValueChange={(value) => {
-                            setSelectedPaymentTerms(value as PaymentTerms);
-                            if (value !== 'credit') {
-                                setSelectedCustomerId(undefined);
-                                setCreditDueDate(undefined);
-                                setCustomerSearchTerm("");
-                            }
-                        }}
-                        disabled={!activeShift || cartItems.length === 0}
-                    >
-                        <SelectTrigger className="h-9 text-xs">
-                            <SelectValue placeholder="Pilih termin pembayaran" />
-                        </SelectTrigger>
+                <div className="w-full mt-2 pt-2 border-t"><Label className="text-xs font-medium mb-1 block">Termin Pembayaran:</Label>
+                     <Select value={selectedPaymentTerms} onValueChange={(value) => {setSelectedPaymentTerms(value as PaymentTerms); if (value !== 'credit') {setSelectedCustomerId(undefined); setCreditDueDate(undefined); setCustomerSearchTerm("");}}} disabled={!activeShift || cartItems.length === 0}>
+                        <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih termin pembayaran" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="cash" className="text-xs"><DollarSign className="inline-block mr-2 h-4 w-4" />Tunai</SelectItem>
                             <SelectItem value="card" className="text-xs"><CreditCard className="inline-block mr-2 h-4 w-4" />Kartu</SelectItem>
                             <SelectItem value="transfer" className="text-xs"><Banknote className="inline-block mr-2 h-4 w-4" />Transfer Bank</SelectItem>
                             <SelectItem value="credit" className="text-xs"><UserPlus className="inline-block mr-2 h-4 w-4" />Kredit</SelectItem>
-                        </SelectContent>
-                    </Select>
+                        </SelectContent></Select>
                 </div>
 
                 {selectedPaymentTerms === 'credit' && (
                     <div className="w-full mt-2 space-y-2 p-2 border rounded-md bg-muted/30">
-                        <div className="flex items-center gap-2">
-                            <div className="flex-grow">
+                        <div className="flex items-center gap-2"><div className="flex-grow">
                                 <Label htmlFor="selectedCustomer" className="text-xs">Pelanggan</Label>
-                                <Popover open={isCustomerComboboxOpen} onOpenChange={setIsCustomerComboboxOpen}>
-                                    <PopoverTrigger asChild>
-                                        <Button
-                                            variant="outline"
-                                            role="combobox"
-                                            aria-expanded={isCustomerComboboxOpen}
-                                            className="w-full justify-between h-8 text-xs mt-1 font-normal"
-                                            disabled={loadingCustomers || allCustomers.length === 0}
-                                        >
-                                            {selectedCustomerId
-                                                ? allCustomers.find((customer) => customer.id === selectedCustomerId)?.name
-                                                : (loadingCustomers ? "Memuat..." : (allCustomers.length === 0 ? "Tidak ada pelanggan" : "Pilih Pelanggan"))}
-                                            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
-                                        <Command shouldFilter={false}>
-                                            <CommandInput 
-                                                placeholder="Cari pelanggan (nama/ID)..." 
-                                                value={customerSearchTerm}
-                                                onValueChange={setCustomerSearchTerm}
-                                                className="h-9 text-xs"
-                                            />
-                                            <CommandEmpty className="p-2 text-xs text-center">
-                                                {loadingCustomers ? "Memuat..." : "Pelanggan tidak ditemukan."}
-                                            </CommandEmpty>
-                                            <CommandList>
-                                                <CommandGroup>
-                                                    {filteredCustomers.map((customer) => (
-                                                    <CommandItem
-                                                        key={customer.id}
-                                                        value={customer.id}
-                                                        onSelect={(currentValue) => {
-                                                            setSelectedCustomerId(currentValue === selectedCustomerId ? undefined : currentValue);
-                                                            setCustomerSearchTerm(currentValue === selectedCustomerId ? "" : customer.name);
-                                                            setIsCustomerComboboxOpen(false);
-                                                        }}
-                                                        className="text-xs"
-                                                    >
-                                                        <CheckCircle
-                                                        className={cn(
-                                                            "mr-2 h-3.5 w-3.5",
-                                                            selectedCustomerId === customer.id ? "opacity-100" : "opacity-0"
-                                                        )}
-                                                        />
-                                                        {customer.name}
-                                                    </CommandItem>
-                                                    ))}
-                                                </CommandGroup>
-                                            </CommandList>
-                                        </Command>
-                                    </PopoverContent>
-                                </Popover>
+                                <Popover open={isCustomerComboboxOpen} onOpenChange={setIsCustomerComboboxOpen}><PopoverTrigger asChild>
+                                        <Button variant="outline" role="combobox" aria-expanded={isCustomerComboboxOpen} className="w-full justify-between h-8 text-xs mt-1 font-normal" disabled={loadingCustomers || allCustomers.length === 0}>
+                                            {selectedCustomerId ? allCustomers.find((customer) => customer.id === selectedCustomerId)?.name : (loadingCustomers ? "Memuat..." : (allCustomers.length === 0 ? "Tidak ada pelanggan" : "Pilih Pelanggan"))}
+                                            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" /></Button>
+                                    </PopoverTrigger><PopoverContent className="w-[--radix-popover-trigger-width] p-0"><Command shouldFilter={false}>
+                                            <CommandInput placeholder="Cari pelanggan (nama/ID)..." value={customerSearchTerm} onValueChange={setCustomerSearchTerm} className="h-9 text-xs"/>
+                                            <CommandEmpty className="p-2 text-xs text-center">{loadingCustomers ? "Memuat..." : "Pelanggan tidak ditemukan."}</CommandEmpty>
+                                            <CommandList><CommandGroup>
+                                                    {filteredCustomers.map((customer) => (<CommandItem key={customer.id} value={customer.id} onSelect={(currentValue) => { setSelectedCustomerId(currentValue === selectedCustomerId ? undefined : currentValue); setCustomerSearchTerm(currentValue === selectedCustomerId ? "" : customer.name); setIsCustomerComboboxOpen(false);}} className="text-xs">
+                                                        <CheckCircle className={cn("mr-2 h-3.5 w-3.5", selectedCustomerId === customer.id ? "opacity-100" : "opacity-0")}/>{customer.name}</CommandItem>))}
+                                            </CommandGroup></CommandList></Command></PopoverContent></Popover>
                             </div>
-                            <Button type="button" variant="outline" size="icon" className="h-8 w-8 mt-[18px]" onClick={() => setShowScanCustomerDialog(true)} disabled={loadingCustomers}>
-                                <QrCode className="h-4 w-4"/>
-                                <span className="sr-only">Scan Pelanggan</span>
-                            </Button>
+                            <Button type="button" variant="outline" size="icon" className="h-8 w-8 mt-[18px]" onClick={() => setShowScanCustomerDialog(true)} disabled={loadingCustomers}><QrCode className="h-4 w-4"/><span className="sr-only">Scan Pelanggan</span></Button>
                         </div>
-                        <div>
-                            <Label htmlFor="creditDueDate" className="text-xs">Tgl Jatuh Tempo</Label>
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                    <Button
-                                    variant={"outline"}
-                                    className={cn("w-full justify-start text-left font-normal h-8 text-xs mt-1", !creditDueDate && "text-muted-foreground")}
-                                    >
-                                    <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
-                                    {creditDueDate ? format(creditDueDate, "dd MMM yyyy") : <span>Pilih tanggal</span>}
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0">
-                                    <Calendar mode="single" selected={creditDueDate} onSelect={setCreditDueDate} initialFocus disabled={(date) => date < new Date(new Date().setHours(0,0,0,0))} />
-                                </PopoverContent>
-                            </Popover>
-                        </div>
-                    </div>
+                        <div><Label htmlFor="creditDueDate" className="text-xs">Tgl Jatuh Tempo</Label>
+                            <Popover><PopoverTrigger asChild><Button variant={"outline"} className={cn("w-full justify-start text-left font-normal h-8 text-xs mt-1", !creditDueDate && "text-muted-foreground")}>
+                                    <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />{creditDueDate ? format(creditDueDate, "dd MMM yyyy") : <span>Pilih tanggal</span>}</Button></PopoverTrigger>
+                                <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={creditDueDate} onSelect={setCreditDueDate} initialFocus disabled={(date) => date < new Date(new Date().setHours(0,0,0,0))} /></PopoverContent></Popover>
+                        </div></div>
                 )}
 
-                <Button 
-                    size="lg" 
-                    className="w-full mt-2 h-10 text-sm" 
-                    disabled={!activeShift || cartItems.length === 0 || isProcessingSale || (selectedPaymentTerms === 'credit' && (!selectedCustomerId || !creditDueDate))}
-                    onClick={handleCompleteSale}
-                >
-                  {isProcessingSale ? "Memproses..." : <><CheckCircle className="mr-1.5 h-4 w-4" /> Selesaikan Penjualan</>}
-                </Button>
+                <Button size="lg" className="w-full mt-2 h-10 text-sm" disabled={!activeShift || cartItems.length === 0 || isProcessingSale || (selectedPaymentTerms === 'credit' && (!selectedCustomerId || !creditDueDate))} onClick={handleCompleteSale}>
+                  {isProcessingSale ? "Memproses..." : <><CheckCircle className="mr-1.5 h-4 w-4" /> Selesaikan Penjualan</>}</Button>
               </CardFooter>
             </Card>
           </div>
         </div>
 
-        <Dialog open={showStartShiftModal} onOpenChange={setShowStartShiftModal}>
-            <DialogContent className="sm:max-w-xs"><DialogHeader>
-                    <DialogTitle className="text-base">Mulai Shift Baru</DialogTitle>
-                    <DialogDescription className="text-xs">Masukkan jumlah modal awal kas di laci kas.</DialogDescription>
-            </DialogHeader>
-            <div className="py-2 space-y-2">
-                <Label htmlFor="initialCashInput" className="text-xs">Modal Awal Kas ({currencySymbol})</Label>
-                <Input id="initialCashInput" type="number" value={initialCashInput} onChange={(e) => setInitialCashInput(e.target.value)} placeholder="Contoh: 500000" className="h-9 text-sm" />
-            </div>
-            <DialogFooter>
-                <DialogClose asChild><Button type="button" variant="outline" className="text-xs h-8">Batal</Button></DialogClose>
-                <Button onClick={handleStartShift} className="text-xs h-8">Mulai Shift</Button>
-            </DialogFooter></DialogContent>
-        </Dialog>
+        <Dialog open={showStartShiftModal} onOpenChange={setShowStartShiftModal}><DialogContent className="sm:max-w-xs"><DialogHeader><DialogTitle className="text-base">Mulai Shift Baru</DialogTitle><DialogDescription className="text-xs">Masukkan jumlah modal awal kas di laci kas.</DialogDescription></DialogHeader><div className="py-2 space-y-2"><Label htmlFor="initialCashInput" className="text-xs">Modal Awal Kas ({currencySymbol})</Label><Input id="initialCashInput" type="number" value={initialCashInput} onChange={(e) => setInitialCashInput(e.target.value)} placeholder="Contoh: 500000" className="h-9 text-sm" /></div><DialogFooter><DialogClose asChild><Button type="button" variant="outline" className="text-xs h-8">Batal</Button></DialogClose><Button onClick={handleStartShift} className="text-xs h-8">Mulai Shift</Button></DialogFooter></DialogContent></Dialog>
 
-        <AlertDialog open={showEndShiftModal} onOpenChange={setShowEndShiftModal}>
-            <AlertDialogContent className="sm:max-w-md"><AlertDialogHeader>
-                    <AlertDialogTitle>Konfirmasi Akhiri Shift</AlertDialogTitle>
-                    <AlertDialogDescription className="text-xs">
-                        {activeShift && endShiftCalculations && (
-                            <div className="mt-2 p-2 border rounded-md bg-muted/50 text-xs space-y-1">
-                                <p>Modal Awal: {currencySymbol}{activeShift.initialCash.toLocaleString('id-ID')}</p>
-                                <p>Total Penjualan Tunai: {currencySymbol}{endShiftCalculations.totalSalesByPaymentMethod.cash.toLocaleString('id-ID')}</p>
-                                <p>Total Penjualan Kartu: {currencySymbol}{endShiftCalculations.totalSalesByPaymentMethod.card.toLocaleString('id-ID')}</p>
-                                <p>Total Penjualan Transfer: {currencySymbol}{endShiftCalculations.totalSalesByPaymentMethod.transfer.toLocaleString('id-ID')}</p>
-                                <p className="font-semibold">Estimasi Kas Seharusnya: {currencySymbol}{endShiftCalculations.expectedCash.toLocaleString('id-ID')}</p>
-                            </div>
-                        )}
-                        <div className="mt-2">
-                            <Label htmlFor="actualCashAtEndInput" className="text-xs">Kas Aktual di Laci ({currencySymbol})</Label>
-                            <Input id="actualCashAtEndInput" type="number" value={actualCashAtEndInput} onChange={(e) => setActualCashAtEndInput(e.target.value)} placeholder="Hitung dan masukkan kas aktual" className="h-9 text-sm mt-1" />
-                        </div>
-                        {activeShift && endShiftCalculations && actualCashAtEndInput && !isNaN(parseFloat(actualCashAtEndInput)) && (
-                             <p className="mt-1 font-medium text-xs">
-                                Selisih Kas: <span className={cn(parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash < 0 ? "text-destructive" : "text-green-600")}>
-                                    {currencySymbol}{(parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash).toLocaleString('id-ID')}
-                                </span>
-                                {parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash === 0 ? " (Sesuai)" : ""}
-                                {parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash < 0 ? " (Kurang)" : ""}
-                                {parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash > 0 ? " (Lebih)" : ""}
-                            </p>
-                        )}
-                    </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-                <AlertDialogCancel className="text-xs h-8" onClick={() => {setShowEndShiftModal(false); setActualCashAtEndInput(""); setEndShiftCalculations(null);}}>Batal</AlertDialogCancel>
-                <AlertDialogAction className="text-xs h-8 bg-destructive hover:bg-destructive/90" onClick={handleEndShiftConfirm} disabled={isEndingShift || !actualCashAtEndInput.trim()}>
-                    {isEndingShift ? "Memproses..." : "Ya, Akhiri Shift"}
-                </AlertDialogAction>
-            </AlertDialogFooter></AlertDialogContent>
-        </AlertDialog>
+        <AlertDialog open={showEndShiftModal} onOpenChange={setShowEndShiftModal}><AlertDialogContent className="sm:max-w-md"><AlertDialogHeader><AlertDialogTitle>Konfirmasi Akhiri Shift</AlertDialogTitle><AlertDialogDescription className="text-xs">
+                        {activeShift && endShiftCalculations && (<div className="mt-2 p-2 border rounded-md bg-muted/50 text-xs space-y-1"><p>Modal Awal: {currencySymbol}{activeShift.initialCash.toLocaleString('id-ID')}</p><p>Total Penjualan Tunai: {currencySymbol}{endShiftCalculations.totalSalesByPaymentMethod.cash.toLocaleString('id-ID')}</p><p>Total Penjualan Kartu: {currencySymbol}{endShiftCalculations.totalSalesByPaymentMethod.card.toLocaleString('id-ID')}</p><p>Total Penjualan Transfer: {currencySymbol}{endShiftCalculations.totalSalesByPaymentMethod.transfer.toLocaleString('id-ID')}</p><p className="font-semibold">Estimasi Kas Seharusnya: {currencySymbol}{endShiftCalculations.expectedCash.toLocaleString('id-ID')}</p></div>)}
+                        <div className="mt-2"><Label htmlFor="actualCashAtEndInput" className="text-xs">Kas Aktual di Laci ({currencySymbol})</Label><Input id="actualCashAtEndInput" type="number" value={actualCashAtEndInput} onChange={(e) => setActualCashAtEndInput(e.target.value)} placeholder="Hitung dan masukkan kas aktual" className="h-9 text-sm mt-1" /></div>
+                        {activeShift && endShiftCalculations && actualCashAtEndInput && !isNaN(parseFloat(actualCashAtEndInput)) && (<p className="mt-1 font-medium text-xs">Selisih Kas: <span className={cn(parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash < 0 ? "text-destructive" : "text-green-600")}>{currencySymbol}{(parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash).toLocaleString('id-ID')}</span>{parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash === 0 ? " (Sesuai)" : ""}{parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash < 0 ? " (Kurang)" : ""}{parseFloat(actualCashAtEndInput) - endShiftCalculations.expectedCash > 0 ? " (Lebih)" : ""}</p>)}
+                    </AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel className="text-xs h-8" onClick={() => {setShowEndShiftModal(false); setActualCashAtEndInput(""); setEndShiftCalculations(null);}}>Batal</AlertDialogCancel><AlertDialogAction className="text-xs h-8 bg-destructive hover:bg-destructive/90" onClick={handleEndShiftConfirm} disabled={isEndingShift || !actualCashAtEndInput.trim()}>{isEndingShift ? "Memproses..." : "Ya, Akhiri Shift"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
-        <Dialog open={showCashPaymentModal} onOpenChange={setShowCashPaymentModal}>
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="text-base">Pembayaran Tunai</DialogTitle>
-              <DialogDescription className="text-xs">
-                Total Belanja: <span className="font-semibold">{currencySymbol}{total.toLocaleString('id-ID')}</span>
-              </DialogDescription>
-            </DialogHeader>
-            <div className="py-3 space-y-3">
-              <div>
-                <Label htmlFor="cashAmountPaidInput" className="text-xs">Jumlah Dibayar Pelanggan ({currencySymbol})</Label>
-                <Input 
-                  id="cashAmountPaidInput" 
-                  type="number" 
-                  value={cashAmountPaidInput} 
-                  onChange={handleCashAmountPaidChange} 
-                  placeholder="Masukkan jumlah bayar" 
-                  className="h-9 text-sm mt-1" 
-                />
-              </div>
-              {calculatedChange !== null && (
-                <p className={cn("text-sm font-medium", calculatedChange < 0 ? "text-destructive" : "text-green-600")}>
-                  Kembalian: {currencySymbol}{calculatedChange.toLocaleString('id-ID')}
-                </p>
-              )}
-              <div>
-                <Label htmlFor="customerNameInputCash" className="text-xs">Nama Pelanggan (Opsional)</Label>
-                <div className="flex items-center mt-1">
-                    <UserPlus className="h-4 w-4 mr-2 text-muted-foreground"/>
-                    <Input 
-                    id="customerNameInputCash" 
-                    type="text" 
-                    value={customerNameInputCash} 
-                    onChange={(e) => setCustomerNameInputCash(e.target.value)} 
-                    placeholder="Masukkan nama pelanggan" 
-                    className="h-9 text-sm flex-1" 
-                    />
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Kosongkan jika tidak ada nama pelanggan.</p>
-              </div>
-            </div>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button type="button" variant="outline" className="text-xs h-8" onClick={() => setShowCashPaymentModal(false)}>Batal</Button>
-              </DialogClose>
-              <Button 
-                onClick={handleConfirmCashPayment} 
-                className="text-xs h-8" 
-                disabled={isProcessingSale || calculatedChange === null || calculatedChange < 0}
-              >
-                {isProcessingSale ? "Memproses..." : "Konfirmasi Pembayaran"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <Dialog open={showCashPaymentModal} onOpenChange={setShowCashPaymentModal}><DialogContent className="sm:max-w-sm"><DialogHeader><DialogTitle className="text-base">Pembayaran Tunai</DialogTitle><DialogDescription className="text-xs">Total Belanja: <span className="font-semibold">{currencySymbol}{total.toLocaleString('id-ID')}</span></DialogDescription></DialogHeader><div className="py-3 space-y-3"><div><Label htmlFor="cashAmountPaidInput" className="text-xs">Jumlah Dibayar Pelanggan ({currencySymbol})</Label><Input id="cashAmountPaidInput" type="number" value={cashAmountPaidInput} onChange={handleCashAmountPaidChange} placeholder="Masukkan jumlah bayar" className="h-9 text-sm mt-1" /></div>
+              {calculatedChange !== null && (<p className={cn("text-sm font-medium", calculatedChange < 0 ? "text-destructive" : "text-green-600")}>Kembalian: {currencySymbol}{calculatedChange.toLocaleString('id-ID')}</p>)}
+              <div><Label htmlFor="customerNameInputCash" className="text-xs">Nama Pelanggan (Opsional)</Label><div className="flex items-center mt-1"><UserPlus className="h-4 w-4 mr-2 text-muted-foreground"/><Input id="customerNameInputCash" type="text" value={customerNameInputCash} onChange={(e) => setCustomerNameInputCash(e.target.value)} placeholder="Masukkan nama pelanggan" className="h-9 text-sm flex-1" /></div><p className="text-xs text-muted-foreground mt-1">Kosongkan jika tidak ada nama pelanggan.</p></div></div>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" className="text-xs h-8" onClick={() => setShowCashPaymentModal(false)}>Batal</Button></DialogClose><Button onClick={handleConfirmCashPayment} className="text-xs h-8" disabled={isProcessingSale || calculatedChange === null || calculatedChange < 0}>{isProcessingSale ? "Memproses..." : "Konfirmasi Pembayaran"}</Button></DialogFooter></DialogContent></Dialog>
 
-        <Dialog open={showBankPaymentModal} onOpenChange={setShowBankPaymentModal}>
-          <DialogContent className="sm:max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="text-base">Pembayaran via Transfer Bank</DialogTitle>
-              <DialogDescription className="text-xs">
-                Total Belanja: <span className="font-semibold">{currencySymbol}{total.toLocaleString('id-ID')}</span>
-              </DialogDescription>
-            </DialogHeader>
-            <div className="py-3 space-y-3">
-              <div>
-                <Label htmlFor="selectedBank" className="text-xs">Nama Bank*</Label>
-                <Select value={selectedBank} onValueChange={setSelectedBank}>
-                  <SelectTrigger id="selectedBank" className="h-9 text-xs mt-1">
-                    <SelectValue placeholder="Pilih bank tujuan" />
-                  </SelectTrigger>
+        <Dialog open={showBankPaymentModal} onOpenChange={setShowBankPaymentModal}><DialogContent className="sm:max-w-sm"><DialogHeader><DialogTitle className="text-base">Pembayaran via Transfer Bank</DialogTitle><DialogDescription className="text-xs">Total Belanja: <span className="font-semibold">{currencySymbol}{total.toLocaleString('id-ID')}</span></DialogDescription></DialogHeader><div className="py-3 space-y-3">
+              <div><Label htmlFor="selectedBankName" className="text-xs">Nama Bank*</Label>
+                <Select value={selectedBankName} onValueChange={setSelectedBankName} disabled={loadingBankAccounts}>
+                  <SelectTrigger id="selectedBankName" className="h-9 text-xs mt-1"><SelectValue placeholder={loadingBankAccounts ? "Memuat..." : "Pilih bank tujuan"} /></SelectTrigger>
                   <SelectContent>
-                    {COMMON_BANKS.map(bank => (
-                      <SelectItem key={bank} value={bank} className="text-xs">{bank}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="bankRefNumberInput" className="text-xs">Nomor Referensi Transaksi*</Label>
-                <Input 
-                  id="bankRefNumberInput" 
-                  type="text" 
-                  value={bankRefNumberInput} 
-                  onChange={(e) => setBankRefNumberInput(e.target.value)} 
-                  placeholder="Masukkan nomor referensi" 
-                  className="h-9 text-sm mt-1" 
-                />
-              </div>
-               <div>
-                <Label htmlFor="customerNameInputBank" className="text-xs">Nama Pelanggan (Opsional)</Label>
-                 <div className="flex items-center mt-1">
-                    <UserPlus className="h-4 w-4 mr-2 text-muted-foreground"/>
-                    <Input 
-                    id="customerNameInputBank" 
-                    type="text" 
-                    value={customerNameInputBank} 
-                    onChange={(e) => setCustomerNameInputBank(e.target.value)} 
-                    placeholder="Masukkan nama pelanggan" 
-                    className="h-9 text-sm flex-1" 
-                    />
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button type="button" variant="outline" className="text-xs h-8" onClick={() => setShowBankPaymentModal(false)}>Batal</Button>
-              </DialogClose>
-              <Button 
-                onClick={handleConfirmBankPayment} 
-                className="text-xs h-8" 
-                disabled={isProcessingSale || !selectedBank || !bankRefNumberInput.trim()}
-              >
-                {isProcessingSale ? "Memproses..." : "Konfirmasi Pembayaran"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                    {availableBankAccounts.length === 0 && !loadingBankAccounts ? (<SelectItem value="" disabled className="text-xs text-muted-foreground">Tidak ada rekening bank aktif</SelectItem>) : (availableBankAccounts.map(acc => (<SelectItem key={acc.id} value={acc.bankName} className="text-xs">{acc.bankName} ({acc.accountNumber}) - A/N: {acc.accountHolderName}</SelectItem>)))}
+                  </SelectContent></Select></div>
+              <div><Label htmlFor="bankRefNumberInput" className="text-xs">Nomor Referensi Transaksi*</Label><Input id="bankRefNumberInput" type="text" value={bankRefNumberInput} onChange={(e) => setBankRefNumberInput(e.target.value)} placeholder="Masukkan nomor referensi" className="h-9 text-sm mt-1" /></div>
+               <div><Label htmlFor="customerNameInputBank" className="text-xs">Nama Pelanggan (Opsional)</Label><div className="flex items-center mt-1"><UserPlus className="h-4 w-4 mr-2 text-muted-foreground"/><Input id="customerNameInputBank" type="text" value={customerNameInputBank} onChange={(e) => setCustomerNameInputBank(e.target.value)} placeholder="Masukkan nama pelanggan" className="h-9 text-sm flex-1" /></div></div></div>
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline" className="text-xs h-8" onClick={() => setShowBankPaymentModal(false)}>Batal</Button></DialogClose><Button onClick={handleConfirmBankPayment} className="text-xs h-8" disabled={isProcessingSale || !selectedBankName || !bankRefNumberInput.trim()}>{isProcessingSale ? "Memproses..." : "Konfirmasi Pembayaran"}</Button></DialogFooter></DialogContent></Dialog>
 
-        <Dialog open={showPrintInvoiceDialog} onOpenChange={(open) => {
-            if (!open) { 
-                setShowPrintInvoiceDialog(false);
-                setLastTransactionId(null);
-            } else {
-                setShowPrintInvoiceDialog(true);
-            }
-        }}>
-            <DialogContent className="sm:max-w-xs">
-                <DialogHeader>
-                    <DialogTitle className="text-base">Transaksi Berhasil</DialogTitle>
-                    <DialogDescription className="text-xs">Penjualan telah berhasil direkam.</DialogDescription>
-                </DialogHeader>
-                <div className="py-4">
-                    <p className="text-sm text-center">Apakah Anda ingin mencetak invoice untuk transaksi ini?</p>
-                </div>
-                <DialogFooter className="sm:justify-center">
-                    <Button type="button" variant="outline" className="text-xs h-8" onClick={() => {setShowPrintInvoiceDialog(false); setLastTransactionId(null);}}>
-                        Tutup
-                    </Button>
-                    <Button onClick={handlePrintInvoice} className="text-xs h-8" disabled={!lastTransactionId}>
-                        <Printer className="mr-1.5 h-4 w-4" /> Cetak Invoice
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
+        <Dialog open={showPrintInvoiceDialog} onOpenChange={(open) => { if (!open) {setShowPrintInvoiceDialog(false); setLastTransactionId(null);} else {setShowPrintInvoiceDialog(true);}}}>
+            <DialogContent className="sm:max-w-xs"><DialogHeader><DialogTitle className="text-base">Transaksi Berhasil</DialogTitle><DialogDescription className="text-xs">Penjualan telah berhasil direkam.</DialogDescription></DialogHeader><div className="py-4"><p className="text-sm text-center">Apakah Anda ingin mencetak invoice untuk transaksi ini?</p></div>
+                <DialogFooter className="sm:justify-center"><Button type="button" variant="outline" className="text-xs h-8" onClick={() => {setShowPrintInvoiceDialog(false); setLastTransactionId(null);}}>Tutup</Button><Button onClick={handlePrintInvoice} className="text-xs h-8" disabled={!lastTransactionId}><Printer className="mr-1.5 h-4 w-4" /> Cetak Invoice</Button></DialogFooter></DialogContent></Dialog>
         
-        <ScanCustomerDialog
-            isOpen={showScanCustomerDialog}
-            onClose={() => setShowScanCustomerDialog(false)}
-            onScanSuccess={handleScanCustomerSuccess}
-            branchId={selectedBranch?.id || ""}
-        />
-
+        <ScanCustomerDialog isOpen={showScanCustomerDialog} onClose={() => setShowScanCustomerDialog(false)} onScanSuccess={handleScanCustomerSuccess} branchId={selectedBranch?.id || ""}/>
       </MainLayout>
     </ProtectedRoute>
   );
