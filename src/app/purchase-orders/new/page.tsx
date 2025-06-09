@@ -20,12 +20,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { Supplier } from "@/lib/firebase/suppliers"; // Updated import
-import type { InventoryItem } from "@/lib/firebase/inventory"; // Updated import
-import type { PurchaseOrderInput, PurchaseOrderItemInput } from "@/lib/firebase/purchaseOrders"; // Updated import
-import { getSuppliers } from "@/lib/firebase/suppliers"; // Updated import
-import { getInventoryItems } from "@/lib/firebase/inventory"; // Updated import
-import { addPurchaseOrder } from "@/lib/firebase/purchaseOrders"; // Updated import
+import type { Supplier } from "@/lib/firebase/suppliers";
+import type { InventoryItem } from "@/lib/firebase/inventory";
+import type { PurchaseOrderInput, PurchaseOrderItemInput, PurchaseOrderPaymentTerms } from "@/lib/firebase/purchaseOrders";
+import { getSuppliers } from "@/lib/firebase/suppliers";
+import { getInventoryItems } from "@/lib/firebase/inventory";
+import { addPurchaseOrder } from "@/lib/firebase/purchaseOrders";
 import { Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
@@ -33,7 +33,7 @@ import Link from "next/link";
 
 const poItemSchema = z.object({
   productId: z.string().min(1, { message: "Produk harus dipilih." }),
-  productName: z.string(), 
+  productName: z.string(),
   orderedQuantity: z.coerce.number().positive({ message: "Jumlah harus lebih dari 0." }),
   purchasePrice: z.coerce.number().min(0, { message: "Harga beli tidak boleh negatif." }),
 });
@@ -44,7 +44,19 @@ const purchaseOrderFormSchema = z.object({
   expectedDeliveryDate: z.date().optional(),
   items: z.array(poItemSchema).min(1, { message: "Minimal satu item harus ditambahkan." }),
   notes: z.string().optional(),
+  paymentTermsOnPO: z.enum(['cash', 'credit'], { required_error: "Termin pembayaran harus dipilih."}).default('cash'),
+  supplierInvoiceNumber: z.string().optional(),
+  paymentDueDateOnPO: z.date().optional(),
+}).refine(data => {
+    if (data.paymentTermsOnPO === 'credit' && !data.paymentDueDateOnPO) {
+        return false;
+    }
+    return true;
+}, {
+    message: "Tanggal jatuh tempo pembayaran harus diisi untuk termin kredit.",
+    path: ["paymentDueDateOnPO"],
 });
+
 
 type PurchaseOrderFormValues = z.infer<typeof purchaseOrderFormSchema>;
 
@@ -66,6 +78,8 @@ export default function NewPurchaseOrderPage() {
       orderDate: new Date(),
       items: [{ productId: "", productName: "", orderedQuantity: 1, purchasePrice: 0 }],
       notes: "",
+      paymentTermsOnPO: "cash",
+      supplierInvoiceNumber: "",
     },
   });
 
@@ -127,17 +141,20 @@ export default function NewPurchaseOrderPage() {
       expectedDeliveryDate: values.expectedDeliveryDate ? Timestamp.fromDate(values.expectedDeliveryDate) : undefined,
       items: poItems,
       notes: values.notes,
-      status: 'draft', 
+      status: 'draft',
       createdById: currentUser.uid,
+      paymentTermsOnPO: values.paymentTermsOnPO as PurchaseOrderPaymentTerms,
+      supplierInvoiceNumber: values.supplierInvoiceNumber,
+      paymentDueDateOnPO: values.paymentTermsOnPO === 'credit' && values.paymentDueDateOnPO ? Timestamp.fromDate(values.paymentDueDateOnPO) : undefined,
     };
-    
+
     const result = await addPurchaseOrder(poInputData, selectedSupplier.name);
 
     if (result && "error" in result) {
       toast({ title: "Gagal Membuat Pesanan", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Pesanan Pembelian Dibuat", description: `PO ${result.poNumber} berhasil disimpan sebagai draft.` });
-      router.push("/purchase-orders"); 
+      router.push("/purchase-orders");
     }
   };
 
@@ -148,6 +165,8 @@ export default function NewPurchaseOrderPage() {
     const price = Number(item.purchasePrice) || 0;
     return acc + (quantity * price);
   }, 0);
+
+  const paymentTermsWatch = poForm.watch("paymentTermsOnPO");
 
 
   if (!selectedBranch) {
@@ -176,7 +195,7 @@ export default function NewPurchaseOrderPage() {
                 <Link href="/purchase-orders"><ArrowLeft className="mr-1.5 h-3.5 w-3.5"/> Kembali ke Daftar PO</Link>
             </Button>
           </div>
-          
+
           <form onSubmit={poForm.handleSubmit(onSubmitPurchaseOrder)}>
             <Card>
               <CardHeader>
@@ -242,6 +261,56 @@ export default function NewPurchaseOrderPage() {
                     />
                   </div>
                 </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <Label htmlFor="paymentTermsOnPO" className="text-xs">Termin Pembayaran*</Label>
+                        <Controller
+                            name="paymentTermsOnPO"
+                            control={poForm.control}
+                            render={({ field }) => (
+                                <Select onValueChange={field.onChange} value={field.value}>
+                                <SelectTrigger className="h-9 text-xs mt-1">
+                                    <SelectValue placeholder="Pilih termin" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="cash" className="text-xs">Tunai</SelectItem>
+                                    <SelectItem value="credit" className="text-xs">Kredit</SelectItem>
+                                </SelectContent>
+                                </Select>
+                            )}
+                        />
+                        {poForm.formState.errors.paymentTermsOnPO && <p className="text-xs text-destructive mt-1">{poForm.formState.errors.paymentTermsOnPO.message}</p>}
+                    </div>
+                    {paymentTermsWatch === 'credit' && (
+                        <>
+                            <div>
+                                <Label htmlFor="supplierInvoiceNumber" className="text-xs">No. Invoice Pemasok</Label>
+                                <Input id="supplierInvoiceNumber" {...poForm.register("supplierInvoiceNumber")} className="h-9 text-xs mt-1" placeholder="Opsional"/>
+                            </div>
+                            <div>
+                                <Label htmlFor="paymentDueDateOnPO" className="text-xs">Tgl Jatuh Tempo Bayar*</Label>
+                                 <Controller
+                                    name="paymentDueDateOnPO"
+                                    control={poForm.control}
+                                    render={({ field }) => (
+                                        <Popover>
+                                        <PopoverTrigger asChild>
+                                            <Button variant="outline" className="w-full justify-start text-left font-normal h-9 text-xs mt-1">
+                                            <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
+                                            {field.value ? format(field.value, "dd MMM yyyy") : <span>Pilih tanggal</span>}
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={field.value} onSelect={field.onChange} disabled={(date) => poForm.getValues("orderDate") ? date < poForm.getValues("orderDate") : false} /></PopoverContent>
+                                        </Popover>
+                                    )}
+                                />
+                                {poForm.formState.errors.paymentDueDateOnPO && <p className="text-xs text-destructive mt-1">{poForm.formState.errors.paymentDueDateOnPO.message}</p>}
+                            </div>
+                        </>
+                    )}
+                </div>
+
                 <div>
                   <Label htmlFor="notes" className="text-xs">Catatan (Opsional)</Label>
                   <Textarea id="notes" {...poForm.register("notes")} className="text-xs mt-1 min-h-[60px]" placeholder="Catatan tambahan untuk pesanan ini"/>
@@ -310,10 +379,10 @@ export default function NewPurchaseOrderPage() {
                             </div>
                             <div className="col-span-9 sm:col-span-2">
                                 <Label className="text-xs block mb-0.5">Total Item</Label>
-                                <Input 
-                                    value={`${currencySymbol}${( (Number(poForm.watch(`items.${index}.orderedQuantity`)) || 0) * (Number(poForm.watch(`items.${index}.purchasePrice`)) || 0) ).toLocaleString('id-ID')}`} 
-                                    className="h-8 text-xs mt-0.5 bg-transparent border-0 px-0" 
-                                    readOnly 
+                                <Input
+                                    value={`${currencySymbol}${( (Number(poForm.watch(`items.${index}.orderedQuantity`)) || 0) * (Number(poForm.watch(`items.${index}.purchasePrice`)) || 0) ).toLocaleString('id-ID')}`}
+                                    className="h-8 text-xs mt-0.5 bg-transparent border-0 px-0"
+                                    readOnly
                                     tabIndex={-1}
                                 />
                             </div>

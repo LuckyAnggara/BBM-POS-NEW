@@ -18,8 +18,9 @@ import {
   ClipboardList,
   PackageOpen,
   Users,
-  ListChecks, // New icon for Accounts Receivable
-  Database, // New icon for Master Data
+  ListChecks, 
+  Database, 
+  Landmark, // New icon for Accounts Payable
 } from "lucide-react";
 import {
   SidebarMenu,
@@ -49,7 +50,15 @@ const navItems = [
   },
   { href: "/purchase-orders", label: "Pesanan Pembelian", icon: ClipboardList, adminOnly: false },
   { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
-  { href: "/accounts-receivable", label: "Piutang Usaha", icon: ListChecks, adminOnly: false },
+  {
+    label: "Keuangan",
+    icon: Landmark, 
+    adminOnly: false,
+    subItems: [
+      { href: "/accounts-receivable", label: "Piutang Usaha", icon: ListChecks },
+      { href: "/accounts-payable", label: "Utang Usaha", icon: Archive }, // Using Archive icon for AP
+    ]
+  },
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
   { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
   {
@@ -95,10 +104,10 @@ export default function AppSidebarNav() {
                       size="default"
                       className={cn(
                         "w-full justify-start text-sm font-medium",
-                         (item.href && pathname.startsWith(item.href)) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
+                         (item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
                          isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                       )}
-                      isActive={(item.href && pathname.startsWith(item.href)) && !isNavItemDisabled}
+                      isActive={(item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled}
                       asChild={false}
                       onClick={(e) => { if(isNavItemDisabled) e.preventDefault(); }}
                       aria-disabled={isNavItemDisabled}
@@ -165,3 +174,5 @@ export default function AppSidebarNav() {
     </nav>
   );
 }
+
+    

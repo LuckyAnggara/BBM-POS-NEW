@@ -1,21 +1,31 @@
 
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion } from "firebase/firestore";
 import { db } from "./config";
 import type { InventoryItem } from "./inventory";
 import type { QueryOptions } from "./types";
 
 export type PurchaseOrderStatus = 'draft' | 'ordered' | 'partially_received' | 'fully_received' | 'cancelled';
+export type PurchaseOrderPaymentStatus = 'unpaid' | 'partially_paid' | 'paid' | 'overdue';
+export type PurchaseOrderPaymentTerms = 'cash' | 'credit';
+
+export interface PaymentToSupplier {
+  paymentDate: Timestamp;
+  amountPaid: number;
+  paymentMethod: 'cash' | 'transfer' | 'card' | 'other'; // Could be more specific if needed
+  notes?: string;
+  recordedByUserId: string;
+}
 
 export interface PurchaseOrderItemInput {
   productId: string;
-  productName: string; 
+  productName: string;
   orderedQuantity: number;
-  purchasePrice: number; 
+  purchasePrice: number;
 }
 
 export interface PurchaseOrderItem extends PurchaseOrderItemInput {
   receivedQuantity: number;
-  totalPrice: number; 
+  totalPrice: number;
 }
 
 export interface PurchaseOrderInput {
@@ -27,12 +37,16 @@ export interface PurchaseOrderInput {
   notes?: string;
   status: PurchaseOrderStatus;
   createdById: string;
+  // Fields for Accounts Payable
+  paymentTermsOnPO?: PurchaseOrderPaymentTerms;
+  supplierInvoiceNumber?: string;
+  paymentDueDateOnPO?: Timestamp;
 }
 
 export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
   id: string;
-  poNumber: string; 
-  supplierName: string; 
+  poNumber: string;
+  supplierName: string;
   items: PurchaseOrderItem[];
   subtotal: number;
   shippingCost?: number;
@@ -40,6 +54,11 @@ export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
   totalAmount: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  // Fields for Accounts Payable
+  isCreditPurchase?: boolean;
+  outstandingPOAmount?: number;
+  paymentStatusOnPO?: PurchaseOrderPaymentStatus;
+  paymentsMadeToSupplier?: PaymentToSupplier[];
 }
 
 export async function addPurchaseOrder(
@@ -54,44 +73,51 @@ export async function addPurchaseOrder(
 
   try {
     const now = serverTimestamp() as Timestamp;
-    const poRef = doc(collection(db, "purchaseOrders")); 
+    const poRef = doc(collection(db, "purchaseOrders"));
 
     const processedItems: PurchaseOrderItem[] = poData.items.map(item => ({
       ...item,
-      receivedQuantity: 0, 
+      receivedQuantity: 0,
       totalPrice: item.orderedQuantity * item.purchasePrice,
     }));
 
     const subtotal = processedItems.reduce((sum, item) => sum + item.totalPrice, 0);
-    const totalAmount = subtotal; 
+    const totalAmount = subtotal; // Assuming no shipping/tax for now, can be added later
     const poNumber = `PO-${poRef.id.substring(0, 8).toUpperCase()}`;
 
     const dataToSave: Omit<PurchaseOrder, 'id'> = {
       poNumber,
       branchId: poData.branchId,
       supplierId: poData.supplierId,
-      supplierName, 
+      supplierName,
       orderDate: poData.orderDate,
       expectedDeliveryDate: poData.expectedDeliveryDate,
       items: processedItems,
       notes: poData.notes || "",
-      status: poData.status || 'draft', 
+      status: poData.status || 'draft',
       createdById: poData.createdById,
       subtotal,
-      shippingCost: 0, 
-      taxAmount: 0,    
+      shippingCost: 0,
+      taxAmount: 0,
       totalAmount,
+      paymentTermsOnPO: poData.paymentTermsOnPO || 'cash',
+      supplierInvoiceNumber: poData.supplierInvoiceNumber || "",
+      paymentDueDateOnPO: poData.paymentDueDateOnPO,
+      isCreditPurchase: poData.paymentTermsOnPO === 'credit',
+      outstandingPOAmount: poData.paymentTermsOnPO === 'credit' ? totalAmount : 0,
+      paymentStatusOnPO: poData.paymentTermsOnPO === 'credit' ? 'unpaid' : 'paid',
+      paymentsMadeToSupplier: [],
       createdAt: now,
       updatedAt: now,
     };
 
     await setDoc(poRef, dataToSave);
-    
+
     const clientTimestamp = Timestamp.now();
     return {
       id: poRef.id,
       ...dataToSave,
-      createdAt: clientTimestamp, 
+      createdAt: clientTimestamp,
       updatedAt: clientTimestamp,
     };
   } catch (error: any) {
@@ -105,7 +131,7 @@ export async function getPurchaseOrdersByBranch(
   options: QueryOptions = {}
 ): Promise<PurchaseOrder[]> {
   if (!branchId) return [];
-  
+
   const constraints: any[] = [
       where("branchId", "==", branchId)
   ];
@@ -118,17 +144,17 @@ export async function getPurchaseOrdersByBranch(
     constraints.push(where("updatedAt", ">=", startTimestamp));
     constraints.push(where("updatedAt", "<=", endTimestamp));
   }
-  
+
   if (options.orderByField) {
       constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
   } else {
-      constraints.push(orderBy("createdAt", "desc")); 
+      constraints.push(orderBy("createdAt", "desc"));
   }
 
   if (options.limit) {
       constraints.push(limit(options.limit));
   }
-  
+
   try {
       const q = query(collection(db, "purchaseOrders"), ...constraints);
       const querySnapshot = await getDocs(q);
@@ -159,7 +185,7 @@ export async function getPurchaseOrderById(poId: string): Promise<PurchaseOrder 
 }
 
 export async function updatePurchaseOrderStatus(
-    poId: string, 
+    poId: string,
     newStatus: PurchaseOrderStatus
 ): Promise<void | { error: string }> {
   if (!poId) return { error: "ID Pesanan Pembelian tidak valid." };
@@ -206,7 +232,7 @@ export async function receivePurchaseOrderItems(
       return { error: `Tidak dapat menerima item untuk PO yang sudah ${purchaseOrder.status === 'fully_received' ? 'diterima penuh' : 'dibatalkan'}.` };
     }
 
-    const updatedPoItems = [...purchaseOrder.items]; 
+    const updatedPoItems = [...purchaseOrder.items];
 
     for (const receivedItem of itemsReceived) {
       if (receivedItem.quantityReceivedNow <= 0) continue;
@@ -216,14 +242,14 @@ export async function receivePurchaseOrderItems(
         console.warn(`Item dengan productId ${receivedItem.productId} tidak ditemukan di PO ${poId}.`);
         continue;
       }
-      
+
       const poItem = updatedPoItems[poItemIndex];
       const newReceivedQuantity = poItem.receivedQuantity + receivedItem.quantityReceivedNow;
 
       if (newReceivedQuantity > poItem.orderedQuantity) {
         return { error: `Jumlah diterima untuk ${poItem.productName} (${newReceivedQuantity}) melebihi jumlah dipesan (${poItem.orderedQuantity}).` };
       }
-      
+
       updatedPoItems[poItemIndex] = { ...poItem, receivedQuantity: newReceivedQuantity };
 
       const inventoryItemRef = doc(db, "inventoryItems", receivedItem.productId);
@@ -233,7 +259,7 @@ export async function receivePurchaseOrderItems(
         const newInventoryQuantity = inventoryItemData.quantity + receivedItem.quantityReceivedNow;
         batch.update(inventoryItemRef, {
           quantity: newInventoryQuantity,
-          costPrice: poItem.purchasePrice, 
+          costPrice: poItem.purchasePrice,
           updatedAt: serverTimestamp(),
         });
       } else {
@@ -254,6 +280,95 @@ export async function receivePurchaseOrderItems(
   } catch (error: any) {
     console.error("Error receiving purchase order items:", error);
     return { error: error.message || "Gagal memproses penerimaan barang." };
+  }
+}
+
+
+export async function getOutstandingPurchaseOrdersByBranch(
+  branchId: string,
+  options: QueryOptions = {}
+): Promise<PurchaseOrder[]> {
+  if (!branchId) return [];
+
+  const constraints: any[] = [
+    where("branchId", "==", branchId),
+    where("isCreditPurchase", "==", true),
+    where("paymentStatusOnPO", "in", ["unpaid", "partially_paid"]),
+  ];
+
+  if (options.orderByField) {
+    constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
+  } else {
+    constraints.push(orderBy("paymentDueDateOnPO", "asc")); // Order by due date for payables
+  }
+
+  if (options.limit) {
+    constraints.push(limit(options.limit));
+  }
+
+  try {
+    const q = query(collection(db, "purchaseOrders"), ...constraints);
+    const querySnapshot = await getDocs(q);
+    const purchaseOrders: PurchaseOrder[] = [];
+    querySnapshot.forEach((docSnap) => {
+      purchaseOrders.push({ id: docSnap.id, ...docSnap.data() } as PurchaseOrder);
+    });
+    return purchaseOrders;
+  } catch (error) {
+    console.error("Error fetching outstanding purchase orders:", error);
+    return [];
+  }
+}
+
+export async function recordPaymentToSupplier(
+  poId: string,
+  paymentDetails: Omit<PaymentToSupplier, 'paymentDate'> & { paymentDate: Date, recordedByUserId: string }
+): Promise<void | { error: string }> {
+  if (!poId) return { error: "ID Pesanan Pembelian tidak valid." };
+  if (!paymentDetails.amountPaid || paymentDetails.amountPaid <= 0) {
+    return { error: "Jumlah pembayaran tidak valid." };
+  }
+
+  const poRef = doc(db, "purchaseOrders", poId);
+
+  try {
+    const poSnap = await getDoc(poRef);
+    if (!poSnap.exists()) {
+      return { error: "Pesanan Pembelian tidak ditemukan." };
+    }
+    const purchaseOrder = poSnap.data() as PurchaseOrder;
+
+    if (purchaseOrder.paymentStatusOnPO === 'paid') {
+        return { error: `Pesanan Pembelian ini sudah lunas.`};
+    }
+    if (!purchaseOrder.isCreditPurchase) {
+        return { error: `Pesanan Pembelian ini bukan pembelian kredit.`};
+    }
+
+    const newOutstandingAmount = (purchaseOrder.outstandingPOAmount || 0) - paymentDetails.amountPaid;
+    let newPaymentStatus: PurchaseOrderPaymentStatus = purchaseOrder.paymentStatusOnPO || 'unpaid';
+
+    if (newOutstandingAmount <= 0) {
+      newPaymentStatus = 'paid';
+    } else {
+      newPaymentStatus = 'partially_paid';
+    }
+
+    const paymentRecord: PaymentToSupplier = {
+      ...paymentDetails,
+      paymentDate: Timestamp.fromDate(paymentDetails.paymentDate),
+    };
+
+    await updateDoc(poRef, {
+      outstandingPOAmount: newOutstandingAmount < 0 ? 0 : newOutstandingAmount,
+      paymentStatusOnPO: newPaymentStatus,
+      paymentsMadeToSupplier: arrayUnion(paymentRecord),
+      updatedAt: serverTimestamp(),
+    });
+
+  } catch (error: any) {
+    console.error("Error recording payment to supplier:", error);
+    return { error: error.message || "Gagal merekam pembayaran ke pemasok." };
   }
 }
 

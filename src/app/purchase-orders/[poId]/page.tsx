@@ -15,17 +15,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import type { PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus, ReceivedItemData } from "@/lib/firebase/purchaseOrders"; // Updated import
-import { getPurchaseOrderById, updatePurchaseOrderStatus, receivePurchaseOrderItems } from "@/lib/firebase/purchaseOrders"; // Updated import
+import type { PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus, ReceivedItemData, PurchaseOrderPaymentStatus, PaymentToSupplier } from "@/lib/firebase/purchaseOrders";
+import { getPurchaseOrderById, updatePurchaseOrderStatus, receivePurchaseOrderItems, recordPaymentToSupplier } from "@/lib/firebase/purchaseOrders";
 import { Timestamp } from "firebase/firestore";
-import { format } from "date-fns";
+import { format, isBefore, startOfDay } from "date-fns";
 import Link from "next/link";
-import { ArrowLeft, Printer, PackageCheck, PackageX } from "lucide-react";
+import { ArrowLeft, Printer, PackageCheck, PackageX, DollarSign, CalendarIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
-import { useForm, useFieldArray, type SubmitHandler } from "react-hook-form";
+import { useForm, useFieldArray, Controller, type SubmitHandler } from "react-hook-form";
 import { z } from "zod";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 
 const receiveItemSchema = z.object({
@@ -46,8 +50,16 @@ const receiveFormSchema = z.object({
     { message: "Jumlah diterima tidak boleh melebihi sisa yang belum diterima untuk satu atau lebih item."}
   )
 });
-
 type ReceiveFormValues = z.infer<typeof receiveFormSchema>;
+
+
+const paymentToSupplierFormSchema = z.object({
+  paymentDate: z.date({ required_error: "Tanggal pembayaran harus diisi." }),
+  amountPaid: z.coerce.number().positive({ message: "Jumlah bayar harus lebih dari 0." }),
+  paymentMethod: z.enum(["cash", "transfer", "card", "other"], { required_error: "Metode pembayaran harus dipilih."}),
+  notes: z.string().optional(),
+});
+type PaymentToSupplierFormValues = z.infer<typeof paymentToSupplierFormSchema>;
 
 
 export default function PurchaseOrderDetailPage() {
@@ -63,6 +75,19 @@ export default function PurchaseOrderDetailPage() {
   const [loadingPO, setLoadingPO] = useState(true);
   const [isReceivingItemsModalOpen, setIsReceivingItemsModalOpen] = useState(false);
   const [isProcessingReceipt, setIsProcessingReceipt] = useState(false);
+
+  const [isPaymentToSupplierModalOpen, setIsPaymentToSupplierModalOpen] = useState(false);
+  const [isProcessingPaymentToSupplier, setIsProcessingPaymentToSupplier] = useState(false);
+
+  const paymentToSupplierForm = useForm<PaymentToSupplierFormValues>({
+    resolver: zodResolver(paymentToSupplierFormSchema),
+    defaultValues: {
+      paymentDate: new Date(),
+      amountPaid: 0,
+      paymentMethod: "transfer",
+      notes: "",
+    },
+  });
 
   const receiveItemsForm = useForm<ReceiveFormValues>({
     resolver: async (data, context, options) => {
@@ -117,6 +142,16 @@ export default function PurchaseOrderDetailPage() {
             quantityReceivedNow: 0,
           }));
         replaceReceiveFields(itemsForForm);
+
+        if (fetchedPO.isCreditPurchase && fetchedPO.outstandingPOAmount) {
+            paymentToSupplierForm.reset({
+                paymentDate: new Date(),
+                amountPaid: fetchedPO.outstandingPOAmount,
+                paymentMethod: "transfer",
+                notes: ""
+            });
+        }
+
       } else {
         toast({ title: "Tidak Ditemukan", description: "Pesanan Pembelian tidak ditemukan.", variant: "destructive" });
         router.push("/purchase-orders");
@@ -127,7 +162,7 @@ export default function PurchaseOrderDetailPage() {
     } finally {
       setLoadingPO(false);
     }
-  }, [poId, toast, router, replaceReceiveFields]);
+  }, [poId, toast, router, replaceReceiveFields, paymentToSupplierForm]);
 
   useEffect(() => {
     fetchPurchaseOrder();
@@ -161,6 +196,38 @@ export default function PurchaseOrderDetailPage() {
     }
   };
 
+  const onSubmitPaymentToSupplier: SubmitHandler<PaymentToSupplierFormValues> = async (values) => {
+    if (!purchaseOrder || !currentUser) {
+      toast({ title: "Error", description: "Pesanan Pembelian atau pengguna tidak valid.", variant: "destructive" });
+      return;
+    }
+    if (values.amountPaid > (purchaseOrder.outstandingPOAmount || 0)) {
+        toast({ title: "Jumlah Tidak Valid", description: "Jumlah bayar melebihi sisa tagihan.", variant: "destructive"});
+        paymentToSupplierForm.setError("amountPaid", { type: "manual", message: "Jumlah bayar melebihi sisa tagihan."});
+        return;
+    }
+
+    const paymentDetails: Omit<PaymentToSupplier, 'paymentDate'> & { paymentDate: Date, recordedByUserId: string } = {
+      amountPaid: values.amountPaid,
+      paymentMethod: values.paymentMethod,
+      notes: values.notes,
+      paymentDate: values.paymentDate,
+      recordedByUserId: currentUser.uid,
+    };
+
+    setIsProcessingPaymentToSupplier(true);
+    const result = await recordPaymentToSupplier(purchaseOrder.id, paymentDetails);
+    setIsProcessingPaymentToSupplier(false);
+
+    if (result && "error" in result) {
+      toast({ title: "Gagal Mencatat Pembayaran", description: result.error, variant: "destructive" });
+    } else {
+      toast({ title: "Pembayaran Dicatat", description: `Pembayaran untuk PO ${purchaseOrder.poNumber} berhasil dicatat.` });
+      setIsPaymentToSupplierModalOpen(false);
+      await fetchPurchaseOrder();
+    }
+  };
+
 
   const formatDate = (timestamp: Timestamp | Date | undefined, includeTime = false) => {
     if (!timestamp) return "N/A";
@@ -173,11 +240,12 @@ export default function PurchaseOrderDetailPage() {
     return new Intl.DateTimeFormat('id-ID', options).format(date);
   };
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: number | undefined) => {
+    if (amount === undefined) return "N/A";
     return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID')}`;
   };
 
-  const getStatusBadgeVariant = (status: PurchaseOrderStatus | undefined) => {
+  const getPOStatusBadgeVariant = (status: PurchaseOrderStatus | undefined) => {
     if (!status) return 'secondary';
     switch (status) {
       case 'draft': return 'secondary';
@@ -189,7 +257,7 @@ export default function PurchaseOrderDetailPage() {
     }
   };
 
-  const getStatusText = (status: PurchaseOrderStatus | undefined) => {
+  const getPOStatusText = (status: PurchaseOrderStatus | undefined) => {
     if (!status) return "N/A";
     switch (status) {
       case 'draft': return 'Draft';
@@ -200,6 +268,37 @@ export default function PurchaseOrderDetailPage() {
       default: return status;
     }
   };
+
+  const getPaymentStatusBadgeVariant = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
+    let variant: "default" | "secondary" | "destructive" | "outline" = "secondary";
+    if (!status) return variant;
+
+    if (status === 'paid') { variant = 'default'; }
+    else if (status === 'unpaid') { variant = 'destructive'; }
+    else if (status === 'partially_paid') { variant = 'outline'; }
+
+    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
+      variant = 'destructive';
+    }
+    return variant;
+  };
+
+  const getPaymentStatusText = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
+    if (!status) return "N/A";
+    let text = "";
+     switch (status) {
+      case 'paid': text = "Lunas"; break;
+      case 'unpaid': text = "Belum Bayar"; break;
+      case 'partially_paid': text = "Bayar Sebagian"; break;
+      case 'overdue': text = "Jatuh Tempo"; break;
+      default: text = status;
+    }
+    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
+      text = "Jatuh Tempo";
+    }
+    return text;
+  };
+
 
   if (loadingPO) {
     return (
@@ -219,6 +318,7 @@ export default function PurchaseOrderDetailPage() {
 
   const canReceiveGoods = purchaseOrder.status === 'ordered' || purchaseOrder.status === 'partially_received';
   const itemsPendingReceipt = purchaseOrder.items.filter(item => item.orderedQuantity > item.receivedQuantity);
+  const canPaySupplier = purchaseOrder.isCreditPurchase && (purchaseOrder.paymentStatusOnPO === 'unpaid' || purchaseOrder.paymentStatusOnPO === 'partially_paid');
 
 
   return (
@@ -231,7 +331,10 @@ export default function PurchaseOrderDetailPage() {
                 Detail Pesanan Pembelian: {purchaseOrder.poNumber}
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                    Status: <Badge variant={getStatusBadgeVariant(purchaseOrder.status)} className={cn(purchaseOrder.status === 'fully_received' && "bg-green-600 text-white hover:bg-green-700", purchaseOrder.status === 'ordered' && "bg-blue-500 text-white hover:bg-blue-600", purchaseOrder.status === 'partially_received' && "bg-yellow-500 text-white hover:bg-yellow-600")}>{getStatusText(purchaseOrder.status)}</Badge>
+                    Status PO: <Badge variant={getPOStatusBadgeVariant(purchaseOrder.status)} className={cn(purchaseOrder.status === 'fully_received' && "bg-green-600 text-white hover:bg-green-700", purchaseOrder.status === 'ordered' && "bg-blue-500 text-white hover:bg-blue-600", purchaseOrder.status === 'partially_received' && "bg-yellow-500 text-white hover:bg-yellow-600", "mr-2")}>{getPOStatusText(purchaseOrder.status)}</Badge>
+                    {purchaseOrder.isCreditPurchase && (
+                        <>Status Bayar: <Badge variant={getPaymentStatusBadgeVariant(purchaseOrder.paymentStatusOnPO, purchaseOrder.paymentDueDateOnPO)} className={cn(purchaseOrder.paymentStatusOnPO === 'paid' && 'bg-green-600 hover:bg-green-700 text-white', purchaseOrder.paymentStatusOnPO === 'partially_paid' && 'border-yellow-500 text-yellow-600')}>{getPaymentStatusText(purchaseOrder.paymentStatusOnPO, purchaseOrder.paymentDueDateOnPO)}</Badge></>
+                    )}
                 </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -279,10 +382,17 @@ export default function PurchaseOrderDetailPage() {
                             <span>Subtotal:</span>
                             <span className="font-medium">{formatCurrency(purchaseOrder.subtotal)}</span>
                         </div>
+                         {/* Add tax and shipping later if needed */}
                         <div className="flex justify-between font-semibold text-base">
                             <span>Total Pesanan:</span>
                             <span>{formatCurrency(purchaseOrder.totalAmount)}</span>
                         </div>
+                        {purchaseOrder.isCreditPurchase && (
+                            <div className="flex justify-between text-destructive">
+                                <span>Sisa Utang:</span>
+                                <span className="font-semibold">{formatCurrency(purchaseOrder.outstandingPOAmount)}</span>
+                            </div>
+                        )}
                     </div>
                  </div>
               </CardContent>
@@ -290,25 +400,32 @@ export default function PurchaseOrderDetailPage() {
 
             <div className="lg:col-span-1 space-y-4">
                 <Card>
-                    <CardHeader><CardTitle className="text-base">Informasi Umum</CardTitle></CardHeader>
+                    <CardHeader><CardTitle className="text-base">Informasi Umum PO</CardTitle></CardHeader>
                     <CardContent className="space-y-1.5 text-xs">
                         <p><strong>No. PO:</strong> {purchaseOrder.poNumber}</p>
                         <p><strong>Pemasok:</strong> {purchaseOrder.supplierName}</p>
                         <p><strong>Tanggal Pesan:</strong> {formatDate(purchaseOrder.orderDate)}</p>
                         <p><strong>Estimasi Terima:</strong> {purchaseOrder.expectedDeliveryDate ? formatDate(purchaseOrder.expectedDeliveryDate) : "-"}</p>
+                        <p><strong>Termin Pembayaran:</strong> <span className="capitalize">{purchaseOrder.paymentTermsOnPO}</span></p>
+                        {purchaseOrder.paymentTermsOnPO === 'credit' && (
+                           <>
+                            <p><strong>No. Invoice Pemasok:</strong> {purchaseOrder.supplierInvoiceNumber || "-"}</p>
+                            <p><strong>Jatuh Tempo Pembayaran:</strong> {purchaseOrder.paymentDueDateOnPO ? formatDate(purchaseOrder.paymentDueDateOnPO) : "-"}</p>
+                           </>
+                        )}
                         <p><strong>Dibuat Oleh:</strong> {purchaseOrder.createdById.substring(0,8)}...</p>
                         <p><strong>Dibuat Pada:</strong> {formatDate(purchaseOrder.createdAt, true)}</p>
                         <p><strong>Diperbarui Pada:</strong> {formatDate(purchaseOrder.updatedAt, true)}</p>
                         {purchaseOrder.notes && (
                         <>
                             <Separator className="my-1.5"/>
-                            <p><strong>Catatan:</strong></p>
+                            <p><strong>Catatan PO:</strong></p>
                             <p className="whitespace-pre-wrap bg-muted/50 p-2 rounded-md">{purchaseOrder.notes}</p>
                         </>
                         )}
                     </CardContent>
                 </Card>
-                <Card>
+                 <Card>
                     <CardHeader><CardTitle className="text-base">Aksi Pesanan</CardTitle></CardHeader>
                     <CardContent className="space-y-2">
                         {canReceiveGoods && (
@@ -323,17 +440,44 @@ export default function PurchaseOrderDetailPage() {
                                 {itemsPendingReceipt.length === 0 ? "Semua Item Diterima" : "Catat Penerimaan Barang"}
                             </Button>
                         )}
-                         {purchaseOrder.status === 'fully_received' && (
-                            <p className="text-xs text-green-600 text-center font-medium py-2">Semua item telah diterima untuk pesanan ini.</p>
+                        {canPaySupplier && (
+                            <Button
+                                size="sm"
+                                className="w-full text-xs h-8"
+                                variant="default"
+                                onClick={() => setIsPaymentToSupplierModalOpen(true)}
+                            >
+                               <DollarSign className="mr-1.5 h-3.5 w-3.5"/> Catat Pembayaran ke Pemasok
+                            </Button>
+                        )}
+                         {purchaseOrder.status === 'fully_received' && !canPaySupplier && purchaseOrder.paymentStatusOnPO === 'paid' && (
+                            <p className="text-xs text-green-600 text-center font-medium py-2">PO selesai dan sudah lunas.</p>
                          )}
-                         {purchaseOrder.status === 'cancelled' && (
+                          {purchaseOrder.status === 'cancelled' && (
                             <p className="text-xs text-destructive text-center font-medium py-2">Pesanan pembelian ini telah dibatalkan.</p>
                          )}
-                          {!(canReceiveGoods || purchaseOrder.status === 'fully_received' || purchaseOrder.status === 'cancelled') && (
-                             <p className="text-xs text-muted-foreground text-center py-2">Tidak ada aksi penerimaan yang tersedia untuk status PO saat ini ({getStatusText(purchaseOrder.status)}).</p>
+                          {!(canReceiveGoods || canPaySupplier || (purchaseOrder.status === 'fully_received' && purchaseOrder.paymentStatusOnPO === 'paid') || purchaseOrder.status === 'cancelled') && (
+                             <p className="text-xs text-muted-foreground text-center py-2">Tidak ada aksi yang tersedia untuk status PO saat ini.</p>
                           )}
                     </CardContent>
                 </Card>
+                {purchaseOrder.paymentsMadeToSupplier && purchaseOrder.paymentsMadeToSupplier.length > 0 && (
+                    <Card>
+                        <CardHeader><CardTitle className="text-base">Riwayat Pembayaran ke Pemasok</CardTitle></CardHeader>
+                        <CardContent>
+                            <ScrollArea className="h-32">
+                                <ul className="space-y-1.5 text-xs">
+                                    {purchaseOrder.paymentsMadeToSupplier.map((pmt, idx) => (
+                                        <li key={idx} className="p-1.5 bg-muted/50 rounded-md">
+                                            <p><strong>Tgl:</strong> {formatDate(pmt.paymentDate, true)} - <strong>{formatCurrency(pmt.amountPaid)}</strong> ({pmt.paymentMethod})</p>
+                                            {pmt.notes && <p className="text-muted-foreground italic text-[0.7rem]">Catatan: {pmt.notes}</p>}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </ScrollArea>
+                        </CardContent>
+                    </Card>
+                )}
             </div>
           </div>
         </div>
@@ -397,6 +541,75 @@ export default function PurchaseOrderDetailPage() {
                         </DialogClose>
                         <Button type="submit" className="text-xs h-8" disabled={isProcessingReceipt || itemsPendingReceipt.length === 0}>
                             {isProcessingReceipt ? "Memproses..." : "Simpan Penerimaan"}
+                        </Button>
+                    </DialogModalFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
+
+        <Dialog open={isPaymentToSupplierModalOpen} onOpenChange={setIsPaymentToSupplierModalOpen}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                    <DialogModalTitle className="text-base">Catat Pembayaran ke Pemasok</DialogModalTitle>
+                    <DialogModalDescription className="text-xs">
+                        PO: {purchaseOrder.poNumber} ({purchaseOrder.supplierName}) <br/>
+                        Sisa Tagihan: <span className="font-semibold">{formatCurrency(purchaseOrder.outstandingPOAmount)}</span>
+                    </DialogModalDescription>
+                </DialogHeader>
+                <form onSubmit={paymentToSupplierForm.handleSubmit(onSubmitPaymentToSupplier)} className="space-y-3 py-2 max-h-[70vh] overflow-y-auto pr-1">
+                    <div>
+                        <Label htmlFor="paymentDateSupplier" className="text-xs">Tanggal Pembayaran*</Label>
+                        <Controller
+                        name="paymentDate"
+                        control={paymentToSupplierForm.control}
+                        render={({ field }) => (
+                            <Popover>
+                            <PopoverTrigger asChild>
+                                <Button variant={"outline"} className="w-full justify-start text-left font-normal h-9 text-xs mt-1">
+                                <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
+                                {field.value ? format(field.value, "dd MMM yyyy") : <span>Pilih tanggal</span>}
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus disabled={(date) => date > new Date()} /></PopoverContent>
+                            </Popover>
+                        )}
+                        />
+                        {paymentToSupplierForm.formState.errors.paymentDate && <p className="text-xs text-destructive mt-1">{paymentToSupplierForm.formState.errors.paymentDate.message}</p>}
+                    </div>
+                    <div>
+                        <Label htmlFor="amountPaidSupplier" className="text-xs">Jumlah Dibayar* ({selectedBranch?.currency || 'Rp'})</Label>
+                        <Input id="amountPaidSupplier" type="number" {...paymentToSupplierForm.register("amountPaid")} className="h-9 text-xs mt-1" placeholder="0"/>
+                        {paymentToSupplierForm.formState.errors.amountPaid && <p className="text-xs text-destructive mt-1">{paymentToSupplierForm.formState.errors.amountPaid.message}</p>}
+                    </div>
+                    <div>
+                        <Label htmlFor="paymentMethodSupplier" className="text-xs">Metode Pembayaran*</Label>
+                        <Controller
+                        name="paymentMethod"
+                        control={paymentToSupplierForm.control}
+                        render={({ field }) => (
+                            <Select onValueChange={field.onChange} value={field.value}>
+                            <SelectTrigger className="h-9 text-xs mt-1"><SelectValue placeholder="Pilih metode" /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="cash" className="text-xs">Tunai</SelectItem>
+                                <SelectItem value="transfer" className="text-xs">Transfer Bank</SelectItem>
+                                <SelectItem value="card" className="text-xs">Kartu</SelectItem>
+                                <SelectItem value="other" className="text-xs">Lainnya</SelectItem>
+                            </SelectContent>
+                            </Select>
+                        )}
+                        />
+                        {paymentToSupplierForm.formState.errors.paymentMethod && <p className="text-xs text-destructive mt-1">{paymentToSupplierForm.formState.errors.paymentMethod.message}</p>}
+                    </div>
+                    <div>
+                        <Label htmlFor="notesSupplier" className="text-xs">Catatan (Opsional)</Label>
+                        <Textarea id="notesSupplier" {...paymentToSupplierForm.register("notes")} className="text-xs mt-1 min-h-[60px]" placeholder="Catatan tambahan..."/>
+                    </div>
+                    <DialogModalFooter className="pt-3">
+                        <DialogClose asChild>
+                            <Button type="button" variant="outline" className="text-xs h-8" disabled={isProcessingPaymentToSupplier}>Batal</Button>
+                        </DialogClose>
+                        <Button type="submit" className="text-xs h-8" disabled={isProcessingPaymentToSupplier || paymentToSupplierForm.formState.isSubmitting}>
+                        {isProcessingPaymentToSupplier || paymentToSupplierForm.formState.isSubmitting ? "Menyimpan..." : "Simpan Pembayaran"}
                         </Button>
                     </DialogModalFooter>
                 </form>
