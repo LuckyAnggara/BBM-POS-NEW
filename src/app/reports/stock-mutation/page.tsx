@@ -13,11 +13,11 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { CalendarIcon, Download } from "lucide-react";
-import { format, startOfMonth, endOfMonth } from "date-fns";
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfDay, startOfDay } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getInventoryItems, type InventoryItem } from "@/lib/firebase/inventory"; // Updated imports
-import { getTransactionsByDateRangeAndBranch, type PosTransaction } from "@/lib/firebase/pos"; // Updated imports
-import { getPurchaseOrdersByBranch, type PurchaseOrder } from "@/lib/firebase/purchaseOrders"; // Updated imports
+import { getInventoryItems, type InventoryItem } from "@/lib/firebase/inventory";
+import { getTransactionsByDateRangeAndBranch, type PosTransaction } from "@/lib/firebase/pos";
+import { getPurchaseOrdersByBranch, type PurchaseOrder } from "@/lib/firebase/purchaseOrders";
 
 interface StockMutationReportItem {
   productId: string;
@@ -25,20 +25,51 @@ interface StockMutationReportItem {
   sku?: string;
   categoryName?: string;
   initialStock: number;
-  stockInFromPO: number; 
+  stockInFromPO: number;
   stockSold: number;
-  stockReturned: number; 
-  finalStock: number; 
+  stockReturned: number;
+  finalStock: number;
 }
 
 export default function StockMutationReportPage() {
   const { selectedBranch } = useBranch();
   const { toast } = useToast();
 
-  const [startDate, setStartDate] = useState<Date | undefined>(startOfMonth(new Date()));
-  const [endDate, setEndDate] = useState<Date | undefined>(endOfMonth(new Date()));
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [endDate, setEndDate] = useState<Date | undefined>(undefined);
   const [loadingReport, setLoadingReport] = useState(false);
   const [reportData, setReportData] = useState<StockMutationReportItem[] | null>(null);
+
+  useEffect(() => {
+    if (selectedBranch && selectedBranch.defaultReportPeriod) {
+      const now = new Date();
+      let newStart: Date, newEnd: Date;
+      switch (selectedBranch.defaultReportPeriod) {
+        case "thisWeek":
+          newStart = startOfWeek(now, { weekStartsOn: 1 });
+          newEnd = endOfWeek(now, { weekStartsOn: 1 });
+          break;
+        case "today":
+          newStart = startOfDay(now);
+          newEnd = endOfDay(now);
+          break;
+        case "thisMonth":
+        default:
+          newStart = startOfMonth(now);
+          newEnd = endOfMonth(now);
+          break;
+      }
+      setStartDate(newStart);
+      setEndDate(newEnd);
+    } else if (!selectedBranch) {
+        setStartDate(startOfMonth(new Date()));
+        setEndDate(endOfMonth(new Date()));
+    } else {
+        setStartDate(startOfMonth(new Date()));
+        setEndDate(endOfMonth(new Date()));
+    }
+  }, [selectedBranch]);
+
 
   const handleGenerateReport = useCallback(async () => {
     if (!selectedBranch) {
@@ -89,6 +120,8 @@ export default function StockMutationReportPage() {
       purchaseOrdersUpdatedInPeriod.forEach(po => {
         if (po.status === 'partially_received' || po.status === 'fully_received') {
           po.items.forEach(poItem => {
+            // Only count items that were actually received within the PO update period for this logic
+            // This still relies on PO's updatedAt falling in range, which might not be perfect for item receipt date.
             stockInFromPOMap.set(poItem.productId, (stockInFromPOMap.get(poItem.productId) || 0) + poItem.receivedQuantity);
           });
         }
@@ -100,6 +133,8 @@ export default function StockMutationReportPage() {
         const stockInFromPOForPeriod = stockInFromPOMap.get(item.id) || 0; 
         const finalStock = item.quantity; 
         
+        // Calculate initial stock by working backwards from current actual stock
+        // InitialStock = CurrentStock - StockInDuringPeriod + StockSoldDuringPeriod - StockReturnedDuringPeriod
         const initialStock = finalStock - stockInFromPOForPeriod + stockSold - stockReturned;
 
         return {
@@ -304,5 +339,3 @@ export default function StockMutationReportPage() {
     </ProtectedRoute>
   );
 }
-
-    

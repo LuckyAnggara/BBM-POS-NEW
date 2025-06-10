@@ -2,20 +2,20 @@
 "use client";
 
 import MainLayout from "@/components/layout/main-layout";
-import { useBranch } from "@/contexts/branch-context";
+import { useBranch, type ReportPeriodPreset } from "@/contexts/branch-context"; // Import ReportPeriodPreset
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarIcon, Download } from "lucide-react";
-import { format, startOfMonth, endOfMonth } from "date-fns";
-import React, { useState } from "react";
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, startOfDay, endOfDay } from "date-fns"; // Added more date-fns
+import React, { useState, useEffect } from "react"; // Added useEffect
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useToast } from "@/hooks/use-toast";
-import { getTransactionsByDateRangeAndBranch, type PosTransaction } from "@/lib/firebase/pos"; // Updated import
-import { getExpenses, type Expense } from "@/lib/firebase/expenses"; // Updated import
-import type { PaymentMethod } from "@/lib/firebase/types"; // Updated import
+import { getTransactionsByDateRangeAndBranch, type PosTransaction } from "@/lib/firebase/pos";
+import { getExpenses, type Expense } from "@/lib/firebase/expenses";
+import type { PaymentMethod } from "@/lib/firebase/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 
@@ -24,25 +24,25 @@ type ReportType = "sales_summary" | "income_statement" | "balance_sheet";
 interface SalesSummaryData {
   grossRevenueBeforeReturns: number;
   totalValueReturned: number;
-  netRevenue: number; 
-  totalNetTransactions: number; 
-  averageTransactionValue: number; 
-  salesByPaymentMethod: Record<PaymentMethod, number>; 
+  netRevenue: number;
+  totalNetTransactions: number;
+  averageTransactionValue: number;
+  salesByPaymentMethod: Record<PaymentMethod, number>;
 }
 
 interface IncomeStatementData {
   grossRevenueBeforeReturns: number;
   totalValueReturned: number;
-  netRevenue: number; 
-  
+  netRevenue: number;
+
   grossCOGSBeforeReturns: number;
   cogsOfReturnedItems: number;
-  netCOGS: number; 
+  netCOGS: number;
 
-  grossProfit: number; 
+  grossProfit: number;
   totalExpenses: number;
-  netProfit: number; 
-  expensesBreakdown?: { category: string; amount: number }[]; 
+  netProfit: number;
+  expensesBreakdown?: { category: string; amount: number }[];
 }
 
 
@@ -51,11 +51,43 @@ export default function ReportsPage() {
   const { toast } = useToast();
 
   const [reportType, setReportType] = useState<ReportType>("sales_summary");
-  const [startDate, setStartDate] = useState<Date | undefined>(startOfMonth(new Date()));
-  const [endDate, setEndDate] = useState<Date | undefined>(endOfMonth(new Date()));
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [endDate, setEndDate] = useState<Date | undefined>(undefined);
   const [loadingReport, setLoadingReport] = useState(false);
   const [salesSummaryData, setSalesSummaryData] = useState<SalesSummaryData | null>(null);
   const [incomeStatementData, setIncomeStatementData] = useState<IncomeStatementData | null>(null);
+
+  useEffect(() => {
+    if (selectedBranch && selectedBranch.defaultReportPeriod) {
+      const now = new Date();
+      let newStart: Date, newEnd: Date;
+      switch (selectedBranch.defaultReportPeriod) {
+        case "thisWeek":
+          newStart = startOfWeek(now, { weekStartsOn: 1 });
+          newEnd = endOfWeek(now, { weekStartsOn: 1 });
+          break;
+        case "today":
+          newStart = startOfDay(now);
+          newEnd = endOfDay(now);
+          break;
+        case "thisMonth":
+        default:
+          newStart = startOfMonth(now);
+          newEnd = endOfMonth(now);
+          break;
+      }
+      setStartDate(newStart);
+      setEndDate(newEnd);
+    } else if (!selectedBranch) {
+        // Clear dates if no branch is selected, or set to a default if preferred
+        setStartDate(startOfMonth(new Date()));
+        setEndDate(endOfMonth(new Date()));
+    } else {
+        // If selectedBranch exists but no defaultReportPeriod (or it's invalid), set a sensible default
+        setStartDate(startOfMonth(new Date()));
+        setEndDate(endOfMonth(new Date()));
+    }
+  }, [selectedBranch]);
 
 
   const formatCurrency = (amount: number) => {
@@ -428,5 +460,3 @@ export default function ReportsPage() {
     </ProtectedRoute>
   );
 }
-
-    

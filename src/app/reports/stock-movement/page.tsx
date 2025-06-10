@@ -13,31 +13,31 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { CalendarIcon, Download, Package, AlertTriangle, Info } from "lucide-react";
-import { format, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import { format, startOfMonth, endOfMonth, parseISO, startOfWeek, endOfDay, startOfDay } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
-import Image from "next/image"; 
-import { 
-  getInventoryItems, 
-  type InventoryItem, 
-} from "@/lib/firebase/inventory"; // Updated imports
+import Image from "next/image";
 import {
-  getTransactionsByDateRangeAndBranch, 
+  getInventoryItems,
+  type InventoryItem,
+} from "@/lib/firebase/inventory";
+import {
+  getTransactionsByDateRangeAndBranch,
   type PosTransaction,
-} from "@/lib/firebase/pos"; // Updated imports
+} from "@/lib/firebase/pos";
 import {
-  getPurchaseOrdersByBranch, 
+  getPurchaseOrdersByBranch,
   type PurchaseOrder,
   type PurchaseOrderItem
-} from "@/lib/firebase/purchaseOrders"; // Updated imports
+} from "@/lib/firebase/purchaseOrders";
 import { Timestamp } from "firebase/firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface StockMovement {
   date: Timestamp;
-  type: "Stok Awal" | "Penjualan" | "Retur Jual" | "Penerimaan PO" | "Penyesuaian"; 
-  documentId?: string; 
-  notes?: string; 
-  quantityChange: number; 
+  type: "Stok Awal" | "Penjualan" | "Retur Jual" | "Penerimaan PO" | "Penyesuaian";
+  documentId?: string;
+  notes?: string;
+  quantityChange: number;
   stockBefore: number;
   stockAfter: number;
 }
@@ -54,11 +54,42 @@ export default function StockMovementReportPage() {
 
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string | undefined>(undefined);
-  const [startDate, setStartDate] = useState<Date | undefined>(startOfMonth(new Date()));
-  const [endDate, setEndDate] = useState<Date | undefined>(endOfMonth(new Date()));
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [endDate, setEndDate] = useState<Date | undefined>(undefined);
   const [loadingReport, setLoadingReport] = useState(false);
   const [loadingInventory, setLoadingInventory] = useState(true);
   const [reportData, setReportData] = useState<StockMovementReportData | null>(null);
+
+  useEffect(() => {
+    if (selectedBranch && selectedBranch.defaultReportPeriod) {
+      const now = new Date();
+      let newStart: Date, newEnd: Date;
+      switch (selectedBranch.defaultReportPeriod) {
+        case "thisWeek":
+          newStart = startOfWeek(now, { weekStartsOn: 1 });
+          newEnd = endOfWeek(now, { weekStartsOn: 1 });
+          break;
+        case "today":
+          newStart = startOfDay(now);
+          newEnd = endOfDay(now);
+          break;
+        case "thisMonth":
+        default:
+          newStart = startOfMonth(now);
+          newEnd = endOfMonth(now);
+          break;
+      }
+      setStartDate(newStart);
+      setEndDate(newEnd);
+    } else if (!selectedBranch) {
+        setStartDate(startOfMonth(new Date()));
+        setEndDate(endOfMonth(new Date()));
+    } else {
+        setStartDate(startOfMonth(new Date()));
+        setEndDate(endOfMonth(new Date()));
+    }
+  }, [selectedBranch]);
+
 
   const fetchInventory = useCallback(async () => {
     if (!selectedBranch) {
@@ -114,18 +145,18 @@ export default function StockMovementReportPage() {
           if (item.productId === selectedProductId) {
             if (tx.status === 'returned') {
               movements.push({
-                date: tx.returnedAt || tx.timestamp, 
+                date: tx.returnedAt || tx.timestamp,
                 type: "Retur Jual",
                 documentId: tx.invoiceNumber,
                 notes: tx.returnReason,
-                quantityChange: item.quantity, 
+                quantityChange: item.quantity,
               });
-            } else { 
+            } else {
               movements.push({
                 date: tx.timestamp,
                 type: "Penjualan",
                 documentId: tx.invoiceNumber,
-                quantityChange: -item.quantity, 
+                quantityChange: -item.quantity,
               });
             }
           }
@@ -137,11 +168,12 @@ export default function StockMovementReportPage() {
         if (po.status === 'partially_received' || po.status === 'fully_received') {
           po.items.forEach(poItem => {
             if (poItem.productId === selectedProductId && poItem.receivedQuantity > 0) {
+              // For simplicity, use PO's updatedAt for movement date. More accurate would be specific receipt dates.
               movements.push({
-                date: po.updatedAt, 
+                date: po.updatedAt,
                 type: "Penerimaan PO",
                 documentId: po.poNumber,
-                quantityChange: poItem.receivedQuantity, 
+                quantityChange: poItem.receivedQuantity,
               });
             }
           });
@@ -157,9 +189,9 @@ export default function StockMovementReportPage() {
       
       const processedMovements: StockMovement[] = [];
       processedMovements.push({
-        date: Timestamp.fromDate(startDate), 
+        date: Timestamp.fromDate(startDate),
         type: "Stok Awal",
-        quantityChange: 0, 
+        quantityChange: 0,
         stockBefore: calculatedInitialStock,
         stockAfter: calculatedInitialStock,
       });
@@ -177,7 +209,7 @@ export default function StockMovementReportPage() {
 
       setReportData({ product, movements: processedMovements, currentStock });
 
-      if (processedMovements.length <= 1 && movements.length === 0) { 
+      if (processedMovements.length <= 1 && movements.length === 0) {
         toast({ title: "Tidak Ada Pergerakan", description: `Tidak ada pergerakan stok untuk ${product.name} pada periode ini.`, variant: "default" });
       }
 
@@ -218,8 +250,8 @@ export default function StockMovementReportPage() {
             <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end p-4 pt-0">
               <div className="lg:col-span-2">
                 <label htmlFor="productSelect" className="block text-xs font-medium mb-1">Produk</label>
-                <Select 
-                    value={selectedProductId} 
+                <Select
+                    value={selectedProductId}
                     onValueChange={setSelectedProductId}
                     disabled={loadingInventory || inventoryItems.length === 0}
                 >
@@ -388,5 +420,3 @@ export default function StockMovementReportPage() {
     </ProtectedRoute>
   );
 }
-
-    

@@ -5,21 +5,24 @@ import type { ReactNode } from 'react';
 import { createContext, useContext, useState, useMemo, useEffect } from 'react';
 import { getBranches as fetchBranchesFromDB } from '@/lib/firebase/branches'; // Updated import
 
+export type ReportPeriodPreset = "thisMonth" | "thisWeek" | "today";
+
 export interface Branch {
   id: string;
   name: string;
   currency?: string;
-  taxRate?: number; 
+  taxRate?: number;
   invoiceName?: string;
   address?: string;
   phoneNumber?: string;
-  transactionDeletionPassword?: string; 
+  transactionDeletionPassword?: string;
+  defaultReportPeriod?: ReportPeriodPreset; // Added field
 }
 
 interface BranchContextType {
   branches: Branch[];
   selectedBranch: Branch | null;
-  setSelectedBranch: (branch: Branch | null) => void; 
+  setSelectedBranch: (branch: Branch | null) => void;
   loadingBranches: boolean;
   refreshBranches: () => Promise<void>;
 }
@@ -40,10 +43,21 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       if (!currentSelectedStillExists) {
         setSelectedBranchState(fetchedBranches[0]);
       } else if (currentSelectedStillExists) {
-        setSelectedBranchState(currentSelectedStillExists);
+        // If current selected still exists, update its data potentially
+        const updatedCurrentSelected = fetchedBranches.find(b => b.id === selectedBranch.id);
+        setSelectedBranchState(updatedCurrentSelected || fetchedBranches[0]);
       }
     } else if (fetchedBranches.length === 0) {
       setSelectedBranchState(null);
+    } else if (selectedBranch) {
+        // Refresh selectedBranch data if it still exists
+        const updatedSelected = fetchedBranches.find(b => b.id === selectedBranch.id);
+        if (updatedSelected) {
+            setSelectedBranchState(updatedSelected);
+        } else {
+            // Selected branch no longer exists, select first or null
+            setSelectedBranchState(fetchedBranches.length > 0 ? fetchedBranches[0] : null);
+        }
     }
     setLoadingBranches(false);
   };
@@ -51,12 +65,12 @@ export function BranchProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetchBranches();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []);
 
   const setSelectedBranch = (branch: Branch | null) => {
     setSelectedBranchState(branch);
   };
-  
+
   const value = useMemo(() => ({
     branches,
     selectedBranch,
@@ -80,5 +94,3 @@ export function useBranch(): BranchContextType {
   }
   return context;
 }
-
-    

@@ -4,14 +4,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import React, { useState, useEffect, useCallback } from "react"; // Added useState, useEffect, useCallback
+import React, { useState, useEffect, useCallback } from "react";
 import {
   LayoutDashboard,
   ShoppingCart,
   Archive,
   CreditCard,
   BarChart3,
-  Settings,
+  Settings, // Keep Settings icon
   Receipt,
   History,
   PackageSearch,
@@ -21,9 +21,9 @@ import {
   Users,
   ListChecks,
   Database,
-  Landmark, 
+  Landmark,
   Bell,
-  BellDot, // Added BellDot
+  BellDot,
   Send,
   History as HistoryIconLucide,
 } from "lucide-react";
@@ -35,15 +35,15 @@ import {
   SidebarMenuSubItem,
   SidebarMenuSubButton,
   SidebarMenuSkeleton,
-  SidebarMenuBadge // Added SidebarMenuBadge
+  SidebarMenuBadge
 } from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
 import SidebarHeaderBrand from "./sidebar-header-brand";
 import { useAuth } from "@/contexts/auth-context";
-import { getUnreadNotificationCount } from "@/lib/firebase/notifications"; // Added import
+import { getUnreadNotificationCount } from "@/lib/firebase/notifications";
 
 
-const navItemsConfig = (unreadCount: number) => [ // Made it a function
+const navItemsConfig = (unreadCount: number) => [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
   { href: "/pos", label: "Point of Sale", icon: ShoppingCart, adminOnly: false },
   { href: "/inventory", label: "Inventaris", icon: Archive, adminOnly: false },
@@ -64,14 +64,14 @@ const navItemsConfig = (unreadCount: number) => [ // Made it a function
     adminOnly: false,
     subItems: [
       { href: "/accounts-receivable", label: "Piutang Usaha", icon: ListChecks },
-      { href: "/accounts-payable", label: "Utang Usaha", icon: Archive }, 
+      { href: "/accounts-payable", label: "Utang Usaha", icon: Archive },
     ]
   },
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
   { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
   {
-    label: "Notifikasi", 
-    icon: unreadCount > 0 ? BellDot : Bell, // Dynamic icon
+    label: "Notifikasi",
+    icon: unreadCount > 0 ? BellDot : Bell,
     adminOnly: false,
     subItems: [
       { href: "/notifications", label: "Lihat Notifikasi", icon: unreadCount > 0 ? BellDot : Bell, exactMatch: true, badgeCount: unreadCount > 0 ? unreadCount : undefined },
@@ -88,8 +88,9 @@ const navItemsConfig = (unreadCount: number) => [ // Made it a function
       { href: "/reports/stock-movement", label: "Pergerakan Stok Produk", icon: PackageOpen },
     ]
   },
+  { href: "/branch-settings", label: "Pengaturan Cabang", icon: Settings, adminOnly: false }, // Added Branch Settings
   {
-    label: "Admin Notifikasi", 
+    label: "Admin Notifikasi",
     icon: Send,
     adminOnly: true,
     subItems: [
@@ -114,21 +115,17 @@ export default function AppSidebarNav() {
 
   useEffect(() => {
     fetchUnreadCount();
-    // Optional: Set up an interval or a more sophisticated real-time listener
-    // if immediate badge updates are critical without page navigation.
-    const intervalId = setInterval(fetchUnreadCount, 60000); // Refresh count every 60 seconds
+    const intervalId = setInterval(fetchUnreadCount, 60000);
     return () => clearInterval(intervalId);
   }, [fetchUnreadCount]);
 
-  // Re-fetch when pathname changes (user navigates to notifications page, reads them, then comes back)
   useEffect(() => {
     if (pathname.includes('/notifications')) {
-      // Delay slightly to allow Firestore updates from notifications page to propagate
       setTimeout(fetchUnreadCount, 1500);
     }
   }, [pathname, fetchUnreadCount]);
 
-  const navItems = navItemsConfig(unreadCount); // Generate navItems with current unreadCount
+  const navItems = navItemsConfig(unreadCount);
 
   return (
     <nav className="flex flex-col h-full">
@@ -151,13 +148,15 @@ export default function AppSidebarNav() {
               if (item.adminOnly && userData?.role !== 'admin') {
                 return null;
               }
+              // Disable all items except Dashboard, Notifications, and Admin Settings if cashier has no branch
+              const isCashierNoBranch = userData?.role === 'cashier' && !userData.branchId;
+              const isAllowedForCashierNoBranch = item.href === '/dashboard' || 
+                                                  item.label === 'Notifikasi' || 
+                                                  (item.adminOnly && item.href === '/admin/settings'); // Admin settings is fine
 
-              const isNavItemDisabled = 
-                                      userData?.role === 'cashier' &&
-                                      userData?.branchId === null &&
-                                      item.href !== '/dashboard' &&
-                                      item.label !== 'Notifikasi' && 
+              const isNavItemDisabled = isCashierNoBranch && !isAllowedForCashierNoBranch && 
                                       !item.subItems?.some(sub => sub.href === '/dashboard' || sub.href === '/notifications');
+
 
               if (item.subItems) {
                 return (
@@ -185,29 +184,32 @@ export default function AppSidebarNav() {
                          )}
                     </SidebarMenuButton>
                     <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
-                      {item.subItems.map(subItem => (
-                        <SidebarMenuSubItem key={subItem.href}>
-                          <Link href={isNavItemDisabled ? "#" : subItem.href} passHref legacyBehavior>
-                            <SidebarMenuSubButton
-                                isActive={ (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isNavItemDisabled}
-                                aria-disabled={isNavItemDisabled}
-                                className={cn(isNavItemDisabled && "cursor-not-allowed")}
-                            >
-                              <subItem.icon className="mr-2 h-3.5 w-3.5 text-muted-foreground data-[active=true]:text-primary" />
-                              <span>{subItem.label}</span>
-                              {subItem.badgeCount && subItem.badgeCount > 0 && (
-                                <SidebarMenuBadge className="ml-auto">{subItem.badgeCount}</SidebarMenuBadge>
-                              )}
-                            </SidebarMenuSubButton>
-                          </Link>
-                        </SidebarMenuSubItem>
-                      ))}
+                      {item.subItems.map(subItem => {
+                          const isSubItemDisabled = isCashierNoBranch && subItem.href !== '/dashboard' && subItem.href !== '/notifications';
+                          return (
+                            <SidebarMenuSubItem key={subItem.href}>
+                            <Link href={isSubItemDisabled ? "#" : subItem.href} passHref legacyBehavior>
+                                <SidebarMenuSubButton
+                                    isActive={ (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isSubItemDisabled}
+                                    aria-disabled={isSubItemDisabled}
+                                    className={cn(isSubItemDisabled && "cursor-not-allowed")}
+                                >
+                                <subItem.icon className="mr-2 h-3.5 w-3.5 text-muted-foreground data-[active=true]:text-primary" />
+                                <span>{subItem.label}</span>
+                                {subItem.badgeCount && subItem.badgeCount > 0 && (
+                                    <SidebarMenuBadge className="ml-auto">{subItem.badgeCount}</SidebarMenuBadge>
+                                )}
+                                </SidebarMenuSubButton>
+                            </Link>
+                            </SidebarMenuSubItem>
+                          );
+                      })}
                     </SidebarMenuSub>
                   </SidebarMenuItem>
                 );
               }
 
-              if (!item.href) return null; 
+              if (!item.href) return null;
 
               return (
                 <SidebarMenuItem key={item.label}>

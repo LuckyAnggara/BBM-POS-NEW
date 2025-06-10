@@ -1,13 +1,14 @@
 
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, limit, orderBy } from "firebase/firestore";
 import { db } from "./config";
-import type { Branch } from "@/contexts/branch-context";
+import type { Branch, ReportPeriodPreset } from "@/contexts/branch-context"; // Ensure ReportPeriodPreset is imported
 
 export interface BranchInput extends Omit<Branch, 'id'> {}
 
-interface FirebaseBranchData extends Omit<Branch, 'id'> {
+interface FirebaseBranchData extends Omit<Branch, 'id' | 'defaultReportPeriod'> {
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
+  defaultReportPeriod?: ReportPeriodPreset;
 }
 
 export async function createBranch(branchData: BranchInput): Promise<Branch | { error: string }> {
@@ -23,6 +24,7 @@ export async function createBranch(branchData: BranchInput): Promise<Branch | { 
       address: branchData.address?.trim() || "",
       phoneNumber: branchData.phoneNumber?.trim() || "",
       transactionDeletionPassword: branchData.transactionDeletionPassword || "",
+      defaultReportPeriod: branchData.defaultReportPeriod || "thisMonth", // Add default
       createdAt: serverTimestamp() as Timestamp,
     };
     const branchRef = await addDoc(collection(db, "branches"), dataToSave);
@@ -34,7 +36,8 @@ export async function createBranch(branchData: BranchInput): Promise<Branch | { 
         taxRate: dataToSave.taxRate,
         address: dataToSave.address,
         phoneNumber: dataToSave.phoneNumber,
-        transactionDeletionPassword: dataToSave.transactionDeletionPassword
+        transactionDeletionPassword: dataToSave.transactionDeletionPassword,
+        defaultReportPeriod: dataToSave.defaultReportPeriod
     };
   } catch (error: any) {
     console.error("Error creating branch:", error);
@@ -53,9 +56,18 @@ export async function updateBranch(branchId: string, updates: Partial<BranchInpu
   if (updates.address !== undefined) dataToUpdate.address = updates.address.trim();
   if (updates.phoneNumber !== undefined) dataToUpdate.phoneNumber = updates.phoneNumber.trim();
   if (updates.transactionDeletionPassword !== undefined) dataToUpdate.transactionDeletionPassword = updates.transactionDeletionPassword;
+  if (updates.defaultReportPeriod) dataToUpdate.defaultReportPeriod = updates.defaultReportPeriod;
 
-  if (Object.keys(dataToUpdate).length === 0 && !(updates.hasOwnProperty('invoiceName') || updates.hasOwnProperty('address') || updates.hasOwnProperty('phoneNumber') || updates.hasOwnProperty('currency') || updates.hasOwnProperty('taxRate') || updates.hasOwnProperty('transactionDeletionPassword'))) {
-     return;
+
+  if (Object.keys(dataToUpdate).length === 0 && 
+      !updates.hasOwnProperty('invoiceName') && 
+      !updates.hasOwnProperty('address') && 
+      !updates.hasOwnProperty('phoneNumber') && 
+      !updates.hasOwnProperty('currency') && 
+      !updates.hasOwnProperty('taxRate') && 
+      !updates.hasOwnProperty('transactionDeletionPassword') &&
+      !updates.hasOwnProperty('defaultReportPeriod')) {
+     return; // No actual data fields to update, only possibly updatedAt if we proceeded.
   }
 
   dataToUpdate.updatedAt = serverTimestamp() as Timestamp;
@@ -125,7 +137,8 @@ export async function getBranches(): Promise<Branch[]> {
         taxRate: data.taxRate === undefined ? 0 : data.taxRate,
         address: data.address || "",
         phoneNumber: data.phoneNumber || "",
-        transactionDeletionPassword: data.transactionDeletionPassword || ""
+        transactionDeletionPassword: data.transactionDeletionPassword || "",
+        defaultReportPeriod: data.defaultReportPeriod || "thisMonth"
       });
     });
     return branches;
@@ -150,7 +163,8 @@ export async function getBranchById(branchId: string): Promise<Branch | null> {
         taxRate: data.taxRate === undefined ? 0 : data.taxRate,
         address: data.address || "",
         phoneNumber: data.phoneNumber || "",
-        transactionDeletionPassword: data.transactionDeletionPassword || ""
+        transactionDeletionPassword: data.transactionDeletionPassword || "",
+        defaultReportPeriod: data.defaultReportPeriod || "thisMonth"
       };
     }
     return null;
@@ -159,5 +173,3 @@ export async function getBranchById(branchId: string): Promise<Branch | null> {
     return null;
   }
 }
-
-    
