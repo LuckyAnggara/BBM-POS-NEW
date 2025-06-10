@@ -77,4 +77,27 @@ export async function updateUserRole(userId: string, role: string): Promise<void
   }
 }
 
+export async function updateUserAccountDetails(
+  uid: string,
+  data: { name?: string; avatarUrl?: string }
+): Promise<void | { error: string }> {
+  if (!uid) return { error: "User ID tidak valid." };
+  try {
+    const userRef = doc(db, "users", uid);
+    const updates: any = { updatedAt: serverTimestamp() };
     
+    if (data.name !== undefined) {
+      updates.name = data.name;
+    }
+    if (data.avatarUrl !== undefined) {
+      updates.avatarUrl = data.avatarUrl;
+    }
+
+    if (Object.keys(updates).length > 1) { // Ensure there's more than just updatedAt
+        await updateDoc(userRef, updates);
+    }
+  } catch (error: any) {
+    console.error("Error updating user account details in Firestore:", error);
+    return { error: error.message || "Gagal memperbarui detail akun pengguna di Firestore." };
+  }
+}

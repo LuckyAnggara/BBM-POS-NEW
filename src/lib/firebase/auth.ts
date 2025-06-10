@@ -6,9 +6,12 @@ import {
   updateProfile,
   onAuthStateChanged as onFirebaseAuthStateChanged,
   type User as FirebaseUser,
+  updatePassword,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
 } from "firebase/auth";
 import { auth } from "./config";
-import { createUserDocument, getUserDocument } from "./users"; // Updated import
+import { createUserDocument, getUserDocument, updateUserAccountDetails } from "./users";
 import type { UserData } from "@/contexts/auth-context";
 
 export async function registerWithEmailAndPassword(name: string, email: string, password: string): Promise<{ user: FirebaseUser; userData: UserData | null } | { error: string; errorCode?: string }> {
@@ -22,8 +25,8 @@ export async function registerWithEmailAndPassword(name: string, email: string, 
       name: user.displayName || name,
       email: user.email || email,
       avatarUrl: user.photoURL || null,
-      role: "cashier",
-      branchId: null,
+      role: "cashier", // Default role for new registrations
+      branchId: null, // Default no branch assigned
     };
     await createUserDocument(user.uid, additionalData);
     const userData = await getUserDocument(user.uid);
@@ -59,12 +62,76 @@ export async function signOutUser(): Promise<void | { error: string }> {
 export function onAuthStateChanged(callback: (user: FirebaseUser | null, userData: UserData | null) => void) {
   return onFirebaseAuthStateChanged(auth, async (user) => {
     if (user) {
-      const userData = await getUserDocument(user.uid);
-      callback(user, userData);
+      await user.reload().catch(err => console.warn("Error reloading user in onAuthStateChanged:", err)); // Ensure latest profile data
+      const freshUser = auth.currentUser; // Get the potentially reloaded user
+      const userData = freshUser ? await getUserDocument(freshUser.uid) : null;
+      callback(freshUser, userData);
     } else {
       callback(null, null);
     }
   });
 }
 
+export async function updateUserProfileData(updates: { name?: string; avatarUrl?: string }): Promise<{ success?: boolean; error?: string }> {
+  const user = auth.currentUser;
+  if (!user) {
+    return { error: "Pengguna tidak ditemukan. Silakan login kembali." };
+  }
+
+  const profileUpdates: { displayName?: string; photoURL?: string } = {};
+  if (updates.name !== undefined && updates.name !== user.displayName) {
+    profileUpdates.displayName = updates.name;
+  }
+  if (updates.avatarUrl !== undefined && updates.avatarUrl !== user.photoURL) {
+     // Allow empty string to clear avatar, null if it's truly null
+    profileUpdates.photoURL = updates.avatarUrl === "" ? null : updates.avatarUrl;
+  }
+
+  try {
+    if (Object.keys(profileUpdates).length > 0) {
+      await updateProfile(user, profileUpdates);
+    }
+
+    const firestoreUpdates: { name?: string; avatarUrl?: string } = {};
+    if (updates.name !== undefined) firestoreUpdates.name = updates.name;
+    if (updates.avatarUrl !== undefined) firestoreUpdates.avatarUrl = updates.avatarUrl;
     
+    if (Object.keys(firestoreUpdates).length > 0) {
+        const firestoreResult = await updateUserAccountDetails(user.uid, firestoreUpdates);
+        if (firestoreResult && firestoreResult.error) {
+            console.warn("Firebase Auth profile updated, but Firestore update failed:", firestoreResult.error);
+        }
+    }
+    await user.reload(); // Crucial to get updated currentUser properties
+    // The onAuthStateChanged listener in AuthContext should pick this up and update userData.
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("Error updating user profile:", error);
+    return { error: error.message || "Gagal memperbarui profil." };
+  }
+}
+
+export async function changeUserPassword(currentPasswordVal: string, newPasswordVal: string): Promise<{ success?: boolean; error?: string; errorCode?: string }> {
+  const user = auth.currentUser;
+  if (!user || !user.email) {
+    return { error: "Pengguna tidak ditemukan atau email tidak tersedia. Silakan login kembali." };
+  }
+
+  const credential = EmailAuthProvider.credential(user.email, currentPasswordVal);
+
+  try {
+    await reauthenticateWithCredential(user, credential);
+    await updatePassword(user, newPasswordVal);
+    return { success: true };
+  } catch (error: any) {
+    console.error("Error changing password:", error);
+    if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential' || error.code === 'auth/user-mismatch') {
+        return { error: "Password saat ini salah.", errorCode: error.code };
+    }
+     if (error.code === 'auth/weak-password') {
+        return { error: "Password baru terlalu lemah. Minimal 6 karakter.", errorCode: error.code };
+    }
+    return { error: error.message || "Gagal mengganti password.", errorCode: error.code };
+  }
+}

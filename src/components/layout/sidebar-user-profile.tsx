@@ -2,6 +2,7 @@
 "use client";
 
 import React from "react"; 
+import Link from "next/link"; // Added Link
 import { useBranch } from "@/contexts/branch-context";
 import { useAuth } from "@/contexts/auth-context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -17,23 +18,25 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { User, Settings, LogOut, ChevronsUpDown } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 export default function SidebarUserProfile() {
-  const { branches, selectedBranch, setSelectedBranch, loadingBranches } = useBranch(); // Added loadingBranches
+  const { branches, selectedBranch, setSelectedBranch, loadingBranches } = useBranch();
   const { currentUser, userData, signOut, loadingAuth, loadingUserData } = useAuth();
 
   const handleLogout = async () => {
     await signOut();
   };
 
-  const isLoading = loadingAuth || loadingUserData || loadingBranches; // Include loadingBranches
+  const isLoading = loadingAuth || loadingUserData || loadingBranches;
 
   const userDisplayName = userData?.name || currentUser?.displayName || "Pengguna";
-  const userDisplayEmail = userData?.email || currentUser?.email || "email@contoh.com";
-  const userAvatar = userData?.avatarUrl || currentUser?.photoURL || "https://placehold.co/40x40.png";
+  const userDisplayRole = userData?.role ? userData.role.charAt(0).toUpperCase() + userData.role.slice(1) : (isLoading ? "" : "N/A");
+  const userAvatar = userData?.avatarUrl || currentUser?.photoURL || `https://placehold.co/40x40.png?text=${userDisplayName?.substring(0,1) || 'BW'}`;
+
 
   const assignedBranchName = React.useMemo(() => {
-    if (isLoading || !userData || loadingBranches) return null; // Check loadingBranches
+    if (isLoading || !userData || loadingBranches) return null;
     if (userData.role === 'admin') return null; 
     if (!userData.branchId) return "Belum ada cabang";
     const foundBranch = branches.find(b => b.id === userData.branchId);
@@ -52,7 +55,7 @@ export default function SidebarUserProfile() {
             onValueChange={(branchId) => {
               const branch = branches.find(b => b.id === branchId);
               if (branch) setSelectedBranch(branch);
-              else if (branchId === "") setSelectedBranch(null); // Allow deselecting or handle "all branches"
+              else if (branchId === "") setSelectedBranch(null); 
             }}
             disabled={loadingBranches || (!selectedBranch && branches.length === 0)}
           >
@@ -60,8 +63,6 @@ export default function SidebarUserProfile() {
               <SelectValue placeholder={loadingBranches ? "Memuat cabang..." : "Pilih Cabang"} />
             </SelectTrigger>
             <SelectContent>
-              {/* Optional: Add an item for "All Branches" or "No specific branch" if needed for admin view */}
-              {/* <SelectItem value="" className="text-xs">Semua Cabang (Tampilan Global)</SelectItem> */}
               {branches.map(branch => (
                 <SelectItem key={branch.id} value={branch.id} className="text-xs">
                   {branch.name}
@@ -86,15 +87,15 @@ export default function SidebarUserProfile() {
                   {userDisplayName?.substring(0, 2).toUpperCase() || "BW"}
                 </AvatarFallback>
               </Avatar>
-              {isLoading ? ( // Combined loading state
+              {isLoading ? ( 
                 <div className="flex-grow space-y-1">
                   <Skeleton className="h-3 w-24" />
-                  <Skeleton className="h-3 w-32" />
+                  <Skeleton className="h-3 w-16" />
                 </div>
               ) : (
                 <div className="flex-grow">
                   <p className="text-xs font-medium text-sidebar-foreground leading-tight truncate">{userDisplayName}</p>
-                  <p className="text-xs text-sidebar-foreground/70 leading-tight truncate">{userDisplayEmail}</p>
+                  <p className="text-xs text-sidebar-foreground/70 leading-tight truncate">{userDisplayRole}</p>
                 </div>
               )}
               <ChevronsUpDown className="h-4 w-4 text-sidebar-foreground/50 ml-auto shrink-0" />
@@ -105,17 +106,19 @@ export default function SidebarUserProfile() {
           <DropdownMenuLabel className="font-normal">
             <div className="flex flex-col space-y-1">
               <p className="text-xs font-medium leading-none text-foreground">{userDisplayName}</p>
-              <p className="text-xs leading-none text-muted-foreground">{userDisplayEmail}</p>
+              <p className="text-xs leading-none text-muted-foreground">{userData?.email || currentUser?.email}</p>
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem className="text-xs cursor-pointer">
-            <User className="mr-2 h-3.5 w-3.5" />
-            <span>Akun Saya</span>
+          <DropdownMenuItem className="text-xs cursor-pointer" asChild>
+            <Link href="/account">
+              <User className="mr-2 h-3.5 w-3.5" />
+              <span>Akun Saya</span>
+            </Link>
           </DropdownMenuItem>
-          <DropdownMenuItem className="text-xs cursor-pointer">
+          <DropdownMenuItem className="text-xs cursor-pointer" disabled>
             <Settings className="mr-2 h-3.5 w-3.5" />
-            <span>Pengaturan</span>
+            <span>Pengaturan (Segera)</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
