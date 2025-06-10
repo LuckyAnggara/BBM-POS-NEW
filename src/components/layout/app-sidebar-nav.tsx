@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import React, { useState, useEffect, useCallback } from "react"; // Added useState, useEffect, useCallback
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -21,9 +22,10 @@ import {
   ListChecks,
   Database,
   Landmark, 
-  Bell, // Added Bell icon
-  Send, // Added Send icon
-  History as HistoryIconLucide, // Renamed for clarity
+  Bell,
+  BellDot, // Added BellDot
+  Send,
+  History as HistoryIconLucide,
 } from "lucide-react";
 import {
   SidebarMenu,
@@ -32,14 +34,16 @@ import {
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
-  SidebarMenuSkeleton
+  SidebarMenuSkeleton,
+  SidebarMenuBadge // Added SidebarMenuBadge
 } from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
 import SidebarHeaderBrand from "./sidebar-header-brand";
 import { useAuth } from "@/contexts/auth-context";
+import { getUnreadNotificationCount } from "@/lib/firebase/notifications"; // Added import
 
 
-const navItems = [
+const navItemsConfig = (unreadCount: number) => [ // Made it a function
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
   { href: "/pos", label: "Point of Sale", icon: ShoppingCart, adminOnly: false },
   { href: "/inventory", label: "Inventaris", icon: Archive, adminOnly: false },
@@ -66,11 +70,11 @@ const navItems = [
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
   { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
   {
-    label: "Notifikasi", // New general notification item
-    icon: Bell,
+    label: "Notifikasi", 
+    icon: unreadCount > 0 ? BellDot : Bell, // Dynamic icon
     adminOnly: false,
     subItems: [
-      { href: "/notifications", label: "Lihat Notifikasi", icon: Bell, exactMatch: true },
+      { href: "/notifications", label: "Lihat Notifikasi", icon: unreadCount > 0 ? BellDot : Bell, exactMatch: true, badgeCount: unreadCount > 0 ? unreadCount : undefined },
     ]
   },
   {
@@ -85,8 +89,8 @@ const navItems = [
     ]
   },
   {
-    label: "Admin Notifikasi", // New admin-only notification group
-    icon: Send, // Using Send for "Admin Notifikasi" parent
+    label: "Admin Notifikasi", 
+    icon: Send,
     adminOnly: true,
     subItems: [
       { href: "/admin/send-notification", label: "Kirim Notifikasi", icon: Send },
@@ -98,7 +102,33 @@ const navItems = [
 
 export default function AppSidebarNav() {
   const pathname = usePathname();
-  const { userData, loadingAuth, loadingUserData } = useAuth();
+  const { currentUser, userData, loadingAuth, loadingUserData } = useAuth();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const fetchUnreadCount = useCallback(async () => {
+    if (currentUser?.uid) {
+      const count = await getUnreadNotificationCount(currentUser.uid);
+      setUnreadCount(count);
+    }
+  }, [currentUser?.uid]);
+
+  useEffect(() => {
+    fetchUnreadCount();
+    // Optional: Set up an interval or a more sophisticated real-time listener
+    // if immediate badge updates are critical without page navigation.
+    const intervalId = setInterval(fetchUnreadCount, 60000); // Refresh count every 60 seconds
+    return () => clearInterval(intervalId);
+  }, [fetchUnreadCount]);
+
+  // Re-fetch when pathname changes (user navigates to notifications page, reads them, then comes back)
+  useEffect(() => {
+    if (pathname.includes('/notifications')) {
+      // Delay slightly to allow Firestore updates from notifications page to propagate
+      setTimeout(fetchUnreadCount, 1500);
+    }
+  }, [pathname, fetchUnreadCount]);
+
+  const navItems = navItemsConfig(unreadCount); // Generate navItems with current unreadCount
 
   return (
     <nav className="flex flex-col h-full">
@@ -126,7 +156,7 @@ export default function AppSidebarNav() {
                                       userData?.role === 'cashier' &&
                                       userData?.branchId === null &&
                                       item.href !== '/dashboard' &&
-                                      item.label !== 'Notifikasi' && // Allow notifications page
+                                      item.label !== 'Notifikasi' && 
                                       !item.subItems?.some(sub => sub.href === '/dashboard' || sub.href === '/notifications');
 
               if (item.subItems) {
@@ -148,6 +178,11 @@ export default function AppSidebarNav() {
                       >
                         <item.icon className="mr-2.5 h-4.5 w-4.5" />
                         <span className="truncate">{item.label}</span>
+                         {item.subItems.some(sub => sub.badgeCount && sub.badgeCount > 0) && (
+                           <SidebarMenuBadge className="ml-auto">
+                            {item.subItems.find(sub => sub.badgeCount && sub.badgeCount > 0)?.badgeCount}
+                           </SidebarMenuBadge>
+                         )}
                     </SidebarMenuButton>
                     <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
                       {item.subItems.map(subItem => (
@@ -158,7 +193,11 @@ export default function AppSidebarNav() {
                                 aria-disabled={isNavItemDisabled}
                                 className={cn(isNavItemDisabled && "cursor-not-allowed")}
                             >
+                              <subItem.icon className="mr-2 h-3.5 w-3.5 text-muted-foreground data-[active=true]:text-primary" />
                               <span>{subItem.label}</span>
+                              {subItem.badgeCount && subItem.badgeCount > 0 && (
+                                <SidebarMenuBadge className="ml-auto">{subItem.badgeCount}</SidebarMenuBadge>
+                              )}
                             </SidebarMenuSubButton>
                           </Link>
                         </SidebarMenuSubItem>

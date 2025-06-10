@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Send } from "lucide-react";
+import { Send, Link as LinkIcon } from "lucide-react";
 import { useForm, Controller, type SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -21,8 +21,9 @@ import { useRouter } from "next/navigation";
 
 const notificationFormSchema = z.object({
   title: z.string().min(5, { message: "Judul minimal 5 karakter." }).max(100, { message: "Judul maksimal 100 karakter."}),
-  message: z.string().min(10, { message: "Pesan minimal 10 karakter." }).max(500, { message: "Pesan maksimal 500 karakter."}),
+  message: z.string().min(10, { message: "Pesan minimal 10 karakter." }).max(1000, { message: "Pesan maksimal 1000 karakter."}), // Increased max length for message
   category: z.enum(NOTIFICATION_CATEGORIES, { required_error: "Kategori harus dipilih." }),
+  linkUrl: z.string().url({ message: "URL Link tidak valid. Contoh: https://domain.com/path" }).optional().or(z.literal('')),
 });
 
 type NotificationFormValues = z.infer<typeof notificationFormSchema>;
@@ -38,7 +39,8 @@ export default function SendNotificationPage() {
     defaultValues: {
       title: "",
       message: "",
-      category: undefined, // Atau set default category pertama jika ada
+      category: undefined,
+      linkUrl: "",
     },
   });
 
@@ -55,7 +57,8 @@ export default function SendNotificationPage() {
       category: values.category,
       createdByUid: currentUser.uid,
       createdByName: userData.name || "Admin",
-      isGlobal: true, // Semua notifikasi bersifat global untuk saat ini
+      isGlobal: true, 
+      linkUrl: values.linkUrl || undefined,
     };
 
     const result = await sendNotification(notificationData);
@@ -65,7 +68,7 @@ export default function SendNotificationPage() {
     } else {
       toast({ title: "Notifikasi Terkirim", description: `Notifikasi "${values.title}" berhasil dikirim.` });
       notificationForm.reset();
-      router.push("/admin/notification-history"); // Arahkan ke riwayat setelah mengirim
+      router.push("/admin/notification-history"); 
     }
     setIsSending(false);
   };
@@ -143,6 +146,21 @@ export default function SendNotificationPage() {
                     disabled={isSending}
                   />
                   {notificationForm.formState.errors.message && <p className="text-xs text-destructive mt-1">{notificationForm.formState.errors.message.message}</p>}
+                </div>
+
+                <div>
+                  <Label htmlFor="linkUrl" className="text-xs">URL Link Terkait (Opsional)</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <LinkIcon className="h-4 w-4 text-muted-foreground" />
+                    <Input 
+                      id="linkUrl" 
+                      {...notificationForm.register("linkUrl")} 
+                      className="h-9 text-sm" 
+                      placeholder="https://contoh.com/info-penting"
+                      disabled={isSending}
+                    />
+                  </div>
+                  {notificationForm.formState.errors.linkUrl && <p className="text-xs text-destructive mt-1">{notificationForm.formState.errors.linkUrl.message}</p>}
                 </div>
                 
                 <Button type="submit" className="text-sm h-9" disabled={isSending || !notificationForm.formState.isValid}>

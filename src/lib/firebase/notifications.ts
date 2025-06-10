@@ -11,9 +11,10 @@ import {
   orderBy,
   limit,
   where,
+  writeBatch,
+  getDoc,
 } from "firebase/firestore";
 import { db } from "./config";
-import type { UserData } from "@/contexts/auth-context"; // Untuk createdBy
 
 export const NOTIFICATION_CATEGORIES = [
   "Pembaruan Sistem",
@@ -32,14 +33,21 @@ export interface AppNotificationInput {
   createdByUid: string;
   createdByName: string; // Nama admin yang mengirim
   isGlobal: boolean; // Untuk saat ini selalu true
+  linkUrl?: string; // URL opsional
   targetBranchId?: string | null; // Untuk masa depan jika ingin target per cabang
 }
 
 export interface AppNotification extends AppNotificationInput {
   id: string;
   createdAt: Timestamp;
-  isRead?: boolean; // Untuk pengembangan fitur "tandai sudah dibaca" di masa depan
+  isRead?: boolean; // Akan di-populate di client-side
 }
+
+// Interface untuk status baca pengguna
+export interface UserNotificationReadStatus {
+  readAt: Timestamp;
+}
+
 
 export async function sendNotification(
   notificationData: AppNotificationInput
@@ -52,13 +60,17 @@ export async function sendNotification(
     return { error: "Kategori notifikasi harus dipilih." };
   if (!notificationData.createdByUid || !notificationData.createdByName)
     return { error: "Informasi pengirim tidak lengkap." };
+  if (notificationData.linkUrl && !notificationData.linkUrl.startsWith('http')) {
+    return { error: "URL Link tidak valid. Harus dimulai dengan http atau https." };
+  }
 
   try {
     const now = serverTimestamp() as Timestamp;
     const dataToSave = {
       ...notificationData,
-      isGlobal: true, // Selalu global untuk saat ini
-      targetBranchId: null, // Selalu null untuk saat ini
+      linkUrl: notificationData.linkUrl || null, // Simpan null jika kosong
+      isGlobal: true,
+      targetBranchId: null,
       createdAt: now,
     };
     const notificationRef = await addDoc(
@@ -79,7 +91,7 @@ export async function sendNotification(
 
 export async function getNotifications(options?: {
   limitResults?: number;
-  startAfterDocId?: string; // Untuk pagination masa depan
+  userId?: string; // Untuk mengambil status 'isRead'
 }): Promise<AppNotification[]> {
   try {
     const qConstraints: any[] = [orderBy("createdAt", "desc")];
@@ -87,15 +99,25 @@ export async function getNotifications(options?: {
     if (options?.limitResults) {
       qConstraints.push(limit(options.limitResults));
     }
-    //  Implement startAfter for pagination if needed later
 
     const q = query(collection(db, "notifications"), ...qConstraints);
     const querySnapshot = await getDocs(q);
     const notifications: AppNotification[] = [];
+
+    let userReadStatuses: Record<string, boolean> = {};
+    if (options?.userId) {
+      const userReadStatusCollectionRef = collection(db, `userNotificationStatus/${options.userId}/notificationsRead`);
+      const userReadStatusSnapshot = await getDocs(userReadStatusCollectionRef);
+      userReadStatusSnapshot.forEach(docSnap => {
+        userReadStatuses[docSnap.id] = true;
+      });
+    }
+
     querySnapshot.forEach((docSnap) => {
       notifications.push({
         id: docSnap.id,
         ...docSnap.data(),
+        isRead: options?.userId ? !!userReadStatuses[docSnap.id] : undefined,
       } as AppNotification);
     });
     return notifications;
@@ -105,11 +127,70 @@ export async function getNotifications(options?: {
   }
 }
 
-// Fungsi untuk menandai notifikasi sebagai sudah dibaca (untuk pengembangan masa depan)
-// export async function markNotificationAsRead(userId: string, notificationId: string): Promise<void | { error: string }> {
-//   // Ini memerlukan struktur data yang berbeda, misal subkoleksi 'readBy' di setiap notifikasi
-//   // atau daftar notifikasi yang sudah dibaca per pengguna.
-//   // Untuk saat ini, fungsi ini hanya sebagai placeholder.
-//   console.log(`User ${userId} marked notification ${notificationId} as read (placeholder).`);
-//   return;
-// }
+
+export async function markNotificationAsRead(userId: string, notificationId: string): Promise<void | { error: string }> {
+  if (!userId || !notificationId) return { error: "User ID dan Notification ID diperlukan." };
+  try {
+    const readStatusRef = doc(db, `userNotificationStatus/${userId}/notificationsRead`, notificationId);
+    await setDoc(readStatusRef, { readAt: serverTimestamp() });
+  } catch (error: any) {
+    console.error("Error marking notification as read:", error);
+    return { error: error.message || "Gagal menandai notifikasi sebagai sudah dibaca." };
+  }
+}
+
+export async function markAllNotificationsAsRead(userId: string, notificationIds: string[]): Promise<void | { error: string }> {
+  if (!userId || !notificationIds || notificationIds.length === 0) {
+    return { error: "User ID dan daftar ID notifikasi diperlukan." };
+  }
+  const batch = writeBatch(db);
+  try {
+    notificationIds.forEach(notificationId => {
+      const readStatusRef = doc(db, `userNotificationStatus/${userId}/notificationsRead`, notificationId);
+      batch.set(readStatusRef, { readAt: serverTimestamp() });
+    });
+    await batch.commit();
+  } catch (error: any) {
+    console.error("Error marking all notifications as read:", error);
+    return { error: error.message || "Gagal menandai semua notifikasi sebagai sudah dibaca." };
+  }
+}
+
+export async function getUnreadNotificationCount(userId: string): Promise<number> {
+  if (!userId) return 0;
+  try {
+    // 1. Get all global notifications
+    const allNotificationsQuery = query(collection(db, "notifications"), where("isGlobal", "==", true));
+    const allNotificationsSnapshot = await getDocs(allNotificationsQuery);
+    const totalGlobalNotifications = allNotificationsSnapshot.size;
+
+    if (totalGlobalNotifications === 0) return 0;
+
+    // 2. Get all read notifications for the user
+    const userReadStatusCollectionRef = collection(db, `userNotificationStatus/${userId}/notificationsRead`);
+    // We can potentially optimize this by only fetching IDs if that's supported, but for now getDocs is fine.
+    const userReadStatusSnapshot = await getDocs(userReadStatusCollectionRef);
+    const totalReadByUser = userReadStatusSnapshot.size;
+    
+    // 3. Calculate unread count. This assumes all notifications are global for now.
+    // A more complex scenario would involve checking if each specific notification ID
+    // exists in the user's read statuses.
+    // For now, a simple count difference might be sufficient if all notifications are global.
+    // However, to be accurate, we should count notifications that are NOT in the user's read list.
+
+    const allNotificationIds = allNotificationsSnapshot.docs.map(doc => doc.id);
+    const readNotificationIds = new Set(userReadStatusSnapshot.docs.map(doc => doc.id));
+    
+    let unreadCount = 0;
+    for (const notificationId of allNotificationIds) {
+      if (!readNotificationIds.has(notificationId)) {
+        unreadCount++;
+      }
+    }
+    return unreadCount;
+
+  } catch (error) {
+    console.error("Error fetching unread notification count:", error);
+    return 0; 
+  }
+}

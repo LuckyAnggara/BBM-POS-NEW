@@ -6,28 +6,74 @@ import MainLayout from "@/components/layout/main-layout";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getNotifications, type AppNotification } from "@/lib/firebase/notifications";
+import { Button } from "@/components/ui/button";
+import { 
+  getNotifications, 
+  markNotificationAsRead, 
+  markAllNotificationsAsRead, 
+  type AppNotification 
+} from "@/lib/firebase/notifications";
+import { useAuth } from "@/contexts/auth-context";
 import { format } from "date-fns";
 import { id as localeID } from 'date-fns/locale';
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { BellRing, Info } from "lucide-react";
+import { BellRing, Info, CheckCheck, ExternalLink } from "lucide-react";
+import { cn } from "@/lib/utils";
+import Link from "next/link";
+import { useToast } from "@/hooks/use-toast";
 
 export default function NotificationsPage() {
+  const { currentUser, userData } = useAuth();
+  const { toast } = useToast();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchUserNotifications = useCallback(async () => {
+    if (!currentUser?.uid) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    // Untuk saat ini, semua pengguna mendapatkan notifikasi global
-    const fetchedNotifications = await getNotifications({ limitResults: 50 }); // Batasi jumlah notifikasi awal
+    const fetchedNotifications = await getNotifications({ 
+      limitResults: 50, 
+      userId: currentUser.uid 
+    });
     setNotifications(fetchedNotifications);
     setLoading(false);
-  }, []);
+  }, [currentUser?.uid]);
 
   useEffect(() => {
     fetchUserNotifications();
   }, [fetchUserNotifications]);
+
+  const handleMarkAsRead = async (notificationId: string) => {
+    if (!currentUser?.uid || !notificationId) return;
+    
+    const notification = notifications.find(n => n.id === notificationId);
+    if (notification && notification.isRead) return; // Already read
+
+    await markNotificationAsRead(currentUser.uid, notificationId);
+    setNotifications(prev => 
+      prev.map(n => n.id === notificationId ? { ...n, isRead: true } : n)
+    );
+    // No toast needed for individual read marking, maybe for "mark all"
+  };
+
+  const handleMarkAllRead = async () => {
+    if (!currentUser?.uid || notifications.length === 0) return;
+    const unreadNotificationIds = notifications.filter(n => !n.isRead).map(n => n.id);
+    if (unreadNotificationIds.length === 0) {
+      toast({ title: "Tidak Ada Notifikasi Baru", description: "Semua notifikasi sudah terbaca."});
+      return;
+    }
+
+    setLoading(true); // Indicate processing
+    await markAllNotificationsAsRead(currentUser.uid, unreadNotificationIds);
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    setLoading(false);
+    toast({ title: "Notifikasi Ditandai", description: "Semua notifikasi telah ditandai sebagai sudah dibaca."});
+  };
 
   const formatDate = (timestamp: Date | undefined) => {
     if (!timestamp) return "N/A";
@@ -38,11 +84,18 @@ export default function NotificationsPage() {
     <ProtectedRoute>
       <MainLayout>
         <div className="space-y-6">
-          <div className="flex items-center gap-3">
-            <BellRing className="h-7 w-7 text-primary"/>
-            <h1 className="text-xl md:text-2xl font-semibold font-headline">
-              Notifikasi & Pengumuman
-            </h1>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="flex items-center gap-3">
+              <BellRing className="h-7 w-7 text-primary"/>
+              <h1 className="text-xl md:text-2xl font-semibold font-headline">
+                Notifikasi & Pengumuman
+              </h1>
+            </div>
+            {notifications.some(n => !n.isRead) && !loading && (
+              <Button onClick={handleMarkAllRead} size="sm" variant="outline" className="text-xs h-8">
+                <CheckCheck className="mr-1.5 h-4 w-4"/> Tandai Semua Telah Dibaca
+              </Button>
+            )}
           </div>
 
           {loading ? (
@@ -71,17 +124,44 @@ export default function NotificationsPage() {
               </CardContent>
             </Card>
           ) : (
-            <ScrollArea className="h-[calc(100vh-12rem)] pr-3"> {/* Adjust height as needed */}
+            <ScrollArea className="h-[calc(100vh-14rem)] pr-3"> 
               <div className="space-y-3">
                 {notifications.map((notif) => (
-                  <Card key={notif.id} className="shadow-sm hover:shadow-md transition-shadow">
+                  <Card 
+                    key={notif.id} 
+                    className={cn(
+                      "shadow-sm hover:shadow-md transition-shadow cursor-pointer",
+                      !notif.isRead && "bg-primary/5 dark:bg-primary/10 border-primary/30"
+                    )}
+                    onClick={() => {
+                      handleMarkAsRead(notif.id);
+                      if (notif.linkUrl) {
+                        window.open(notif.linkUrl, "_blank", "noopener,noreferrer");
+                      }
+                    }}
+                  >
                     <CardHeader className="pb-2 pt-3 px-4">
                       <div className="flex justify-between items-start gap-2">
-                        <CardTitle className="text-sm font-semibold leading-tight">{notif.title}</CardTitle>
-                        <Badge variant="outline" className="text-xs shrink-0">{notif.category}</Badge>
+                        {notif.linkUrl ? (
+                          <Link 
+                            href={notif.linkUrl} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-sm font-semibold leading-tight hover:underline hover:text-primary group"
+                            onClick={(e) => e.stopPropagation()} // Prevent card click if link is clicked
+                          >
+                            {notif.title}
+                            <ExternalLink className="inline-block h-3.5 w-3.5 ml-1.5 text-muted-foreground group-hover:text-primary transition-colors" />
+                          </Link>
+                        ) : (
+                          <CardTitle className="text-sm font-semibold leading-tight">{notif.title}</CardTitle>
+                        )}
+                        <Badge variant={notif.isRead ? "secondary" : "default"} className="text-xs shrink-0">
+                          {notif.isRead ? "Dibaca" : "Baru"}
+                        </Badge>
                       </div>
                       <CardDescription className="text-xs pt-0.5">
-                        Dikirim oleh: {notif.createdByName} pada {formatDate(notif.createdAt?.toDate())}
+                        Oleh: {notif.createdByName} ({notif.category}) <br/> {formatDate(notif.createdAt?.toDate())}
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="px-4 pb-3">
