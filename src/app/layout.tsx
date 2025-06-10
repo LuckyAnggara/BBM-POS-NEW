@@ -23,9 +23,11 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Inter&display=swap" rel="stylesheet" />
       </head>
       <body className="font-body antialiased">
-        <AuthProvider> {/* Wrap BranchProvider with AuthProvider */}
+        <AuthProvider>
+         {/* Wrap BranchProvider with AuthProvider */}
           <BranchProvider>
-            {children}
+          {children}
+
           </BranchProvider>
         </AuthProvider>
         <Toaster />

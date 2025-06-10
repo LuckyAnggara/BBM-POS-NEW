@@ -255,7 +255,7 @@ export default function DashboardPage() {
     <ProtectedRoute>
       <MainLayout>
         <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 ">
                 <h1 className="text-xl md:text-2xl font-semibold font-headline">
                     Dashboard {selectedBranch ? `- ${selectedBranch.name}` : ''}
                 </h1>

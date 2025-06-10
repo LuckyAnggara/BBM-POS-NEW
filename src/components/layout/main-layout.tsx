@@ -32,18 +32,18 @@ export default function MainLayout({
 
   return (
     <SidebarProvider defaultOpen>
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen ">
         <AppHeader />
         <div className="flex h-screen pt-16">
-          <Sidebar className="bg-card border-r hidden md:flex">
+          <Sidebar className="bg-card border-r hidden md:flex ">
             <AppSidebarNav /> 
           </Sidebar>
           {/* 
             SidebarInset is removed and main content takes full width after sidebar.
             The main content padding and Breadcrumbs are now part of the page itself if needed.
           */}
-          <main className="w-full h-full overflow-y-auto p-4 sm:p-6 lg:p-8">
-            <Breadcrumbs />
+          <main className="w-full h-full overflow-y-auto p-4 sm:p-6 lg:p-8 ">
+          <SidebarTrigger className="h-8 w-8 md:h-7 md:w-7" /> <Breadcrumbs />
             {children}
           </main>
         </div>

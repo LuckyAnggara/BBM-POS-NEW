@@ -38,7 +38,7 @@ type PasswordFormValues = z.infer<typeof passwordFormSchema>;
 
 
 export default function AccountPage() {
-  const { currentUser, userData, loadingAuth, loadingUserData, signOut } = useAuth();
+  const { currentUser, userData, loadingAuth, loadingUserData, signOut, refreshAuthContextState } = useAuth(); // Added refreshAuthContextState
   const { toast } = useToast();
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
@@ -82,7 +82,7 @@ export default function AccountPage() {
     });
     if (result.success) {
       toast({ title: "Profil Diperbarui", description: "Informasi profil Anda berhasil disimpan." });
-      // AuthContext's onAuthStateChanged and user.reload() should refresh userData
+      await refreshAuthContextState(); // Explicitly refresh context data
     } else {
       toast({ title: "Gagal Memperbarui Profil", description: result.error, variant: "destructive" });
     }
@@ -95,7 +95,6 @@ export default function AccountPage() {
     if (result.success) {
       toast({ title: "Password Diubah", description: "Password Anda berhasil diganti. Silakan login kembali." });
       passwordForm.reset();
-      // Optionally sign out user for security
       await signOut(); 
     } else {
       toast({ title: "Gagal Mengubah Password", description: result.error, variant: "destructive" });
