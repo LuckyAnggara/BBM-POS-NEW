@@ -18,9 +18,9 @@ import {
   ClipboardList,
   PackageOpen,
   Users,
-  ListChecks, 
-  Database, 
-  Landmark, // New icon for Accounts Payable
+  ListChecks,
+  Database,
+  Landmark, 
 } from "lucide-react";
 import {
   SidebarMenu,
@@ -28,7 +28,8 @@ import {
   SidebarMenuButton,
   SidebarMenuSub,
   SidebarMenuSubItem,
-  SidebarMenuSubButton
+  SidebarMenuSubButton,
+  SidebarMenuSkeleton // Added Skeleton
 } from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
 import SidebarHeaderBrand from "./sidebar-header-brand";
@@ -52,11 +53,11 @@ const navItems = [
   { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
   {
     label: "Keuangan",
-    icon: Landmark, 
+    icon: Landmark,
     adminOnly: false,
     subItems: [
       { href: "/accounts-receivable", label: "Piutang Usaha", icon: ListChecks },
-      { href: "/accounts-payable", label: "Utang Usaha", icon: Archive }, // Using Archive icon for AP
+      { href: "/accounts-payable", label: "Utang Usaha", icon: Archive }, 
     ]
   },
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
@@ -85,88 +86,101 @@ export default function AppSidebarNav() {
 
       <div className="flex-grow overflow-y-auto p-2 space-y-1 mt-1">
         <SidebarMenu>
-          {navItems.map((item) => {
-            if (item.adminOnly && userData?.role !== 'admin') {
-              return null;
-            }
+          {(loadingAuth || loadingUserData) ? (
+            // Show skeletons if user data is loading
+            <>
+              <SidebarMenuSkeleton showIcon className="my-1" />
+              <SidebarMenuSkeleton showIcon className="my-1" />
+              <SidebarMenuSkeleton showIcon className="my-1" />
+              <SidebarMenuSkeleton showIcon className="my-1" />
+              <SidebarMenuSkeleton showIcon className="my-1" />
+            </>
+          ) : (
+            navItems.map((item) => {
+              // Critical check: Hide admin-only items if user is not admin
+              // This check is now more robust because it waits for userData to be loaded.
+              if (item.adminOnly && userData?.role !== 'admin') {
+                return null;
+              }
 
-            const isNavItemDisabled = !loadingAuth && !loadingUserData &&
-                                     userData?.role === 'cashier' &&
-                                     userData?.branchId === null &&
-                                     item.href !== '/dashboard' &&
-                                     !item.subItems?.some(sub => sub.href === '/dashboard');
+              const isNavItemDisabled = 
+                                      userData?.role === 'cashier' &&
+                                      userData?.branchId === null &&
+                                      item.href !== '/dashboard' && // Allow dashboard
+                                      !item.subItems?.some(sub => sub.href === '/dashboard'); // Allow parent of dashboard
 
-            if (item.subItems) {
+              if (item.subItems) {
+                return (
+                  <SidebarMenuItem key={item.label} className="flex flex-col items-start">
+                    <SidebarMenuButton
+                        variant="default"
+                        size="default"
+                        className={cn(
+                          "w-full justify-start text-sm font-medium",
+                          (item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
+                          isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
+                        )}
+                        isActive={(item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled}
+                        asChild={false}
+                        onClick={(e) => { if(isNavItemDisabled) e.preventDefault(); }}
+                        aria-disabled={isNavItemDisabled}
+                        tabIndex={isNavItemDisabled ? -1 : undefined}
+                      >
+                        <item.icon className="mr-2.5 h-4.5 w-4.5" />
+                        <span className="truncate">{item.label}</span>
+                    </SidebarMenuButton>
+                    <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
+                      {item.subItems.map(subItem => (
+                        <SidebarMenuSubItem key={subItem.href}>
+                          <Link href={isNavItemDisabled ? "#" : subItem.href} passHref legacyBehavior>
+                            <SidebarMenuSubButton
+                                isActive={ (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isNavItemDisabled}
+                                aria-disabled={isNavItemDisabled}
+                                className={cn(isNavItemDisabled && "cursor-not-allowed")}
+                            >
+                              <span>{subItem.label}</span>
+                            </SidebarMenuSubButton>
+                          </Link>
+                        </SidebarMenuSubItem>
+                      ))}
+                    </SidebarMenuSub>
+                  </SidebarMenuItem>
+                );
+              }
+
+              // Regular menu item (no sub-items)
+              if (!item.href) return null; 
+
               return (
-                <SidebarMenuItem key={item.label} className="flex flex-col items-start">
-                   <SidebarMenuButton
+                <SidebarMenuItem key={item.label}>
+                  <Link
+                    href={isNavItemDisabled ? "#" : item.href}
+                    onClick={(e) => {
+                      if (isNavItemDisabled) e.preventDefault();
+                    }}
+                    aria-disabled={isNavItemDisabled}
+                    className={cn(isNavItemDisabled && "pointer-events-none focus:outline-none")}
+                    tabIndex={isNavItemDisabled ? -1 : undefined}
+                  >
+                    <SidebarMenuButton
                       variant="default"
                       size="default"
                       className={cn(
-                        "w-full justify-start text-sm font-medium",
-                         (item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
-                         isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
+                        "w-full justify-start text-sm",
+                        pathname === item.href && !isNavItemDisabled ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-sidebar-accent/50",
+                        isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                       )}
-                      isActive={(item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled}
-                      asChild={false}
-                      onClick={(e) => { if(isNavItemDisabled) e.preventDefault(); }}
-                      aria-disabled={isNavItemDisabled}
-                      tabIndex={isNavItemDisabled ? -1 : undefined}
+                      isActive={!isNavItemDisabled && pathname === item.href}
+                      tooltip={isNavItemDisabled ? undefined : {children: item.label, side: "right", align: "center"}}
                     >
                       <item.icon className="mr-2.5 h-4.5 w-4.5" />
                       <span className="truncate">{item.label}</span>
-                  </SidebarMenuButton>
-                  <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
-                    {item.subItems.map(subItem => (
-                       <SidebarMenuSubItem key={subItem.href}>
-                         <Link href={isNavItemDisabled ? "#" : subItem.href} passHref legacyBehavior>
-                           <SidebarMenuSubButton
-                              isActive={ (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isNavItemDisabled}
-                              aria-disabled={isNavItemDisabled}
-                              className={cn(isNavItemDisabled && "cursor-not-allowed")}
-                           >
-                            <span>{subItem.label}</span>
-                           </SidebarMenuSubButton>
-                         </Link>
-                       </SidebarMenuSubItem>
-                    ))}
-                  </SidebarMenuSub>
+                    </SidebarMenuButton>
+                  </Link>
                 </SidebarMenuItem>
               );
-            }
-
-            // Regular menu item (no sub-items)
-            if (!item.href) return null; // Should not happen for non-group items
-
-            return (
-              <SidebarMenuItem key={item.label}>
-                <Link
-                  href={isNavItemDisabled ? "#" : item.href}
-                  onClick={(e) => {
-                    if (isNavItemDisabled) e.preventDefault();
-                  }}
-                  aria-disabled={isNavItemDisabled}
-                  className={cn(isNavItemDisabled && "pointer-events-none focus:outline-none")}
-                  tabIndex={isNavItemDisabled ? -1 : undefined}
-                >
-                  <SidebarMenuButton
-                    variant="default"
-                    size="default"
-                    className={cn(
-                      "w-full justify-start text-sm",
-                      pathname === item.href && !isNavItemDisabled ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-sidebar-accent/50",
-                      isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
-                    )}
-                    isActive={!isNavItemDisabled && pathname === item.href}
-                    tooltip={isNavItemDisabled ? undefined : {children: item.label, side: "right", align: "center"}}
-                  >
-                    <item.icon className="mr-2.5 h-4.5 w-4.5" />
-                    <span className="truncate">{item.label}</span>
-                  </SidebarMenuButton>
-                </Link>
-              </SidebarMenuItem>
-            );
-          })}
+            })
+          )}
         </SidebarMenu>
       </div>
 
