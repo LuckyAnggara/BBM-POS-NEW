@@ -15,7 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon } from "lucide-react";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon, Percent } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -35,7 +35,7 @@ import {
   endShift,
   recordTransaction,
   getTransactionsForShift,
-  getTransactionById, // Import getTransactionById
+  getTransactionById,
   type PosShift,
   type PosTransaction,
   type TransactionItem,
@@ -115,6 +115,11 @@ export default function POSPage() {
   const [showBankHistoryDialog, setShowBankHistoryDialog] = useState(false);
   const [showShiftCashDetailsDialog, setShowShiftCashDetailsDialog] = useState(false);
   const [showAllShiftTransactionsDialog, setShowAllShiftTransactionsDialog] = useState(false);
+
+  // State for shipping and voucher
+  const [shippingCostInput, setShippingCostInput] = useState("");
+  const [voucherCodeInput, setVoucherCodeInput] = useState("");
+  const [voucherDiscountInput, setVoucherDiscountInput] = useState("");
 
 
   useEffect(() => {
@@ -327,13 +332,34 @@ export default function POSPage() {
       return [...prevItems, {
           productId: product.id,
           productName: product.name,
+          originalPrice: product.price, // Store original price
+          price: product.price, // Price after discount (initially same as original)
+          discountAmount: 0, // Initialize discount amount
           quantity: 1,
-          price: product.price,
           costPrice: product.costPrice || 0,
-          total: product.price
+          total: product.price // Total based on price (which is after discount)
       }];
     });
   };
+  
+  // Placeholder for applying item discount - UI needs to be added
+  const handleApplyItemDiscount = (productId: string, discount: number) => {
+    setCartItems(prevItems =>
+      prevItems.map(item => {
+        if (item.productId === productId && item.originalPrice) {
+          const newPrice = item.originalPrice - discount;
+          return {
+            ...item,
+            price: newPrice > 0 ? newPrice : 0,
+            discountAmount: discount,
+            total: (newPrice > 0 ? newPrice : 0) * item.quantity,
+          };
+        }
+        return item;
+      })
+    );
+  };
+
 
   const handleUpdateCartQuantity = (productId: string, newQuantity: number) => {
     const productInStock = products.find(p => p.id === productId);
@@ -367,9 +393,19 @@ export default function POSPage() {
     setCartItems(prevItems => prevItems.filter(item => item.productId !== productId));
   };
 
-  const subtotal = useMemo(() => cartItems.reduce((sum, item) => sum + item.total, 0), [cartItems]);
-  const tax = useMemo(() => subtotal * taxRate, [subtotal, taxRate]);
-  const total = useMemo(() => subtotal + tax, [subtotal, taxRate]);
+  const totalItemDiscount = useMemo(() => cartItems.reduce((sum, item) => sum + (item.discountAmount || 0) * item.quantity, 0), [cartItems]);
+  const subtotalAfterItemDiscounts = useMemo(() => cartItems.reduce((sum, item) => sum + item.total, 0), [cartItems]);
+  const tax = useMemo(() => subtotalAfterItemDiscounts * taxRate, [subtotalAfterItemDiscounts, taxRate]);
+  
+  const shippingCost = parseFloat(shippingCostInput) || 0;
+  const voucherDiscount = parseFloat(voucherDiscountInput) || 0;
+  
+  const totalDiscountAmount = useMemo(() => totalItemDiscount + voucherDiscount, [totalItemDiscount, voucherDiscount]);
+  
+  const total = useMemo(() => {
+    return subtotalAfterItemDiscounts + tax + shippingCost - voucherDiscount;
+  }, [subtotalAfterItemDiscounts, tax, shippingCost, voucherDiscount]);
+  
   const totalCost = useMemo(() => cartItems.reduce((sum, item) => sum + (item.quantity * (item.costPrice || 0)), 0), [cartItems]);
 
 
@@ -396,13 +432,13 @@ export default function POSPage() {
       toast({ title: "Kesalahan", description: "Shift, cabang, atau pengguna tidak aktif.", variant: "destructive" });
       return;
     }
-    const amountPaid = parseFloat(cashAmountPaidInput);
-    if (isNaN(amountPaid) || amountPaid < total) {
+    const amountPaidNum = parseFloat(cashAmountPaidInput);
+    if (isNaN(amountPaidNum) || amountPaidNum < total) {
       toast({ title: "Pembayaran Tidak Cukup", description: "Jumlah yang dibayar kurang dari total belanja.", variant: "destructive" });
       return;
     }
 
-    const change = amountPaid - total;
+    const change = amountPaidNum - total;
     setIsProcessingSale(true);
 
     const transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp'> = {
@@ -410,12 +446,16 @@ export default function POSPage() {
       branchId: selectedBranch.id,
       userId: currentUser.uid,
       items: cartItems,
-      subtotal,
+      subtotal: subtotalAfterItemDiscounts,
       taxAmount: tax,
+      shippingCost: shippingCost,
+      voucherCode: voucherCodeInput || undefined,
+      voucherDiscountAmount: voucherDiscount,
+      totalDiscountAmount: totalDiscountAmount,
       totalAmount: total,
       totalCost: totalCost,
       paymentTerms: 'cash',
-      amountPaid: amountPaid,
+      amountPaid: amountPaidNum,
       changeGiven: change,
       customerName: customerNameInputCash.trim() || undefined,
       status: 'completed',
@@ -434,6 +474,9 @@ export default function POSPage() {
       setShowPrintInvoiceDialog(true);
       setCartItems([]);
       setSelectedPaymentTerms('cash');
+      setShippingCostInput("");
+      setVoucherCodeInput("");
+      setVoucherDiscountInput("");
       setCashAmountPaidInput("");
       setCustomerNameInputCash("");
       setCalculatedChange(null);
@@ -461,8 +504,12 @@ export default function POSPage() {
       branchId: selectedBranch.id,
       userId: currentUser.uid,
       items: cartItems,
-      subtotal,
+      subtotal: subtotalAfterItemDiscounts,
       taxAmount: tax,
+      shippingCost: shippingCost,
+      voucherCode: voucherCodeInput || undefined,
+      voucherDiscountAmount: voucherDiscount,
+      totalDiscountAmount: totalDiscountAmount,
       totalAmount: total,
       totalCost: totalCost,
       paymentTerms: 'transfer',
@@ -487,6 +534,9 @@ export default function POSPage() {
       setShowPrintInvoiceDialog(true);
       setCartItems([]);
       setSelectedPaymentTerms('cash');
+      setShippingCostInput("");
+      setVoucherCodeInput("");
+      setVoucherDiscountInput("");
       setSelectedBankName("");
       setBankRefNumberInput("");
       setCustomerNameInputBank("");
@@ -538,8 +588,12 @@ export default function POSPage() {
       branchId: selectedBranch.id,
       userId: currentUser.uid,
       items: cartItems,
-      subtotal,
+      subtotal: subtotalAfterItemDiscounts,
       taxAmount: tax,
+      shippingCost: shippingCost,
+      voucherCode: voucherCodeInput || undefined,
+      voucherDiscountAmount: voucherDiscount,
+      totalDiscountAmount: totalDiscountAmount,
       totalAmount: total,
       totalCost: totalCost,
       paymentTerms: selectedPaymentTerms,
@@ -565,6 +619,9 @@ export default function POSPage() {
       setShowPrintInvoiceDialog(true);
       setCartItems([]);
       setSelectedPaymentTerms('cash');
+      setShippingCostInput("");
+      setVoucherCodeInput("");
+      setVoucherDiscountInput("");
       setSelectedCustomerId(undefined);
       setCreditDueDate(undefined);
       setCustomerSearchTerm("");
@@ -602,16 +659,22 @@ export default function POSPage() {
           items: transactionDetails.items.map(item => ({
             name: item.productName,
             quantity: item.quantity,
-            price: item.price,
+            originalPrice: item.originalPrice,
+            price: item.price, // Price after discount
+            discountAmount: item.discountAmount,
             total: item.total,
           })),
-          subtotal: transactionDetails.subtotal,
+          subtotal: transactionDetails.subtotal, // Subtotal after item discounts
           taxAmount: transactionDetails.taxAmount,
-          totalAmount: transactionDetails.totalAmount,
+          shippingCost: transactionDetails.shippingCost || 0,
+          totalItemDiscount: transactionDetails.items.reduce((sum, item) => sum + (item.discountAmount || 0) * item.quantity, 0),
+          voucherDiscount: transactionDetails.voucherDiscountAmount || 0,
+          overallTotalDiscount: transactionDetails.totalDiscountAmount || 0,
+          totalAmount: transactionDetails.totalAmount, // Grand total
           paymentMethod: transactionDetails.paymentTerms.charAt(0).toUpperCase() + transactionDetails.paymentTerms.slice(1),
           amountPaid: transactionDetails.amountPaid,
           changeGiven: transactionDetails.changeGiven,
-          notes: "", // Add notes to transaction object if needed
+          notes: "", 
         };
 
         const response = await fetch(userData.localPrinterUrl, {
@@ -625,7 +688,6 @@ export default function POSPage() {
         } else {
           const errorData = await response.text();
           toast({ title: "Gagal Kirim ke Printer", description: `Printer lokal merespons dengan kesalahan: ${response.status} - ${errorData || response.statusText}`, variant: "destructive", duration: 7000 });
-           // Fallback to web invoice if local print fails
           window.open(`/invoice/${lastTransactionId}/view`, '_blank');
         }
       } catch (error: any) {
@@ -810,8 +872,31 @@ export default function POSPage() {
                     {cartItems.length === 0 && (<TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8 text-xs"><ShoppingCart className="mx-auto h-8 w-8 text-muted-foreground/50 mb-2" />Keranjang kosong</TableCell></TableRow>)}
                   </TableBody></Table></CardContent>
               <CardFooter className="flex flex-col gap-1.5 border-t p-3">
-                <div className="flex justify-between text-xs w-full"><span>Subtotal:</span><span>{currencySymbol}{subtotal.toLocaleString('id-ID')}</span></div>
+                <div className="flex justify-between text-xs w-full"><span>Subtotal (Stlh Diskon Item):</span><span>{currencySymbol}{subtotalAfterItemDiscounts.toLocaleString('id-ID')}</span></div>
                 <div className="flex justify-between text-xs w-full"><span>Pajak ({selectedBranch?.taxRate || (taxRate*100).toFixed(0)}%):</span><span>{currencySymbol}{tax.toLocaleString('id-ID')}</span></div>
+                
+                <div className="grid grid-cols-2 gap-x-3 w-full mt-1">
+                    <div>
+                        <Label htmlFor="shippingCostInput" className="text-[0.7rem]">Ongkos Kirim ({currencySymbol})</Label>
+                        <Input id="shippingCostInput" type="number" value={shippingCostInput} onChange={(e) => setShippingCostInput(e.target.value)} placeholder="0" className="h-8 text-xs mt-0.5"/>
+                    </div>
+                    <div>
+                        <Label htmlFor="voucherCodeInput" className="text-[0.7rem]">Kode Voucher</Label>
+                        <Input id="voucherCodeInput" type="text" value={voucherCodeInput} onChange={(e) => setVoucherCodeInput(e.target.value)} placeholder="Opsional" className="h-8 text-xs mt-0.5"/>
+                    </div>
+                </div>
+                 <div>
+                    <Label htmlFor="voucherDiscountInput" className="text-[0.7rem]">Diskon Voucher ({currencySymbol})</Label>
+                    <Input id="voucherDiscountInput" type="number" value={voucherDiscountInput} onChange={(e) => setVoucherDiscountInput(e.target.value)} placeholder="0" className="h-8 text-xs mt-0.5 w-1/2"/>
+                </div>
+
+                {totalDiscountAmount > 0 && (
+                    <div className="flex justify-between text-xs w-full text-destructive">
+                        <span>Total Diskon Keseluruhan:</span>
+                        <span>-{currencySymbol}{totalDiscountAmount.toLocaleString('id-ID')}</span>
+                    </div>
+                )}
+
                 <div className="flex justify-between text-base font-bold w-full mt-1"><span>Total:</span><span>{currencySymbol}{total.toLocaleString('id-ID')}</span></div>
 
                 <div className="w-full mt-2 pt-2 border-t"><Label className="text-xs font-medium mb-1 block">Termin Pembayaran:</Label>
@@ -1042,3 +1127,5 @@ export default function POSPage() {
     </ProtectedRoute>
   );
 }
+
+    

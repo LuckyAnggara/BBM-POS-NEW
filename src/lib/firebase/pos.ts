@@ -97,9 +97,11 @@ export interface TransactionItem {
   productId: string;
   productName: string;
   quantity: number;
-  price: number;
+  price: number; // Price per unit after item discount
   costPrice: number;
-  total: number;
+  total: number; // quantity * price
+  originalPrice?: number; // Price before item discount
+  discountAmount?: number; // Amount of discount for this item
 }
 
 export interface TransactionPayment {
@@ -117,9 +119,13 @@ export interface PosTransaction {
   userId: string;
   timestamp: Timestamp;
   items: TransactionItem[];
-  subtotal: number;
+  subtotal: number; // Subtotal after item discounts but before overall voucher/shipping
   taxAmount: number;
-  totalAmount: number;
+  shippingCost?: number;
+  voucherCode?: string;
+  voucherDiscountAmount?: number;
+  totalDiscountAmount?: number; // Sum of all item discounts + voucher discount
+  totalAmount: number; // Final amount after all discounts and shipping
   totalCost: number;
   paymentTerms: PaymentTerms;
   customerId?: string;
@@ -159,8 +165,12 @@ export async function recordTransaction(
       branchId: transactionInput.branchId,
       userId: transactionInput.userId,
       items: transactionInput.items,
-      subtotal: transactionInput.subtotal,
+      subtotal: transactionInput.subtotal, // This is now subtotal AFTER item discounts
       taxAmount: transactionInput.taxAmount,
+      shippingCost: transactionInput.shippingCost || 0,
+      voucherCode: transactionInput.voucherCode || undefined,
+      voucherDiscountAmount: transactionInput.voucherDiscountAmount || 0,
+      totalDiscountAmount: transactionInput.totalDiscountAmount || 0,
       totalAmount: transactionInput.totalAmount,
       totalCost: transactionInput.totalCost,
       paymentTerms: transactionInput.paymentTerms,
@@ -168,7 +178,7 @@ export async function recordTransaction(
       changeGiven: transactionInput.changeGiven,
       invoiceNumber,
       status: 'completed',
-      paymentsMade: [],
+      paymentsMade: [], // Initialize for credit sales
       timestamp: serverTimestamp() as Timestamp,
     };
 
@@ -179,8 +189,7 @@ export async function recordTransaction(
         dataToSave.isCreditSale = transactionInput.isCreditSale;
         if (transactionInput.isCreditSale) {
             dataToSave.paymentStatus = 'unpaid';
-            dataToSave.outstandingAmount = transactionInput.totalAmount;
-            dataToSave.paymentsMade = [];
+            dataToSave.outstandingAmount = transactionInput.totalAmount; // For credit, totalAmount IS the outstanding
         } else {
             dataToSave.paymentStatus = 'paid';
             dataToSave.outstandingAmount = 0;
@@ -242,7 +251,7 @@ export async function processFullTransactionReturn(transactionId: string, reason
       returnReason: reason,
       returnedAt: serverTimestamp(),
       returnedByUserId: returnedByUserId,
-      outstandingAmount: 0,
+      outstandingAmount: 0, // Retur dianggap selesai
       paymentStatus: 'returned',
     });
 
@@ -290,7 +299,8 @@ export async function deleteTransaction(transactionId: string, branchId: string,
     }
     const transactionData = transactionSnap.data() as PosTransaction;
 
-    if (transactionData.status !== 'returned') {
+    // Only restore stock if transaction was completed (not already returned)
+    if (transactionData.status === 'completed') {
       for (const item of transactionData.items) {
         const productRef = doc(db, "inventoryItems", item.productId);
         const productSnap = await getDoc(productRef);
@@ -345,20 +355,6 @@ export async function getTransactionsForUserByBranch(
         where("branchId", "==", branchId)
     ];
     
-    // If current user is not admin, filter by their userId. Admin sees all for the branch.
-    // This logic might need adjustment if admins should also be filtered by their own transactions
-    // or if there's a specific "all users" view. For now, assuming non-admins only see their own.
-    // const user = auth.currentUser; // This might be better obtained from AuthContext
-    // if (user && (await getUserDocument(user.uid))?.role !== 'admin') {
-    //   constraints.push(where("userId", "==", userId));
-    // }
-    // Temporarily removing role check here for simplicity in this function.
-    // The page level should enforce if only user's transactions are shown or all (for admin).
-    // For now, this function could be generic for a branch, and the page calls it with/without userId filter.
-    // Let's assume SalesHistory page will always pass the current user's ID for non-admin roles.
-    // constraints.push(where("userId", "==", userId));
-
-
     if (options.startDate && options.endDate) {
         const startTimestamp = Timestamp.fromDate(options.startDate);
         const endOfDayEndDate = new Date(options.endDate);
@@ -512,7 +508,7 @@ export async function getOutstandingCreditSalesByBranch(
   const constraints: any[] = [
     where("branchId", "==", branchId),
     where("isCreditSale", "==", true),
-    where("paymentStatus", "in", ["unpaid", "partially_paid"]), // Only get sales that are not fully paid or returned
+    where("paymentStatus", "in", ["unpaid", "partially_paid"]), 
   ];
 
   if (options.orderByField) {
@@ -587,3 +583,5 @@ export async function recordPaymentForCreditSale(
     return { error: error.message || "Gagal merekam pembayaran." };
   }
 }
+
+    
