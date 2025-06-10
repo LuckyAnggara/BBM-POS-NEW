@@ -10,7 +10,7 @@ export default function AppHeader() {
         <SidebarTrigger className="h-8 w-8 md:h-7 md:w-7" />
         <Link href="/dashboard" className="flex items-center gap-2">
           <Building className="h-6 w-6 text-primary" />
-          <span className="text-lg font-semibold font-headline">BranchWise</span>
+          <span className="text-lg font-semibold font-headline">Berkah Baja Makmur</span>
         </Link>
       </div>
       {/* Branch selector and User Profile removed from here */}

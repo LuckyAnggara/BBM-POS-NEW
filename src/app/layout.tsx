@@ -6,7 +6,7 @@ import { AuthProvider } from '@/contexts/auth-context'; // Import AuthProvider
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: 'BranchWise',
+  title: 'Berkah Baja Makmur',
   description: 'Manage your branches efficiently',
 };
 

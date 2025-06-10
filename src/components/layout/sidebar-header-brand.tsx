@@ -14,7 +14,7 @@ export default function SidebarHeaderBrand() {
             <Building className="h-5 w-5" />
         </div>
         <div>
-          <span className="font-semibold text-sm text-foreground">BranchWise</span>
+          <span className="font-semibold text-sm text-foreground">Berkah Baja Makmur</span>
           <span className="text-xs text-muted-foreground block leading-tight">Enterprise</span>
         </div>
       </Link>

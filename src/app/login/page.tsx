@@ -83,7 +83,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
        <div className="absolute top-8 left-8 flex items-center gap-2">
          <Building className="h-7 w-7 text-primary" />
-         <span className="text-xl font-semibold font-headline text-foreground">BranchWise</span>
+         <span className="text-xl font-semibold font-headline text-foreground">Berkah Baja Makmur</span>
        </div>
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader>

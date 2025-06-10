@@ -43,7 +43,7 @@ export default function HomePage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
         <Building className="h-16 w-16 text-primary animate-pulse mb-4" />
-        <h1 className="text-2xl font-semibold font-headline mb-2">BranchWise</h1>
+        <h1 className="text-2xl font-semibold font-headline mb-2">Berkah Baja Makmur</h1>
         <p className="text-sm text-muted-foreground transition-opacity duration-500">
           {loadingAuth ? loadingMessages[currentMessageIndex] : "Mengarahkan Anda..."}
         </p>
@@ -55,7 +55,7 @@ export default function HomePage() {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
       <Building className="h-16 w-16 text-primary animate-pulse mb-4" />
-      <h1 className="text-2xl font-semibold font-headline mb-2">BranchWise</h1>
+      <h1 className="text-2xl font-semibold font-headline mb-2">Berkah Baja Makmur</h1>
       <p className="text-sm text-muted-foreground">Silakan tunggu...</p>
     </div>
   );
