@@ -1,16 +1,36 @@
 
-"use client"; // Needs to be a client component to use hooks
+"use client";
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/auth-context';
+import { Building } from 'lucide-react';
+
+const loadingMessages = [
+  "Memuat aplikasi...",
+  "Menyiapkan sesi Anda...",
+  "Mengautentikasi pengguna...",
+  "Menghubungkan ke data...",
+  "Hampir selesai...",
+];
 
 export default function HomePage() {
   const { currentUser, loadingAuth } = useAuth();
   const router = useRouter();
+  const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
+  const [isRedirecting, setIsRedirecting] = useState(false);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setCurrentMessageIndex((prevIndex) => (prevIndex + 1) % loadingMessages.length);
+    }, 2000); // Ganti pesan setiap 2 detik
+
+    return () => clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     if (!loadingAuth) {
+      setIsRedirecting(true); // Mulai tampilkan pesan pengalihan
       if (currentUser) {
         router.replace('/dashboard');
       } else {
@@ -19,11 +39,24 @@ export default function HomePage() {
     }
   }, [currentUser, loadingAuth, router]);
 
-  // Display a loading indicator while auth state is being determined
-  if (loadingAuth) {
-    return <div className="flex h-screen items-center justify-center">Memuat aplikasi...</div>;
+  if (loadingAuth || isRedirecting) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
+        <Building className="h-16 w-16 text-primary animate-pulse mb-4" />
+        <h1 className="text-2xl font-semibold font-headline mb-2">BranchWise</h1>
+        <p className="text-sm text-muted-foreground transition-opacity duration-500">
+          {loadingAuth ? loadingMessages[currentMessageIndex] : "Mengarahkan Anda..."}
+        </p>
+      </div>
+    );
   }
   
-  // Fallback content, though user should be redirected quickly.
-  return <div className="flex h-screen items-center justify-center">Mengarahkan...</div>;
+  // Fallback content, ideally never shown as user should be redirected quickly.
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
+      <Building className="h-16 w-16 text-primary animate-pulse mb-4" />
+      <h1 className="text-2xl font-semibold font-headline mb-2">BranchWise</h1>
+      <p className="text-sm text-muted-foreground">Silakan tunggu...</p>
+    </div>
+  );
 }
