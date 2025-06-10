@@ -35,6 +35,7 @@ import {
   endShift,
   recordTransaction,
   getTransactionsForShift,
+  getTransactionById, // Import getTransactionById
   type PosShift,
   type PosTransaction,
   type TransactionItem,
@@ -118,7 +119,6 @@ export default function POSPage() {
 
   useEffect(() => {
     setPosModeActive(true);
-    // Load preferred view mode from localStorage
     const savedViewMode = localStorage.getItem(LOCALSTORAGE_POS_VIEW_MODE_KEY) as ViewMode | null;
     if (savedViewMode && (savedViewMode === 'card' || savedViewMode === 'table')) {
       setViewMode(savedViewMode);
@@ -573,10 +573,76 @@ export default function POSPage() {
     setIsProcessingSale(false);
   };
 
-  const handlePrintInvoice = () => {
-    if (lastTransactionId) {
-        window.open(`/invoice/${lastTransactionId}/view`, '_blank');
+  const handlePrintInvoice = async () => {
+    if (!lastTransactionId || !selectedBranch || !currentUser || !userData) {
+      toast({ title: "Data Tidak Lengkap", description: "Tidak dapat mencetak invoice, data kurang.", variant: "destructive" });
+      setShowPrintInvoiceDialog(false);
+      setLastTransactionId(null);
+      return;
     }
+
+    if (userData.localPrinterUrl) {
+      try {
+        const transactionDetails = await getTransactionById(lastTransactionId);
+        if (!transactionDetails) {
+          toast({ title: "Gagal Cetak", description: "Detail transaksi tidak ditemukan.", variant: "destructive" });
+          setShowPrintInvoiceDialog(false);
+          setLastTransactionId(null);
+          return;
+        }
+
+        const payload = {
+          branchName: selectedBranch.invoiceName || selectedBranch.name,
+          branchAddress: selectedBranch.address || "",
+          branchPhone: selectedBranch.phoneNumber || "",
+          invoiceNumber: transactionDetails.invoiceNumber,
+          transactionDate: format(transactionDetails.timestamp.toDate(), "dd MMM yyyy, HH:mm"),
+          cashierName: userData.name || currentUser.displayName || "Kasir",
+          customerName: transactionDetails.customerName || "",
+          items: transactionDetails.items.map(item => ({
+            name: item.productName,
+            quantity: item.quantity,
+            price: item.price,
+            total: item.total,
+          })),
+          subtotal: transactionDetails.subtotal,
+          taxAmount: transactionDetails.taxAmount,
+          totalAmount: transactionDetails.totalAmount,
+          paymentMethod: transactionDetails.paymentTerms.charAt(0).toUpperCase() + transactionDetails.paymentTerms.slice(1),
+          amountPaid: transactionDetails.amountPaid,
+          changeGiven: transactionDetails.changeGiven,
+          notes: "", // Add notes to transaction object if needed
+        };
+
+        const response = await fetch(userData.localPrinterUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          toast({ title: "Terkirim ke Printer", description: "Data invoice berhasil dikirim ke printer lokal." });
+        } else {
+          const errorData = await response.text();
+          toast({ title: "Gagal Kirim ke Printer", description: `Printer lokal merespons dengan kesalahan: ${response.status} - ${errorData || response.statusText}`, variant: "destructive", duration: 7000 });
+           // Fallback to web invoice if local print fails
+          window.open(`/invoice/${lastTransactionId}/view`, '_blank');
+        }
+      } catch (error: any) {
+        console.error("Error sending to local printer:", error);
+        toast({ title: "Error Printer Lokal", description: `Tidak dapat terhubung ke printer lokal: ${error.message}. Invoice web akan dibuka.`, variant: "destructive", duration: 7000 });
+        window.open(`/invoice/${lastTransactionId}/view`, '_blank');
+      }
+    } else {
+      toast({
+        title: "Printer Lokal Belum Diatur",
+        description: "URL printer lokal belum diatur di Pengaturan Akun. Membuka invoice web.",
+        variant: "default",
+        duration: 7000
+      });
+      window.open(`/invoice/${lastTransactionId}/view`, '_blank');
+    }
+
     setShowPrintInvoiceDialog(false);
     setLastTransactionId(null);
   };
@@ -976,5 +1042,3 @@ export default function POSPage() {
     </ProtectedRoute>
   );
 }
-
-    

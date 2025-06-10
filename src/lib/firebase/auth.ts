@@ -25,15 +25,16 @@ export async function registerWithEmailAndPassword(name: string, email: string, 
       name: user.displayName || name,
       email: user.email || email,
       avatarUrl: user.photoURL || null,
-      role: "cashier", // Default role for new registrations
-      branchId: null, // Default no branch assigned
+      role: "cashier", 
+      branchId: null,
+      localPrinterUrl: null, // Initialize
     };
     await createUserDocument(user.uid, additionalData);
     const userData = await getUserDocument(user.uid);
 
     return { user, userData };
   } catch (error: any) {
-    console.error("Registration error:", error); 
+    console.error("Registration error:", error);
     return { error: error.message, errorCode: error.code };
   }
 }
@@ -45,7 +46,7 @@ export async function signInWithEmail(email: string, password: string): Promise<
     const userData = await getUserDocument(user.uid);
     return { user, userData };
   } catch (error: any) {
-    console.error("Login error:", error); 
+    console.error("Login error:", error);
     return { error: error.message, errorCode: error.code };
   }
 }
@@ -62,8 +63,8 @@ export async function signOutUser(): Promise<void | { error: string }> {
 export function onAuthStateChanged(callback: (user: FirebaseUser | null, userData: UserData | null) => void) {
   return onFirebaseAuthStateChanged(auth, async (user) => {
     if (user) {
-      await user.reload().catch(err => console.warn("Error reloading user in onAuthStateChanged:", err)); // Ensure latest profile data
-      const freshUser = auth.currentUser; // Get the potentially reloaded user
+      await user.reload().catch(err => console.warn("Error reloading user in onAuthStateChanged:", err)); 
+      const freshUser = auth.currentUser; 
       const userData = freshUser ? await getUserDocument(freshUser.uid) : null;
       callback(freshUser, userData);
     } else {
@@ -72,18 +73,17 @@ export function onAuthStateChanged(callback: (user: FirebaseUser | null, userDat
   });
 }
 
-export async function updateUserProfileData(updates: { name?: string; avatarUrl?: string }): Promise<{ success?: boolean; error?: string }> {
+export async function updateUserProfileData(updates: { name?: string; avatarUrl?: string; localPrinterUrl?: string | null; }): Promise<{ success?: boolean; error?: string }> {
   const user = auth.currentUser;
   if (!user) {
     return { error: "Pengguna tidak ditemukan. Silakan login kembali." };
   }
 
-  const profileUpdates: { displayName?: string; photoURL?: string } = {};
+  const profileUpdates: { displayName?: string; photoURL?: string | null } = {};
   if (updates.name !== undefined && updates.name !== user.displayName) {
     profileUpdates.displayName = updates.name;
   }
   if (updates.avatarUrl !== undefined && updates.avatarUrl !== user.photoURL) {
-     // Allow empty string to clear avatar, null if it's truly null
     profileUpdates.photoURL = updates.avatarUrl === "" ? null : updates.avatarUrl;
   }
 
@@ -92,18 +92,20 @@ export async function updateUserProfileData(updates: { name?: string; avatarUrl?
       await updateProfile(user, profileUpdates);
     }
 
-    const firestoreUpdates: { name?: string; avatarUrl?: string } = {};
+    // Prepare updates for Firestore document
+    const firestoreUpdates: { name?: string; avatarUrl?: string; localPrinterUrl?: string | null } = {};
     if (updates.name !== undefined) firestoreUpdates.name = updates.name;
     if (updates.avatarUrl !== undefined) firestoreUpdates.avatarUrl = updates.avatarUrl;
+    if (updates.localPrinterUrl !== undefined) firestoreUpdates.localPrinterUrl = updates.localPrinterUrl;
     
     if (Object.keys(firestoreUpdates).length > 0) {
         const firestoreResult = await updateUserAccountDetails(user.uid, firestoreUpdates);
         if (firestoreResult && firestoreResult.error) {
             console.warn("Firebase Auth profile updated, but Firestore update failed:", firestoreResult.error);
+            // Optionally, you could try to revert Auth profile update or just notify the user
         }
     }
-    await user.reload(); // Crucial to get updated currentUser properties
-    // The onAuthStateChanged listener in AuthContext should pick this up and update userData.
+    await user.reload(); 
 
     return { success: true };
   } catch (error: any) {

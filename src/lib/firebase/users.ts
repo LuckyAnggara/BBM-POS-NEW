@@ -11,6 +11,7 @@ export async function createUserDocument(uid: string, data: Partial<UserData>): 
     avatarUrl: data.avatarUrl || null,
     branchId: data.branchId === undefined ? null : data.branchId,
     role: data.role || "cashier",
+    localPrinterUrl: data.localPrinterUrl || null, // Initialize localPrinterUrl
     createdAt: serverTimestamp() as Timestamp,
   };
   await setDoc(userRef, userData, { merge: true });
@@ -29,6 +30,7 @@ export async function getUserDocument(uid: string): Promise<UserData | null> {
       avatarUrl: data.avatarUrl,
       branchId: data.branchId,
       role: data.role,
+      localPrinterUrl: data.localPrinterUrl || null, // Fetch localPrinterUrl
       createdAt: data.createdAt,
     } as UserData;
   } else {
@@ -79,21 +81,24 @@ export async function updateUserRole(userId: string, role: string): Promise<void
 
 export async function updateUserAccountDetails(
   uid: string,
-  data: { name?: string; avatarUrl?: string }
+  data: { name?: string; avatarUrl?: string; localPrinterUrl?: string | null } // Added localPrinterUrl
 ): Promise<void | { error: string }> {
   if (!uid) return { error: "User ID tidak valid." };
   try {
     const userRef = doc(db, "users", uid);
     const updates: any = { updatedAt: serverTimestamp() };
-    
+
     if (data.name !== undefined) {
       updates.name = data.name;
     }
     if (data.avatarUrl !== undefined) {
       updates.avatarUrl = data.avatarUrl;
     }
+    if (data.localPrinterUrl !== undefined) { // Handle localPrinterUrl update
+      updates.localPrinterUrl = data.localPrinterUrl;
+    }
 
-    if (Object.keys(updates).length > 1) { // Ensure there's more than just updatedAt
+    if (Object.keys(updates).length > 1) {
         await updateDoc(userRef, updates);
     }
   } catch (error: any) {

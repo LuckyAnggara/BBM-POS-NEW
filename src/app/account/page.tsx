@@ -17,12 +17,13 @@ import { useToast } from "@/hooks/use-toast";
 import { updateUserProfileData, changeUserPassword } from "@/lib/firebase/auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { Eye, EyeOff, UserCircle, Image as ImageIcon, KeyRound } from "lucide-react";
+import { Eye, EyeOff, UserCircle, Image as ImageIcon, KeyRound, Printer } from "lucide-react";
 
 
 const profileFormSchema = z.object({
   name: z.string().min(3, { message: "Nama minimal 3 karakter." }),
   avatarUrl: z.string().url({ message: "URL Avatar tidak valid." }).or(z.literal('')).optional(),
+  localPrinterUrl: z.string().url({ message: "URL Printer Lokal tidak valid. Contoh: http://localhost:5000/print" }).or(z.literal('')).optional(),
 });
 type ProfileFormValues = z.infer<typeof profileFormSchema>;
 
@@ -38,11 +39,11 @@ type PasswordFormValues = z.infer<typeof passwordFormSchema>;
 
 
 export default function AccountPage() {
-  const { currentUser, userData, loadingAuth, loadingUserData, signOut, refreshAuthContextState } = useAuth(); // Added refreshAuthContextState
+  const { currentUser, userData, loadingAuth, loadingUserData, signOut, refreshAuthContextState } = useAuth();
   const { toast } = useToast();
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
-  
+
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -53,6 +54,7 @@ export default function AccountPage() {
     defaultValues: {
       name: "",
       avatarUrl: "",
+      localPrinterUrl: "",
     },
   });
 
@@ -70,19 +72,21 @@ export default function AccountPage() {
       profileForm.reset({
         name: userData.name || "",
         avatarUrl: userData.avatarUrl || "",
+        localPrinterUrl: userData.localPrinterUrl || "",
       });
     }
   }, [userData, profileForm]);
 
   const onProfileSubmit: SubmitHandler<ProfileFormValues> = async (values) => {
     setIsSavingProfile(true);
-    const result = await updateUserProfileData({
+    const result = await updateUserProfileData({ // This function in firebase/auth.ts also updates firestore via updateUserAccountDetails
       name: values.name,
       avatarUrl: values.avatarUrl,
+      localPrinterUrl: values.localPrinterUrl,
     });
     if (result.success) {
       toast({ title: "Profil Diperbarui", description: "Informasi profil Anda berhasil disimpan." });
-      await refreshAuthContextState(); // Explicitly refresh context data
+      await refreshAuthContextState();
     } else {
       toast({ title: "Gagal Memperbarui Profil", description: result.error, variant: "destructive" });
     }
@@ -95,13 +99,13 @@ export default function AccountPage() {
     if (result.success) {
       toast({ title: "Password Diubah", description: "Password Anda berhasil diganti. Silakan login kembali." });
       passwordForm.reset();
-      await signOut(); 
+      await signOut();
     } else {
       toast({ title: "Gagal Mengubah Password", description: result.error, variant: "destructive" });
     }
     setIsChangingPassword(false);
   };
-  
+
   const userDisplayRole = userData?.role ? userData.role.charAt(0).toUpperCase() + userData.role.slice(1) : "N/A";
 
   if (loadingAuth || loadingUserData) {
@@ -142,7 +146,7 @@ export default function AccountPage() {
                   <p className="text-sm text-muted-foreground">{userData.email} ({userDisplayRole})</p>
                 </div>
               </div>
-              
+
               <Separator />
 
               <form onSubmit={profileForm.handleSubmit(onProfileSubmit)} className="space-y-3 pt-2">
@@ -158,6 +162,15 @@ export default function AccountPage() {
                      <Input id="avatarUrl" {...profileForm.register("avatarUrl")} placeholder="https://contoh.com/gambar.png" className="h-9 text-sm"/>
                   </div>
                   {profileForm.formState.errors.avatarUrl && <p className="text-xs text-destructive mt-1">{profileForm.formState.errors.avatarUrl.message}</p>}
+                </div>
+                <div>
+                  <Label htmlFor="localPrinterUrl" className="text-xs">URL Printer Lokal (Dot Matrix)</Label>
+                   <div className="flex items-center gap-2 mt-1">
+                     <Printer className="h-4 w-4 text-muted-foreground" />
+                     <Input id="localPrinterUrl" {...profileForm.register("localPrinterUrl")} placeholder="Contoh: http://localhost:5000/print" className="h-9 text-sm"/>
+                  </div>
+                  {profileForm.formState.errors.localPrinterUrl && <p className="text-xs text-destructive mt-1">{profileForm.formState.errors.localPrinterUrl.message}</p>}
+                  <p className="text-xs text-muted-foreground mt-1">Isi jika Anda menggunakan aplikasi helper printer dot matrix lokal.</p>
                 </div>
                 <Button type="submit" size="sm" className="text-xs h-8" disabled={isSavingProfile}>
                   {isSavingProfile ? "Menyimpan..." : "Simpan Perubahan Profil"}

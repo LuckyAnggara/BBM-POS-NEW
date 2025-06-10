@@ -16,7 +16,8 @@ export interface UserData {
   email: string;
   avatarUrl: string | null;
   branchId: string | null;
-  role: 'admin' | 'cashier' | string; 
+  role: 'admin' | 'cashier' | string;
+  localPrinterUrl?: string | null; // Added for local printer URL
   createdAt: Timestamp | null;
 }
 
@@ -26,7 +27,7 @@ interface AuthContextType {
   loadingAuth: boolean;
   loadingUserData: boolean;
   signOut: () => Promise<void>;
-  refreshAuthContextState: () => Promise<void>; // Added refresh function
+  refreshAuthContextState: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -34,14 +35,12 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
-  const [loadingAuth, setLoadingAuth] = useState(true); 
-  const [loadingUserData, setLoadingUserData] = useState(false); 
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [loadingUserData, setLoadingUserData] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    // This 'firebaseOnAuthStateChanged' is the wrapper from '@/lib/firebase/auth'
-    // which already calls getUserDocument
     const unsubscribe = firebaseOnAuthStateChanged((user, uData) => {
       setCurrentUser(user);
       setUserData(uData);
@@ -55,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (currentUser && (pathname === '/login' || pathname === '/register')) {
         router.push('/dashboard');
       } else if (!currentUser && pathname !== '/login' && pathname !== '/register' && !pathname.startsWith('/_next')) {
-         if (pathname !== '/') { // Avoid redirect loop on root if it redirects to login
+         if (pathname !== '/') {
           router.push('/login');
         }
       }
@@ -70,25 +69,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshAuthContextState = useCallback(async () => {
-    const firebaseAuthUser = auth.currentUser; 
+    const firebaseAuthUser = auth.currentUser;
     if (firebaseAuthUser) {
-      setLoadingAuth(true); 
+      setLoadingAuth(true);
       setLoadingUserData(true);
       try {
         await firebaseAuthUser.reload();
-        const freshUserFromAuth = auth.currentUser; 
+        const freshUserFromAuth = auth.currentUser;
         if (freshUserFromAuth) {
           const uData = await getUserDocument(freshUserFromAuth.uid);
           setCurrentUser(freshUserFromAuth);
           setUserData(uData);
-        } else { 
+        } else {
           setCurrentUser(null);
           setUserData(null);
         }
       } catch (err) {
         console.error("Error refreshing auth context state:", err);
-        // Optional: Handle critical errors, e.g., by signing out
-        // await signOut(); 
       } finally {
         setLoadingAuth(false);
         setLoadingUserData(false);
@@ -96,18 +93,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       setCurrentUser(null);
       setUserData(null);
-      setLoadingAuth(false); 
+      setLoadingAuth(false);
       setLoadingUserData(false);
     }
   }, []);
-  
+
   const value = useMemo(() => ({
     currentUser,
     userData,
     loadingAuth,
-    loadingUserData, 
+    loadingUserData,
     signOut,
-    refreshAuthContextState, // Expose the refresh function
+    refreshAuthContextState,
   }), [currentUser, userData, loadingAuth, loadingUserData, signOut, refreshAuthContextState]);
 
   return (
