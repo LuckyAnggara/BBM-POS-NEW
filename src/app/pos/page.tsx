@@ -15,7 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon } from "lucide-react"; // Added HistoryIcon
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -29,25 +29,26 @@ import type { BankAccount } from "@/lib/firebase/bankAccounts";
 import { getInventoryItems } from "@/lib/firebase/inventory";
 import { getCustomers } from "@/lib/firebase/customers";
 import { getBankAccounts } from "@/lib/firebase/bankAccounts";
-import { 
-  startNewShift, 
-  getActiveShift, 
-  endShift, 
-  recordTransaction, 
-  getTransactionsForShift, 
-  type PosShift, 
-  type PosTransaction, 
-  type TransactionItem, 
+import {
+  startNewShift,
+  getActiveShift,
+  endShift,
+  recordTransaction,
+  getTransactionsForShift,
+  type PosShift,
+  type PosTransaction,
+  type TransactionItem,
   type PaymentTerms,
-  type ShiftPaymentMethod 
+  type ShiftPaymentMethod
 } from "@/lib/firebase/pos";
 import { Timestamp } from "firebase/firestore";
-import ScanCustomerDialog from "@/components/pos/scan-customer-dialog"; 
+import ScanCustomerDialog from "@/components/pos/scan-customer-dialog";
 import { format } from "date-fns";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area"; // Added ScrollArea
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 type ViewMode = "card" | "table";
+const LOCALSTORAGE_POS_VIEW_MODE_KEY = "branchwise_posViewMode";
 
 interface CartItem extends TransactionItem {}
 
@@ -60,12 +61,12 @@ export default function POSPage() {
   const { toast } = useToast();
 
   const [viewMode, setViewMode] = useState<ViewMode>("card");
-  
+
   const [activeShift, setActiveShift] = useState<PosShift | null>(null);
   const [loadingShift, setLoadingShift] = useState(true);
   const [showStartShiftModal, setShowStartShiftModal] = useState(false);
   const [initialCashInput, setInitialCashInput] = useState("");
-  
+
   const [showEndShiftModal, setShowEndShiftModal] = useState(false);
   const [actualCashAtEndInput, setActualCashAtEndInput] = useState("");
   const [endShiftCalculations, setEndShiftCalculations] = useState<{
@@ -81,18 +82,18 @@ export default function POSPage() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedPaymentTerms, setSelectedPaymentTerms] = useState<PaymentTerms>('cash');
   const [isProcessingSale, setIsProcessingSale] = useState(false);
-  
+
   const [posModeActive, setPosModeActive] = useState(false);
   const [lastTransactionId, setLastTransactionId] = useState<string | null>(null);
   const [showPrintInvoiceDialog, setShowPrintInvoiceDialog] = useState(false);
 
   const [showCashPaymentModal, setShowCashPaymentModal] = useState(false);
   const [cashAmountPaidInput, setCashAmountPaidInput] = useState("");
-  const [customerNameInputCash, setCustomerNameInputCash] = useState(""); 
+  const [customerNameInputCash, setCustomerNameInputCash] = useState("");
   const [calculatedChange, setCalculatedChange] = useState<number | null>(null);
 
-  const [allCustomers, setAllCustomers] = useState<Customer[]>([]); 
-  const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]); 
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
+  const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | undefined>(undefined);
   const [creditDueDate, setCreditDueDate] = useState<Date | undefined>(undefined);
@@ -104,7 +105,7 @@ export default function POSPage() {
   const [availableBankAccounts, setAvailableBankAccounts] = useState<BankAccount[]>([]);
   const [loadingBankAccounts, setLoadingBankAccounts] = useState(false);
   const [showBankPaymentModal, setShowBankPaymentModal] = useState(false);
-  const [selectedBankName, setSelectedBankName] = useState<string>(""); 
+  const [selectedBankName, setSelectedBankName] = useState<string>("");
   const [bankRefNumberInput, setBankRefNumberInput] = useState("");
   const [customerNameInputBank, setCustomerNameInputBank] = useState("");
 
@@ -115,9 +116,19 @@ export default function POSPage() {
   const [showAllShiftTransactionsDialog, setShowAllShiftTransactionsDialog] = useState(false);
 
 
-   useEffect(() => {
+  useEffect(() => {
     setPosModeActive(true);
+    // Load preferred view mode from localStorage
+    const savedViewMode = localStorage.getItem(LOCALSTORAGE_POS_VIEW_MODE_KEY) as ViewMode | null;
+    if (savedViewMode && (savedViewMode === 'card' || savedViewMode === 'table')) {
+      setViewMode(savedViewMode);
+    }
   }, []);
+
+  const handleSetViewMode = (mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem(LOCALSTORAGE_POS_VIEW_MODE_KEY, mode);
+  };
 
 
   const currencySymbol = selectedBranch?.currency === "IDR" ? "Rp" : (selectedBranch?.currency || "$");
@@ -141,11 +152,11 @@ export default function POSPage() {
       const [items, fetchedCustomers, fetchedBankAccounts] = await Promise.all([
         getInventoryItems(selectedBranch.id),
         getCustomers(selectedBranch.id),
-        getBankAccounts({ branchId: selectedBranch.id, isActive: true }) 
+        getBankAccounts({ branchId: selectedBranch.id, isActive: true })
       ]);
       setProducts(items);
       setAllCustomers(fetchedCustomers);
-      setFilteredCustomers(fetchedCustomers.slice(0,5)); 
+      setFilteredCustomers(fetchedCustomers.slice(0,5));
       setAvailableBankAccounts(fetchedBankAccounts);
     } catch (error) {
         console.error("Error fetching branch data for POS:", error);
@@ -168,7 +179,7 @@ export default function POSPage() {
             customer.name.toLowerCase().includes(lowerSearch) ||
             (customer.id && customer.id.toLowerCase().includes(lowerSearch)) ||
             (customer.phone && customer.phone.includes(lowerSearch))
-        ).slice(0,10) 
+        ).slice(0,10)
       );
     }
   }, [customerSearchTerm, allCustomers]);
@@ -199,9 +210,9 @@ export default function POSPage() {
     const shift = await getActiveShift(currentUser.uid, selectedBranch.id);
     setActiveShift(shift);
     if(shift) {
-        setInitialCashInput(shift.initialCash.toString()); 
+        setInitialCashInput(shift.initialCash.toString());
     } else {
-        setInitialCashInput(""); 
+        setInitialCashInput("");
     }
     setLoadingShift(false);
   }, [currentUser, selectedBranch]);
@@ -235,21 +246,20 @@ export default function POSPage() {
   const prepareEndShiftCalculations = async () => {
     if (!activeShift) return;
     setIsEndingShift(true);
-    // Ensure shiftTransactions is up-to-date before calculating
-    await fetchShiftTransactions(); 
-    const currentShiftTransactions = shiftTransactions; // Use the state after potential fetch
+    await fetchShiftTransactions();
+    const currentShiftTransactions = shiftTransactions;
 
     const salesByPayment: Record<ShiftPaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
 
     currentShiftTransactions.forEach(tx => {
         if (tx.paymentTerms === 'cash' || tx.paymentTerms === 'card' || tx.paymentTerms === 'transfer') {
-             if (tx.status === 'completed') { // Only count completed sales for shift end
-                const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod; 
+             if (tx.status === 'completed') {
+                const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod;
                 salesByPayment[paymentMethodForShift] = (salesByPayment[paymentMethodForShift] || 0) + tx.totalAmount;
              }
         }
     });
-    
+
     const expected = (activeShift.initialCash || 0) + salesByPayment.cash;
     setEndShiftCalculations({ expectedCash: expected, totalSalesByPaymentMethod: salesByPayment });
     setShowEndShiftModal(true);
@@ -258,7 +268,7 @@ export default function POSPage() {
 
   const handleEndShiftConfirm = async () => {
     if (!activeShift || endShiftCalculations === null) return;
-    
+
     const actualCash = parseFloat(actualCashAtEndInput);
     if (isNaN(actualCash) || actualCash < 0) {
       toast({ title: "Input Tidak Valid", description: "Kas aktual di laci tidak valid.", variant: "destructive" });
@@ -267,7 +277,7 @@ export default function POSPage() {
     setIsEndingShift(true);
 
     const cashDifference = actualCash - endShiftCalculations.expectedCash;
-    
+
     const result = await endShift(
       activeShift.id,
       actualCash,
@@ -285,7 +295,7 @@ export default function POSPage() {
       setActualCashAtEndInput("");
       setEndShiftCalculations(null);
       setShowEndShiftModal(false);
-      setCartItems([]); 
+      setCartItems([]);
       setShiftTransactions([]);
     }
     setIsEndingShift(false);
@@ -303,7 +313,7 @@ export default function POSPage() {
     setCartItems(prevItems => {
       const existingItem = prevItems.find(item => item.productId === product.id);
       if (existingItem) {
-        if (existingItem.quantity < product.quantity) { 
+        if (existingItem.quantity < product.quantity) {
             return prevItems.map(item =>
             item.productId === product.id
                 ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price }
@@ -314,13 +324,13 @@ export default function POSPage() {
             return prevItems;
         }
       }
-      return [...prevItems, { 
-          productId: product.id, 
-          productName: product.name, 
-          quantity: 1, 
+      return [...prevItems, {
+          productId: product.id,
+          productName: product.name,
+          quantity: 1,
           price: product.price,
           costPrice: product.costPrice || 0,
-          total: product.price 
+          total: product.price
       }];
     });
   };
@@ -352,7 +362,7 @@ export default function POSPage() {
       )
     );
   };
-  
+
   const handleRemoveFromCart = (productId: string) => {
     setCartItems(prevItems => prevItems.filter(item => item.productId !== productId));
   };
@@ -364,7 +374,7 @@ export default function POSPage() {
 
 
   const openCashPaymentModal = () => {
-    setCashAmountPaidInput(total.toString()); 
+    setCashAmountPaidInput(total.toString());
     setCustomerNameInputCash("");
     setCalculatedChange(0);
     setShowCashPaymentModal(true);
@@ -391,7 +401,7 @@ export default function POSPage() {
       toast({ title: "Pembayaran Tidak Cukup", description: "Jumlah yang dibayar kurang dari total belanja.", variant: "destructive" });
       return;
     }
-    
+
     const change = amountPaid - total;
     setIsProcessingSale(true);
 
@@ -405,8 +415,8 @@ export default function POSPage() {
       totalAmount: total,
       totalCost: totalCost,
       paymentTerms: 'cash',
-      amountPaid: amountPaid, 
-      changeGiven: change, 
+      amountPaid: amountPaid,
+      changeGiven: change,
       customerName: customerNameInputCash.trim() || undefined,
       status: 'completed',
     };
@@ -427,7 +437,7 @@ export default function POSPage() {
       setCashAmountPaidInput("");
       setCustomerNameInputCash("");
       setCalculatedChange(null);
-      await fetchBranchData(); 
+      await fetchBranchData();
     }
   };
 
@@ -436,7 +446,7 @@ export default function POSPage() {
       toast({ title: "Kesalahan", description: "Shift, cabang, atau pengguna tidak aktif.", variant: "destructive" });
       return;
     }
-    if (!selectedBankName) { 
+    if (!selectedBankName) {
       toast({ title: "Bank Diperlukan", description: "Pilih nama bank.", variant: "destructive" });
       return;
     }
@@ -456,11 +466,11 @@ export default function POSPage() {
       totalAmount: total,
       totalCost: totalCost,
       paymentTerms: 'transfer',
-      amountPaid: total, 
+      amountPaid: total,
       changeGiven: 0,
       customerName: customerNameInputBank.trim() || undefined,
       status: 'completed',
-      bankName: selectedBankName, 
+      bankName: selectedBankName,
       bankTransactionRef: bankRefNumberInput.trim(),
     };
 
@@ -476,11 +486,11 @@ export default function POSPage() {
       setLastTransactionId(result.id);
       setShowPrintInvoiceDialog(true);
       setCartItems([]);
-      setSelectedPaymentTerms('cash'); 
+      setSelectedPaymentTerms('cash');
       setSelectedBankName("");
       setBankRefNumberInput("");
       setCustomerNameInputBank("");
-      await fetchBranchData(); 
+      await fetchBranchData();
     }
   };
 
@@ -497,10 +507,10 @@ export default function POSPage() {
 
     if (selectedPaymentTerms === 'cash') {
       openCashPaymentModal();
-      return; 
+      return;
     }
     if (selectedPaymentTerms === 'transfer') {
-      setSelectedBankName(""); 
+      setSelectedBankName("");
       setBankRefNumberInput("");
       setCustomerNameInputBank("");
       setShowBankPaymentModal(true);
@@ -533,8 +543,8 @@ export default function POSPage() {
       totalAmount: total,
       totalCost: totalCost,
       paymentTerms: selectedPaymentTerms,
-      amountPaid: selectedPaymentTerms === 'credit' ? 0 : total, 
-      changeGiven: 0, 
+      amountPaid: selectedPaymentTerms === 'credit' ? 0 : total,
+      changeGiven: 0,
       customerId: selectedPaymentTerms === 'credit' ? selectedCustomerId : undefined,
       customerName: customerNameForTx,
       creditDueDate: selectedPaymentTerms === 'credit' && creditDueDate ? Timestamp.fromDate(creditDueDate) : undefined,
@@ -552,7 +562,7 @@ export default function POSPage() {
     } else {
       toast({ title: "Transaksi Berhasil", description: "Penjualan telah direkam." });
       setLastTransactionId(result.id);
-      setShowPrintInvoiceDialog(true); 
+      setShowPrintInvoiceDialog(true);
       setCartItems([]);
       setSelectedPaymentTerms('cash');
       setSelectedCustomerId(undefined);
@@ -575,8 +585,8 @@ export default function POSPage() {
     const foundCustomer = allCustomers.find(c => c.id === scannedId || c.qrCodeId === scannedId);
     if (foundCustomer) {
         setSelectedCustomerId(foundCustomer.id);
-        setCustomerSearchTerm(foundCustomer.name); 
-        setSelectedPaymentTerms('credit'); 
+        setCustomerSearchTerm(foundCustomer.name);
+        setSelectedPaymentTerms('credit');
         toast({title: "Pelanggan Ditemukan", description: `Pelanggan "${foundCustomer.name}" dipilih.`});
     } else {
         toast({title: "Pelanggan Tidak Ditemukan", description: "ID pelanggan dari QR code tidak terdaftar.", variant: "destructive"});
@@ -607,7 +617,7 @@ export default function POSPage() {
       .filter(tx => tx.paymentTerms === 'transfer' && tx.status === 'completed')
       .reduce((sum, tx) => sum + tx.totalAmount, 0);
   }, [shiftTransactions]);
-  
+
   const estimatedCashInDrawer = useMemo(() => {
     return (activeShift?.initialCash || 0) + totalCashSalesInShift;
   }, [activeShift, totalCashSalesInShift]);
@@ -650,7 +660,7 @@ export default function POSPage() {
                     POS {selectedBranch ? `- ${selectedBranch.name}` : '(Pilih Cabang)'}
                 </h1>
             </div>
-            
+
             {activeShift ? (
               <div className="col-span-1 text-center">
                  <p className="text-green-600 font-medium flex items-center justify-center text-sm">
@@ -691,21 +701,21 @@ export default function POSPage() {
               <div className="flex justify-between items-center gap-2">
                 <div className="relative flex-grow">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <Input 
-                    type="search" 
-                    placeholder="Cari produk atau SKU..." 
-                    className="pl-8 w-full rounded-md h-8 text-xs" 
-                    disabled={!activeShift || loadingProducts} 
+                  <Input
+                    type="search"
+                    placeholder="Cari produk atau SKU..."
+                    className="pl-8 w-full rounded-md h-8 text-xs"
+                    disabled={!activeShift || loadingProducts}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <Button variant={viewMode === 'card' ? 'secondary' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => setViewMode('card')} aria-label="Card View" disabled={!activeShift}><LayoutGrid className="h-4 w-4" /></Button>
-                  <Button variant={viewMode === 'table' ? 'secondary' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => setViewMode('table')} aria-label="Table View" disabled={!activeShift}><List className="h-4 w-4" /></Button>
+                  <Button variant={viewMode === 'card' ? 'secondary' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => handleSetViewMode('card')} aria-label="Card View" disabled={!activeShift}><LayoutGrid className="h-4 w-4" /></Button>
+                  <Button variant={viewMode === 'table' ? 'secondary' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => handleSetViewMode('table')} aria-label="Table View" disabled={!activeShift}><List className="h-4 w-4" /></Button>
                 </div>
               </div>
-              
+
               <div className={cn("flex-grow overflow-y-auto p-0.5 -m-0.5 relative", viewMode === 'card' ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5" : "")}>
                 {loadingProducts ? (<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">{[...Array(8)].map((_,i) => <Skeleton key={i} className="h-48 w-full" />)}</div>
                 ) : filteredProducts.length === 0 ? (<div className="text-center py-10 text-muted-foreground text-sm">{products.length === 0 ? "Belum ada produk di cabang ini." : "Produk tidak ditemukan."}</div>
@@ -737,7 +747,7 @@ export default function POSPage() {
                 <div className="flex justify-between text-xs w-full"><span>Subtotal:</span><span>{currencySymbol}{subtotal.toLocaleString('id-ID')}</span></div>
                 <div className="flex justify-between text-xs w-full"><span>Pajak ({selectedBranch?.taxRate || (taxRate*100).toFixed(0)}%):</span><span>{currencySymbol}{tax.toLocaleString('id-ID')}</span></div>
                 <div className="flex justify-between text-base font-bold w-full mt-1"><span>Total:</span><span>{currencySymbol}{total.toLocaleString('id-ID')}</span></div>
-                
+
                 <div className="w-full mt-2 pt-2 border-t"><Label className="text-xs font-medium mb-1 block">Termin Pembayaran:</Label>
                      <Select value={selectedPaymentTerms} onValueChange={(value) => {setSelectedPaymentTerms(value as PaymentTerms); if (value !== 'credit') {setSelectedCustomerId(undefined); setCreditDueDate(undefined); setCustomerSearchTerm("");}}} disabled={!activeShift || cartItems.length === 0}>
                         <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih termin pembayaran" /></SelectTrigger>
@@ -808,9 +818,9 @@ export default function POSPage() {
         <Dialog open={showPrintInvoiceDialog} onOpenChange={(open) => { if (!open) {setShowPrintInvoiceDialog(false); setLastTransactionId(null);} else {setShowPrintInvoiceDialog(true);}}}>
             <DialogContent className="sm:max-w-xs"><DialogHeader><DialogTitle className="text-base">Transaksi Berhasil</DialogTitle><DialogDescription className="text-xs">Penjualan telah berhasil direkam.</DialogDescription></DialogHeader><div className="py-4"><p className="text-sm text-center">Apakah Anda ingin mencetak invoice untuk transaksi ini?</p></div>
                 <DialogFooter className="sm:justify-center"><Button type="button" variant="outline" className="text-xs h-8" onClick={() => {setShowPrintInvoiceDialog(false); setLastTransactionId(null);}}>Tutup</Button><Button onClick={handlePrintInvoice} className="text-xs h-8" disabled={!lastTransactionId}><Printer className="mr-1.5 h-4 w-4" /> Cetak Invoice</Button></DialogFooter></DialogContent></Dialog>
-        
+
         <ScanCustomerDialog isOpen={showScanCustomerDialog} onClose={() => setShowScanCustomerDialog(false)} onScanSuccess={handleScanCustomerSuccess} branchId={selectedBranch?.id || ""}/>
-      
+
         <Dialog open={showBankHistoryDialog} onOpenChange={setShowBankHistoryDialog}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
@@ -903,7 +913,7 @@ export default function POSPage() {
                 </DialogFooter>
             </DialogContent>
         </Dialog>
-        
+
         <Dialog open={showAllShiftTransactionsDialog} onOpenChange={setShowAllShiftTransactionsDialog}>
             <DialogContent className="max-w-2xl">
                 <DialogHeader>
@@ -966,6 +976,5 @@ export default function POSPage() {
     </ProtectedRoute>
   );
 }
-
 
     
