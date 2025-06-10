@@ -7,16 +7,19 @@ import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/contexts/auth-context";
 import { useBranch } from "@/contexts/branch-context";
 import { getTransactionsForUserByBranch, processFullTransactionReturn, deleteTransaction as apiDeleteTransaction, type PosTransaction } from "@/lib/firebase/pos"; // Updated import
+import { createDeletionRequest, type TransactionDeletionRequestInput } from "@/lib/firebase/deletionRequests";
 import { Timestamp } from "firebase/firestore";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Printer, RotateCcw, CheckCircle, XCircle, Trash2, CalendarIcon, Search, FilterX, MoreHorizontal } from "lucide-react";
+import { Printer, RotateCcw, CheckCircle, XCircle, Trash2, CalendarIcon, Search, FilterX, MoreHorizontal, Send } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogFooter as DialogModalFooter, DialogClose, DialogDescription as DialogModalDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -32,7 +35,7 @@ import {
 
 
 export default function SalesHistoryPage() {
-  const { currentUser } = useAuth();
+  const { currentUser, userData } = useAuth();
   const { selectedBranch } = useBranch();
   const { toast } = useToast();
 
@@ -50,9 +53,13 @@ export default function SalesHistoryPage() {
   const [isProcessingReturn, setIsProcessingReturn] = useState(false);
 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [transactionToDeleteId, setTransactionToDeleteId] = useState<string | null>(null);
+  const [transactionToDelete, setTransactionToDelete] = useState<PosTransaction | null>(null);
   const [deletePasswordInput, setDeletePasswordInput] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const [showRequestDeletionDialog, setShowRequestDeletionDialog] = useState(false);
+  const [deletionRequestReason, setDeletionRequestReason] = useState("");
+  const [isRequestingDeletion, setIsRequestingDeletion] = useState(false);
 
 
   const fetchTransactions = useCallback(async () => {
@@ -151,14 +158,19 @@ export default function SalesHistoryPage() {
     }
   };
   
-  const handleOpenDeleteDialog = (txId: string) => {
-    setTransactionToDeleteId(txId);
-    setDeletePasswordInput("");
-    setShowDeleteDialog(true);
+  const handleOpenDeleteAction = (tx: PosTransaction) => {
+    setTransactionToDelete(tx);
+    if (userData?.role === 'admin') {
+      setDeletePasswordInput("");
+      setShowDeleteDialog(true);
+    } else {
+      setDeletionRequestReason("");
+      setShowRequestDeletionDialog(true);
+    }
   };
 
   const handleConfirmDelete = async () => {
-    if (!transactionToDeleteId || !selectedBranch) {
+    if (!transactionToDelete || !selectedBranch) {
         toast({ title: "Error", description: "Transaksi atau cabang tidak valid untuk dihapus.", variant: "destructive"});
         return;
     }
@@ -173,16 +185,50 @@ export default function SalesHistoryPage() {
     }
 
     setIsDeleting(true);
-    const result = await apiDeleteTransaction(transactionToDeleteId, selectedBranch.id, deletePasswordInput);
+    const result = await apiDeleteTransaction(transactionToDelete.id, selectedBranch.id, deletePasswordInput);
     setIsDeleting(false);
 
     if (result.success) {
         toast({ title: "Transaksi Dihapus", description: "Transaksi berhasil dihapus dan stok dikembalikan."});
         setShowDeleteDialog(false);
-        setTransactionToDeleteId(null);
+        setTransactionToDelete(null);
         await fetchTransactions(); 
     } else {
         toast({ title: "Gagal Menghapus", description: result.error || "Terjadi kesalahan saat menghapus transaksi.", variant: "destructive"});
+    }
+  };
+
+  const handleConfirmRequestDeletion = async () => {
+    if (!transactionToDelete || !currentUser || !userData || !selectedBranch) {
+      toast({ title: "Error", description: "Data tidak lengkap untuk mengajukan permintaan.", variant: "destructive" });
+      return;
+    }
+    if (!deletionRequestReason.trim()) {
+      toast({ title: "Alasan Diperlukan", description: "Mohon isi alasan mengapa transaksi ini perlu dihapus.", variant: "destructive" });
+      return;
+    }
+    setIsRequestingDeletion(true);
+    const requestInput: TransactionDeletionRequestInput = {
+      transactionId: transactionToDelete.id,
+      transactionInvoiceNumber: transactionToDelete.invoiceNumber,
+      transactionDate: transactionToDelete.timestamp,
+      transactionTotalAmount: transactionToDelete.totalAmount,
+      branchId: selectedBranch.id,
+      requestedByUserId: currentUser.uid,
+      requestedByUserName: userData.name,
+      reason: deletionRequestReason,
+    };
+    const result = await createDeletionRequest(requestInput);
+    setIsRequestingDeletion(false);
+
+    if ("error" in result) {
+      toast({ title: "Gagal Mengajukan", description: result.error, variant: "destructive" });
+    } else {
+      toast({ title: "Permintaan Terkirim", description: "Permintaan penghapusan transaksi telah dikirim ke admin." });
+      setShowRequestDeletionDialog(false);
+      setTransactionToDelete(null);
+      setDeletionRequestReason("");
+      // No need to refetch transactions here as it's not deleted yet.
     }
   };
 
@@ -345,10 +391,10 @@ export default function SalesHistoryPage() {
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
                                   className="text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
-                                  onClick={() => handleOpenDeleteDialog(tx.id)}
+                                  onClick={() => handleOpenDeleteAction(tx)}
                                 >
                                   <Trash2 className="mr-2 h-3.5 w-3.5" />
-                                  Hapus Transaksi
+                                  {userData?.role === 'admin' ? "Hapus Transaksi" : "Ajukan Hapus"}
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -394,44 +440,72 @@ export default function SalesHistoryPage() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Hapus Transaksi</AlertDialogTitle>
-              <AlertDialogDescription className="text-xs">
-                Anda akan menghapus invoice <strong>{allFetchedTransactions.find(tx => tx.id === transactionToDeleteId)?.invoiceNumber}</strong> secara permanen. 
-                Stok akan dikembalikan jika transaksi belum diretur. Tindakan ini tidak dapat dibatalkan.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <div className="py-2 space-y-2">
-              <Label htmlFor="deletePasswordInput" className="text-xs">Password Hapus Transaksi</Label>
-              <Input
-                id="deletePasswordInput"
-                type="password"
-                value={deletePasswordInput}
-                onChange={(e) => setDeletePasswordInput(e.target.value)}
-                placeholder="Masukkan password"
-                className="text-xs h-9"
-              />
-               <p className="text-xs text-muted-foreground">Password ini diatur oleh admin per cabang.</p>
-            </div>
-            <AlertDialogFooter>
-              <AlertDialogCancel className="text-xs h-8" onClick={() => { setShowDeleteDialog(false); setTransactionToDeleteId(null); }}>Batal</AlertDialogCancel>
-              <AlertDialogAction
-                className="text-xs h-8" 
-                variant="destructive"
-                onClick={handleConfirmDelete}
-                disabled={isDeleting || !deletePasswordInput.trim()}
-              >
-                {isDeleting ? "Menghapus..." : "Ya, Hapus Transaksi"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        {userData?.role === 'admin' && (
+          <AlertDialog open={showDeleteDialog} onOpenChange={(open) => { if (!open) setTransactionToDelete(null); setShowDeleteDialog(open);}}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Hapus Transaksi</AlertDialogTitle>
+                <AlertDialogDescription className="text-xs">
+                  Anda akan menghapus invoice <strong>{transactionToDelete?.invoiceNumber}</strong> secara permanen. 
+                  Stok akan dikembalikan jika transaksi belum diretur. Tindakan ini tidak dapat dibatalkan.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="py-2 space-y-2">
+                <Label htmlFor="deletePasswordInput" className="text-xs">Password Hapus Transaksi</Label>
+                <Input
+                  id="deletePasswordInput"
+                  type="password"
+                  value={deletePasswordInput}
+                  onChange={(e) => setDeletePasswordInput(e.target.value)}
+                  placeholder="Masukkan password"
+                  className="text-xs h-9"
+                />
+                <p className="text-xs text-muted-foreground">Password ini diatur oleh admin per cabang.</p>
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel className="text-xs h-8" onClick={() => { setShowDeleteDialog(false); setTransactionToDelete(null); }}>Batal</AlertDialogCancel>
+                <AlertDialogAction
+                  className="text-xs h-8" 
+                  variant="destructive"
+                  onClick={handleConfirmDelete}
+                  disabled={isDeleting || !deletePasswordInput.trim()}
+                >
+                  {isDeleting ? "Menghapus..." : "Ya, Hapus Transaksi"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
 
+        {userData?.role === 'cashier' && (
+          <Dialog open={showRequestDeletionDialog} onOpenChange={(open) => { if (!open) setTransactionToDelete(null); setShowRequestDeletionDialog(open);}}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogModalTitle className="text-base">Ajukan Permintaan Hapus Transaksi</DialogModalTitle>
+                <DialogModalDescription className="text-xs">
+                  Permintaan akan dikirim ke Admin untuk invoice: <strong>{transactionToDelete?.invoiceNumber}</strong>.
+                </DialogModalDescription>
+              </DialogHeader>
+              <div className="py-3 space-y-2">
+                <Label htmlFor="deletionRequestReason" className="text-xs">Alasan Permintaan Penghapusan (Wajib)</Label>
+                <Textarea
+                  id="deletionRequestReason"
+                  value={deletionRequestReason}
+                  onChange={(e) => setDeletionRequestReason(e.target.value)}
+                  placeholder="Jelaskan mengapa transaksi ini perlu dihapus..."
+                  className="text-xs min-h-[80px]"
+                />
+              </div>
+              <DialogFooter>
+                <DialogClose asChild><Button type="button" variant="outline" className="text-xs h-8">Batal</Button></DialogClose>
+                <Button onClick={handleConfirmRequestDeletion} className="text-xs h-8" disabled={isRequestingDeletion || !deletionRequestReason.trim()}>
+                   {isRequestingDeletion ? "Mengirim..." : <><Send className="mr-1.5 h-3.5 w-3.5"/> Kirim Permintaan</>}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </MainLayout>
     </ProtectedRoute>
   );
 }
-
-    

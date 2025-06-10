@@ -26,6 +26,7 @@ import {
   BellDot,
   Send,
   History as HistoryIconLucide,
+  ShieldAlert, // For deletion requests
 } from "lucide-react";
 import {
   SidebarMenu,
@@ -88,17 +89,18 @@ const navItemsConfig = (unreadCount: number) => [
       { href: "/reports/stock-movement", label: "Pergerakan Stok Produk", icon: PackageOpen },
     ]
   },
-  { href: "/branch-settings", label: "Pengaturan Cabang", icon: Settings, adminOnly: false }, // Added Branch Settings
+  { href: "/branch-settings", label: "Pengaturan Cabang", icon: Settings, adminOnly: false }, 
   {
-    label: "Admin Notifikasi",
-    icon: Send,
-    adminOnly: true,
+    label: "Administrasi",
+    icon: Settings,
+    adminOnly: true, // This group is admin only
     subItems: [
       { href: "/admin/send-notification", label: "Kirim Notifikasi", icon: Send },
       { href: "/admin/notification-history", label: "Riwayat Notifikasi", icon: HistoryIconLucide },
+      { href: "/admin/deletion-requests", label: "Permintaan Hapus Trx", icon: ShieldAlert },
+      { href: "/admin/settings", label: "Pengaturan Umum Admin", icon: Settings },
     ]
-  },
-  { href: "/admin/settings", label: "Pengaturan Admin", icon: Settings, adminOnly: true },
+  }
 ];
 
 export default function AppSidebarNav() {
@@ -148,17 +150,24 @@ export default function AppSidebarNav() {
               if (item.adminOnly && userData?.role !== 'admin') {
                 return null;
               }
-              // Disable all items except Dashboard, Notifications, and Admin Settings if cashier has no branch
+              
               const isCashierNoBranch = userData?.role === 'cashier' && !userData.branchId;
               const isAllowedForCashierNoBranch = item.href === '/dashboard' || 
                                                   item.label === 'Notifikasi' || 
-                                                  (item.adminOnly && item.href === '/admin/settings'); // Admin settings is fine
+                                                  item.href === '/account' || // Allow access to account page
+                                                  (item.adminOnly && item.href === '/admin/settings');
 
               const isNavItemDisabled = isCashierNoBranch && !isAllowedForCashierNoBranch && 
-                                      !item.subItems?.some(sub => sub.href === '/dashboard' || sub.href === '/notifications');
+                                      !item.subItems?.some(sub => sub.href === '/dashboard' || sub.href === '/notifications' || sub.href === '/account');
 
 
               if (item.subItems) {
+                // Check if any sub-item should be visible for this user role
+                const visibleSubItems = item.subItems.filter(subItem => !(subItem.adminOnly && userData?.role !== 'admin'));
+                if (visibleSubItems.length === 0 && item.adminOnly && userData?.role !== 'admin') {
+                    return null; // Hide entire admin group if no sub-items are visible
+                }
+                
                 return (
                   <SidebarMenuItem key={item.label} className="flex flex-col items-start">
                     <SidebarMenuButton
@@ -184,8 +193,8 @@ export default function AppSidebarNav() {
                          )}
                     </SidebarMenuButton>
                     <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
-                      {item.subItems.map(subItem => {
-                          const isSubItemDisabled = isCashierNoBranch && subItem.href !== '/dashboard' && subItem.href !== '/notifications';
+                      {visibleSubItems.map(subItem => {
+                          const isSubItemDisabled = isCashierNoBranch && subItem.href !== '/dashboard' && subItem.href !== '/notifications' && subItem.href !== '/account';
                           return (
                             <SidebarMenuSubItem key={subItem.href}>
                             <Link href={isSubItemDisabled ? "#" : subItem.href} passHref legacyBehavior>

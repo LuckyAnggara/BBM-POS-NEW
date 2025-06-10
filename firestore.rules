@@ -8,149 +8,134 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
-
-    function isUser(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    function requestUserBranchId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.branchId;
-    }
-    
-    function isUserAssignedToBranch(branchId) {
-        return requestUserBranchId() == branchId;
-    }
-
     function isRequestUserAdmin() {
       return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
-    
-    function isRequestUserCashier() {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cashier';
+    function requestUserBranchId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.branchId;
+    }
+    function isUserAssignedToBranch(branchId) {
+      return requestUserBranchId() == branchId;
+    }
+    function isUserAssignedToResourceBranch() {
+      return requestUserBranchId() == resource.data.branchId;
+    }
+     function isUserAssignedToRequestResourceBranch() {
+      return requestUserBranchId() == request.resource.data.branchId;
     }
 
-    // Users collection
+
+    // Users Collection
     match /users/{userId} {
-      allow read: if isAuthenticated(); // Admins can read all, users can read their own if needed by app.
-      allow create: if isAuthenticated(); // Typically, user creation is handled by auth triggers or admin.
-      allow update: if isUser(userId) || isRequestUserAdmin(); // User can update their own, admin can update any.
-      // allow delete: if isRequestUserAdmin(); // Only admin can delete user documents (consider implications).
+      allow read: if request.auth.uid == userId || isRequestUserAdmin();
+      allow create: if request.auth.uid == userId; // Allows new users to create their own document
+      allow update: if request.auth.uid == userId && request.resource.data.keys().hasOnly(['name', 'avatarUrl', 'localPrinterUrl', 'updatedAt'])
+                    || isRequestUserAdmin() && request.resource.data.keys().hasOnly(['name', 'email', 'avatarUrl', 'branchId', 'role', 'localPrinterUrl', 'createdAt', 'updatedAt']);
     }
 
-    // Branches collection
+    // Branches Collection
     match /branches/{branchId} {
       allow read: if isAuthenticated();
       allow create: if isRequestUserAdmin();
       allow update: if isRequestUserAdmin() || 
-                      (isUserAssignedToBranch(branchId) && 
-                       request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                         'name', 'invoiceName', 'currency', 'taxRate', 'address', 'phoneNumber', 'defaultReportPeriod', 'updatedAt'
-                       ]));
+                       (isUserAssignedToBranch(branchId) && 
+                        request.resource.data.keys().hasOnly(['name', 'invoiceName', 'currency', 'taxRate', 'address', 'phoneNumber', 'defaultReportPeriod', 'updatedAt']));
       allow delete: if isRequestUserAdmin();
     }
 
-    // Inventory Items collection
-    match /inventoryItems/{itemId} {
-      allow read: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow create: if isAuthenticated() && (isUserAssignedToBranch(request.resource.data.branchId) || isRequestUserAdmin());
-      allow update: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow delete: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-    }
-
-    // Inventory Categories collection
+    // Inventory Categories Collection
     match /inventoryCategories/{categoryId} {
-      allow read: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow create: if isAuthenticated() && (isUserAssignedToBranch(request.resource.data.branchId) || isRequestUserAdmin());
-      // allow update: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin()); // Usually categories are not updated, but re-created or managed differently
-      allow delete: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-    }
-
-    // Customers collection
-    match /customers/{customerId} {
-      allow read: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow create: if isAuthenticated() && (isUserAssignedToBranch(request.resource.data.branchId) || isRequestUserAdmin());
-      allow update: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow delete: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-    }
-    
-    // Suppliers collection
-    match /suppliers/{supplierId} {
-      allow read: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow create: if isAuthenticated() && (isUserAssignedToBranch(request.resource.data.branchId) || isRequestUserAdmin());
-      allow update: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow delete: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-    }
-
-    // Expenses collection
-    match /expenses/{expenseId} {
-      allow read: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow create: if isAuthenticated() && (isUserAssignedToBranch(request.resource.data.branchId) || isRequestUserAdmin()) && request.auth.uid == request.resource.data.userId;
-      allow update: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin()) && request.auth.uid == resource.data.userId; // Only creator or admin
-      allow delete: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin()) && request.auth.uid == resource.data.userId; // Only creator or admin
-    }
-    
-    // POS Shifts collection
-    match /posShifts/{shiftId} {
-      allow read: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow create: if isAuthenticated() && (isUserAssignedToBranch(request.resource.data.branchId) || isRequestUserAdmin()) && request.auth.uid == request.resource.data.userId;
-      allow update(writeFields): if isAuthenticated() && 
-                                  (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin()) && 
-                                  request.auth.uid == resource.data.userId &&
-                                  (writeFields.hasOnly(['status', 'endTime', 'expectedCashAtEnd', 'actualCashAtEnd', 'cashDifference', 'totalSalesByPaymentMethod']) ||
-                                   writeFields.hasOnly(['status', 'endTime', 'expectedCashAtEnd', 'actualCashAtEnd', 'cashDifference'])); // Allow older version without totalSalesByPaymentMethod for compatibility
-      // allow delete: if isRequestUserAdmin(); // Typically shifts are not deleted, just marked or archived
-    }
-
-    // POS Transactions collection
-    match /posTransactions/{transactionId} {
-      allow read: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow create: if isAuthenticated() && (isUserAssignedToBranch(request.resource.data.branchId) || isRequestUserAdmin()) && request.auth.uid == request.resource.data.userId;
-      allow update: if isAuthenticated() && // Allow return processing by any authenticated user of the branch or admin
-                      (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin()) &&
-                      request.resource.data.status == 'returned' && // only status can change to returned
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'returnReason', 'returnedAt', 'returnedByUserId', 'outstandingAmount', 'paymentStatus', 'updatedAt']) ||
-                      // Allow payment recording for credit sales
-                      (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin()) &&
-                      resource.data.isCreditSale == true &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasAny(['outstandingAmount', 'paymentStatus', 'paymentsMade', 'updatedAt']);
-
-
-      allow delete: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin()); // Requires password check in backend
-    }
-    
-    // Purchase Orders collection
-    match /purchaseOrders/{poId} {
-      allow read: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      allow create: if isAuthenticated() && (isUserAssignedToBranch(request.resource.data.branchId) || isRequestUserAdmin()) && request.auth.uid == request.resource.data.createdById;
-      allow update: if isAuthenticated() && (isUserAssignedToBranch(resource.data.branchId) || isRequestUserAdmin());
-      // allow delete: if isRequestUserAdmin(); // Or only if status is draft
-    }
-
-    // Notifications collection
-    match /notifications/{notificationId} {
       allow read: if isAuthenticated();
-      allow create: if isRequestUserAdmin() && 
-                      request.auth.uid == request.resource.data.createdByUid &&
-                      request.resource.data.isGlobal == true;
-      // Not allowing update/delete for now to keep them immutable once sent
-      allow update: if false; 
-      allow delete: if false;
+      allow create: if isAuthenticated() && isUserAssignedToRequestResourceBranch();
+      allow update: if isAuthenticated() && isUserAssignedToResourceBranch();
+      allow delete: if isAuthenticated() && isUserAssignedToResourceBranch();
     }
 
-    // User Notification Read Status
-    // Path: /userNotificationStatus/{userId}/notificationsRead/{notificationId}
-    match /userNotificationStatus/{userId}/{subcollection}/{documentId} {
-      allow read: if isUser(userId); // User can only read their own read statuses
-      allow write: if isUser(userId); // User can only write (create/update) their own read statuses
-                                     // Delete might not be necessary, marking as read is an update/create.
+    // Inventory Items Collection
+    match /inventoryItems/{itemId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isUserAssignedToRequestResourceBranch();
+      allow update: if isAuthenticated() && isUserAssignedToResourceBranch();
+      allow delete: if isAuthenticated() && isUserAssignedToResourceBranch();
+    }
+
+    // Customers Collection
+    match /customers/{customerId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isUserAssignedToRequestResourceBranch();
+      allow update: if isAuthenticated() && isUserAssignedToResourceBranch();
+      allow delete: if isAuthenticated() && isUserAssignedToResourceBranch();
     }
     
+    // Suppliers Collection
+    match /suppliers/{supplierId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isUserAssignedToRequestResourceBranch();
+      allow update: if isAuthenticated() && isUserAssignedToResourceBranch();
+      allow delete: if isAuthenticated() && isUserAssignedToResourceBranch();
+    }
+
+    // Expenses Collection
+    match /expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId && isUserAssignedToRequestResourceBranch();
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId && isUserAssignedToResourceBranch();
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.userId && isUserAssignedToResourceBranch();
+    }
+
+    // POS Shifts Collection
+    match /posShifts/{shiftId} {
+      allow read: if isAuthenticated() && (isRequestUserAdmin() || request.auth.uid == resource.data.userId);
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId && isUserAssignedToRequestResourceBranch();
+      allow update: if isAuthenticated() && (isRequestUserAdmin() || request.auth.uid == resource.data.userId);
+    }
+
+    // POS Transactions Collection
+    match /posTransactions/{transactionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId && isUserAssignedToRequestResourceBranch();
+      // Update primarily for returns or admin actions. Or payment status.
+      allow update: if isAuthenticated() && (isRequestUserAdmin() || request.auth.uid == resource.data.userId); 
+      allow delete: if isRequestUserAdmin(); // Deletion only by admin (with password checked server-side)
+    }
+    
+    // Purchase Orders Collection
+    match /purchaseOrders/{poId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.auth.uid == request.resource.data.createdById && isUserAssignedToRequestResourceBranch();
+        allow update: if isAuthenticated() && (isRequestUserAdmin() || request.auth.uid == resource.data.createdById || request.auth.uid == request.resource.data.createdById); // Allow creator or admin to update
+        allow delete: if isRequestUserAdmin(); // Or creator if status is draft? For now admin only
+    }
+
     // Bank Accounts Collection
     match /bankAccounts/{accountId} {
-      allow read: if isAuthenticated(); // All authenticated users can read bank accounts (e.g., for POS selection)
-      allow create: if isRequestUserAdmin();
-      allow update: if isRequestUserAdmin();
-      allow delete: if isRequestUserAdmin();
+        allow read: if isAuthenticated();
+        allow create: if isRequestUserAdmin();
+        allow update: if isRequestUserAdmin();
+        allow delete: if isRequestUserAdmin();
+    }
+    
+    // Notifications Collection
+    match /notifications/{notificationId} {
+        allow read: if isAuthenticated();
+        allow create: if isRequestUserAdmin() && request.auth.uid == request.resource.data.createdByUid && request.resource.data.isGlobal == true;
+        allow update: if false; // Notifications are immutable once created
+        allow delete: if false; // Notifications cannot be deleted
+    }
+
+    // User Notification Read Status Subcollection
+    match /userNotificationStatus/{userId}/notificationsRead/{notificationReadId} {
+        allow read, write: if request.auth.uid == userId;
+    }
+
+    // Transaction Deletion Requests Collection
+    match /transactionDeletionRequests/{requestId} {
+      allow read: if isAuthenticated() && (isRequestUserAdmin() || request.auth.uid == resource.data.requestedByUserId);
+      allow create: if isAuthenticated() && 
+                       request.auth.uid == request.resource.data.requestedByUserId &&
+                       request.resource.data.branchId == requestUserBranchId(); // User can only request for their branch
+      allow update: if isRequestUserAdmin(); // Only admin can update (approve/reject)
+      allow delete: if false; // Keep history
     }
 
   }
