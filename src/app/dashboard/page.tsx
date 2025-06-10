@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getTransactionsByDateRangeAndBranch, getActiveShift, getTransactionsForShift, type PosTransaction } from "@/lib/firebase/pos";
 import { getExpenses, type Expense } from "@/lib/firebase/expenses";
 import { getInventoryItems, type InventoryItem } from "@/lib/firebase/inventory";
-import { startOfMonth, endOfMonth, format, subDays, startOfDay, endOfDay, startOfWeek } from "date-fns";
+import { startOfMonth, endOfMonth, format, subDays, startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 import { id as localeID } from 'date-fns/locale';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from 'recharts';
 import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
