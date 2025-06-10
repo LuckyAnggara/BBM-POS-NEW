@@ -15,6 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon, Percent } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
@@ -51,7 +52,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 type ViewMode = "card" | "table";
 const LOCALSTORAGE_POS_VIEW_MODE_KEY = "branchwise_posViewMode";
 
-interface CartItem extends TransactionItem {}
+interface CartItem extends TransactionItem {
+  itemDiscountType?: 'nominal' | 'percentage';
+  itemDiscountValue?: number;
+}
 
 const COMMON_BANKS = ["BCA", "Mandiri", "BRI", "BNI", "CIMB Niaga", "Danamon", "Lainnya"];
 
@@ -120,6 +124,12 @@ export default function POSPage() {
   const [shippingCostInput, setShippingCostInput] = useState("");
   const [voucherCodeInput, setVoucherCodeInput] = useState("");
   const [voucherDiscountInput, setVoucherDiscountInput] = useState("");
+
+  // State for Item Discount Dialog
+  const [isItemDiscountDialogOpen, setIsItemDiscountDialogOpen] = useState(false);
+  const [selectedItemForDiscount, setSelectedItemForDiscount] = useState<CartItem | null>(null);
+  const [currentDiscountType, setCurrentDiscountType] = useState<'nominal' | 'percentage'>('nominal');
+  const [currentDiscountValue, setCurrentDiscountValue] = useState<string>("");
 
 
   useEffect(() => {
@@ -251,12 +261,12 @@ export default function POSPage() {
   const prepareEndShiftCalculations = async () => {
     if (!activeShift) return;
     setIsEndingShift(true);
-    await fetchShiftTransactions();
-    const currentShiftTransactions = shiftTransactions;
+    await fetchShiftTransactions(); // Make sure to await this
+    const currentShiftTransactions = shiftTransactions; // Use the state updated by fetchShiftTransactions
 
     const salesByPayment: Record<ShiftPaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
 
-    currentShiftTransactions.forEach(tx => {
+    currentShiftTransactions.forEach(tx => { // Use the fetched transactions
         if (tx.paymentTerms === 'cash' || tx.paymentTerms === 'card' || tx.paymentTerms === 'transfer') {
              if (tx.status === 'completed') {
                 const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod;
@@ -332,32 +342,82 @@ export default function POSPage() {
       return [...prevItems, {
           productId: product.id,
           productName: product.name,
-          originalPrice: product.price, // Store original price
-          price: product.price, // Price after discount (initially same as original)
-          discountAmount: 0, // Initialize discount amount
+          originalPrice: product.price,
+          price: product.price,
+          discountAmount: 0,
+          itemDiscountType: 'nominal',
+          itemDiscountValue: 0,
           quantity: 1,
           costPrice: product.costPrice || 0,
-          total: product.price // Total based on price (which is after discount)
+          total: product.price
       }];
     });
   };
   
-  // Placeholder for applying item discount - UI needs to be added
-  const handleApplyItemDiscount = (productId: string, discount: number) => {
+  const handleOpenItemDiscountDialog = (item: CartItem) => {
+    setSelectedItemForDiscount(item);
+    setCurrentDiscountType(item.itemDiscountType || 'nominal');
+    setCurrentDiscountValue((item.itemDiscountValue || 0).toString());
+    setIsItemDiscountDialogOpen(true);
+  };
+
+  const handleItemDiscountTypeChange = (type: 'nominal' | 'percentage') => {
+    setCurrentDiscountType(type);
+    // Reset value when type changes, or try to convert if makes sense
+    // For now, just reset to avoid complex conversion logic
+    setCurrentDiscountValue("");
+  };
+
+  const handleItemDiscountValueChange = (value: string) => {
+    setCurrentDiscountValue(value);
+  };
+
+  const calculateDiscountedPrice = () => {
+    if (!selectedItemForDiscount || !selectedItemForDiscount.originalPrice) return { discountedPrice: 0, actualDiscountAmount: 0 };
+    const originalPrice = selectedItemForDiscount.originalPrice;
+    const discountValueNum = parseFloat(currentDiscountValue);
+
+    if (isNaN(discountValueNum) || discountValueNum < 0) {
+      return { discountedPrice: originalPrice, actualDiscountAmount: 0 };
+    }
+
+    let actualDiscountAmount = 0;
+    if (currentDiscountType === 'percentage') {
+      actualDiscountAmount = originalPrice * (discountValueNum / 100);
+    } else { // nominal
+      actualDiscountAmount = discountValueNum;
+    }
+
+    if (actualDiscountAmount > originalPrice) {
+      actualDiscountAmount = originalPrice; // Discount cannot be more than original price
+    }
+    
+    const discountedPrice = originalPrice - actualDiscountAmount;
+    return { discountedPrice: discountedPrice < 0 ? 0 : discountedPrice, actualDiscountAmount };
+  };
+
+  const handleConfirmItemDiscount = () => {
+    if (!selectedItemForDiscount) return;
+    const { discountedPrice, actualDiscountAmount } = calculateDiscountedPrice();
+
     setCartItems(prevItems =>
       prevItems.map(item => {
-        if (item.productId === productId && item.originalPrice) {
-          const newPrice = item.originalPrice - discount;
+        if (item.productId === selectedItemForDiscount.productId) {
           return {
             ...item,
-            price: newPrice > 0 ? newPrice : 0,
-            discountAmount: discount,
-            total: (newPrice > 0 ? newPrice : 0) * item.quantity,
+            price: discountedPrice,
+            discountAmount: actualDiscountAmount, // This is per unit
+            itemDiscountType: currentDiscountType,
+            itemDiscountValue: parseFloat(currentDiscountValue) || 0,
+            total: discountedPrice * item.quantity,
           };
         }
         return item;
       })
     );
+    setIsItemDiscountDialogOpen(false);
+    setSelectedItemForDiscount(null);
+    setCurrentDiscountValue("");
   };
 
 
@@ -374,7 +434,7 @@ export default function POSPage() {
         setCartItems(prevItems =>
             prevItems.map(item =>
                 item.productId === productId
-                ? { ...item, quantity: productInStock.quantity, total: productInStock.quantity * item.price }
+                ? { ...item, quantity: productInStock.quantity, total: productInStock.quantity * item.price } // price already considers discount
                 : item
             )
         );
@@ -383,7 +443,7 @@ export default function POSPage() {
     setCartItems(prevItems =>
       prevItems.map(item =>
         item.productId === productId
-          ? { ...item, quantity: newQuantity, total: newQuantity * item.price }
+          ? { ...item, quantity: newQuantity, total: newQuantity * item.price } // price already considers discount
           : item
       )
     );
@@ -445,7 +505,7 @@ export default function POSPage() {
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
       userId: currentUser.uid,
-      items: cartItems,
+      items: cartItems, // cartItems now include discountAmount and originalPrice per item
       subtotal: subtotalAfterItemDiscounts,
       taxAmount: tax,
       shippingCost: shippingCost,
@@ -659,18 +719,18 @@ export default function POSPage() {
           items: transactionDetails.items.map(item => ({
             name: item.productName,
             quantity: item.quantity,
-            originalPrice: item.originalPrice,
-            price: item.price, // Price after discount
-            discountAmount: item.discountAmount,
+            originalPrice: item.originalPrice, // Added
+            price: item.price, // Price after item discount
+            discountAmount: item.discountAmount, // Item discount amount per unit
             total: item.total,
           })),
-          subtotal: transactionDetails.subtotal, // Subtotal after item discounts
+          subtotal: transactionDetails.subtotal, // This is subtotal AFTER item discounts
           taxAmount: transactionDetails.taxAmount,
-          shippingCost: transactionDetails.shippingCost || 0,
-          totalItemDiscount: transactionDetails.items.reduce((sum, item) => sum + (item.discountAmount || 0) * item.quantity, 0),
-          voucherDiscount: transactionDetails.voucherDiscountAmount || 0,
-          overallTotalDiscount: transactionDetails.totalDiscountAmount || 0,
-          totalAmount: transactionDetails.totalAmount, // Grand total
+          shippingCost: transactionDetails.shippingCost || 0, // Added
+          totalItemDiscount: transactionDetails.items.reduce((sum, item) => sum + (item.discountAmount || 0) * item.quantity, 0), // Added
+          voucherDiscount: transactionDetails.voucherDiscountAmount || 0, // Added
+          overallTotalDiscount: transactionDetails.totalDiscountAmount || 0, // Added
+          totalAmount: transactionDetails.totalAmount, // Grand total after all discounts and shipping
           paymentMethod: transactionDetails.paymentTerms.charAt(0).toUpperCase() + transactionDetails.paymentTerms.slice(1),
           amountPaid: transactionDetails.amountPaid,
           changeGiven: transactionDetails.changeGiven,
@@ -772,6 +832,8 @@ export default function POSPage() {
       .reduce((sum, tx) => sum + tx.totalAmount, 0);
   }, [shiftTransactions]);
 
+  const { discountedPrice: previewDiscountedPrice, actualDiscountAmount: previewActualDiscountAmount } = calculateDiscountedPrice();
+
 
   if (!posModeActive || loadingShift ) {
     return <div className="flex h-screen items-center justify-center">Memuat Mode POS...</div>;
@@ -867,37 +929,50 @@ export default function POSPage() {
 
             <Card className="w-2/5 m-3 ml-0 flex flex-col shadow-lg rounded-lg">
               <CardHeader className="p-3 border-b"><CardTitle className="text-base font-semibold">Penjualan Saat Ini</CardTitle></CardHeader>
-              <CardContent className="flex-grow overflow-y-auto p-0"><Table><TableHeader><TableRow><TableHead className="text-xs px-2 py-1.5">Item</TableHead><TableHead className="text-center text-xs px-2 py-1.5 w-[90px]">Jml</TableHead><TableHead className="text-right text-xs px-2 py-1.5">Total</TableHead><TableHead className="text-right text-xs px-1 py-1.5 w-[30px]"> </TableHead></TableRow></TableHeader><TableBody>
-                    {cartItems.map(item => (<TableRow key={item.productId}><TableCell className="font-medium text-xs py-1 px-2 truncate">{item.productName}</TableCell><TableCell className="text-center text-xs py-1 px-2"><div className="flex items-center justify-center gap-0.5"><Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity - 1)}><MinusCircle className="h-3.5 w-3.5" /></Button><Input type="number" value={item.quantity} onChange={(e) => handleUpdateCartQuantity(item.productId, parseInt(e.target.value) || 0)} className="h-6 w-10 text-center text-xs p-0 border-0 focus-visible:ring-0 bg-transparent" disabled={!activeShift}/><Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity + 1)}><PlusCircle className="h-3.5 w-3.5" /></Button></div></TableCell><TableCell className="text-right text-xs py-1 px-2">{currencySymbol}{item.total.toLocaleString('id-ID')}</TableCell><TableCell className="text-right py-1 px-1"><Button variant="ghost" size="icon" className="h-5 w-5 text-destructive hover:text-destructive/80" disabled={!activeShift} onClick={() => handleRemoveFromCart(item.productId)}><XCircle className="h-3.5 w-3.5" /></Button></TableCell></TableRow>))}
-                    {cartItems.length === 0 && (<TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8 text-xs"><ShoppingCart className="mx-auto h-8 w-8 text-muted-foreground/50 mb-2" />Keranjang kosong</TableCell></TableRow>)}
+              <CardContent className="flex-grow overflow-y-auto p-0"><Table><TableHeader><TableRow><TableHead className="text-xs px-2 py-1.5">Item</TableHead><TableHead className="text-center text-xs px-1 py-1.5 w-[60px]">Jml</TableHead><TableHead className="text-xs px-1 py-1.5 text-center w-[60px]">Diskon</TableHead><TableHead className="text-right text-xs px-2 py-1.5">Total</TableHead><TableHead className="text-right text-xs px-1 py-1.5 w-[30px]"> </TableHead></TableRow></TableHeader><TableBody>
+                    {cartItems.map(item => (<TableRow key={item.productId}>
+                        <TableCell className="font-medium text-xs py-1 px-2 truncate">
+                            {item.productName}
+                            {item.discountAmount && item.discountAmount > 0 && (
+                                <p className="text-[0.65rem] text-muted-foreground line-through">{currencySymbol}{(item.originalPrice || 0).toLocaleString('id-ID')}</p>
+                            )}
+                        </TableCell>
+                        <TableCell className="text-center text-xs py-1 px-1"><div className="flex items-center justify-center gap-0.5"><Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity - 1)}><MinusCircle className="h-3.5 w-3.5" /></Button><Input type="number" value={item.quantity} onChange={(e) => handleUpdateCartQuantity(item.productId, parseInt(e.target.value) || 0)} className="h-6 w-9 text-center text-xs p-0 border-0 focus-visible:ring-0 bg-transparent" disabled={!activeShift}/><Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity + 1)}><PlusCircle className="h-3.5 w-3.5" /></Button></div></TableCell>
+                        <TableCell className="text-center py-1 px-1">
+                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleOpenItemDiscountDialog(item)} disabled={!activeShift}>
+                                <Percent className="h-3.5 w-3.5" />
+                            </Button>
+                        </TableCell>
+                        <TableCell className="text-right text-xs py-1 px-2">{currencySymbol}{item.total.toLocaleString('id-ID')}</TableCell><TableCell className="text-right py-1 px-1"><Button variant="ghost" size="icon" className="h-5 w-5 text-destructive hover:text-destructive/80" disabled={!activeShift} onClick={() => handleRemoveFromCart(item.productId)}><XCircle className="h-3.5 w-3.5" /></Button></TableCell></TableRow>))}
+                    {cartItems.length === 0 && (<TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8 text-xs"><ShoppingCart className="mx-auto h-8 w-8 text-muted-foreground/50 mb-2" />Keranjang kosong</TableCell></TableRow>)}
                   </TableBody></Table></CardContent>
               <CardFooter className="flex flex-col gap-1.5 border-t p-3">
                 <div className="flex justify-between text-xs w-full"><span>Subtotal (Stlh Diskon Item):</span><span>{currencySymbol}{subtotalAfterItemDiscounts.toLocaleString('id-ID')}</span></div>
                 <div className="flex justify-between text-xs w-full"><span>Pajak ({selectedBranch?.taxRate || (taxRate*100).toFixed(0)}%):</span><span>{currencySymbol}{tax.toLocaleString('id-ID')}</span></div>
                 
-                <div className="grid grid-cols-2 gap-x-3 w-full mt-1">
+                <div className="w-full grid grid-cols-2 gap-x-3 gap-y-1.5 mt-1">
                     <div>
-                        <Label htmlFor="shippingCostInput" className="text-[0.7rem]">Ongkos Kirim ({currencySymbol})</Label>
+                        <Label htmlFor="shippingCostInput" className="text-[0.7rem] text-muted-foreground">Ongkos Kirim ({currencySymbol})</Label>
                         <Input id="shippingCostInput" type="number" value={shippingCostInput} onChange={(e) => setShippingCostInput(e.target.value)} placeholder="0" className="h-8 text-xs mt-0.5"/>
                     </div>
                     <div>
-                        <Label htmlFor="voucherCodeInput" className="text-[0.7rem]">Kode Voucher</Label>
+                        <Label htmlFor="voucherCodeInput" className="text-[0.7rem] text-muted-foreground">Kode Voucher</Label>
                         <Input id="voucherCodeInput" type="text" value={voucherCodeInput} onChange={(e) => setVoucherCodeInput(e.target.value)} placeholder="Opsional" className="h-8 text-xs mt-0.5"/>
                     </div>
-                </div>
-                 <div>
-                    <Label htmlFor="voucherDiscountInput" className="text-[0.7rem]">Diskon Voucher ({currencySymbol})</Label>
-                    <Input id="voucherDiscountInput" type="number" value={voucherDiscountInput} onChange={(e) => setVoucherDiscountInput(e.target.value)} placeholder="0" className="h-8 text-xs mt-0.5 w-1/2"/>
+                    <div className="col-span-2">
+                        <Label htmlFor="voucherDiscountInput" className="text-[0.7rem] text-muted-foreground">Diskon Voucher ({currencySymbol})</Label>
+                        <Input id="voucherDiscountInput" type="number" value={voucherDiscountInput} onChange={(e) => setVoucherDiscountInput(e.target.value)} placeholder="0" className="h-8 text-xs mt-0.5"/>
+                    </div>
                 </div>
 
                 {totalDiscountAmount > 0 && (
-                    <div className="flex justify-between text-xs w-full text-destructive">
+                    <div className="flex justify-between text-xs w-full text-destructive pt-1">
                         <span>Total Diskon Keseluruhan:</span>
                         <span>-{currencySymbol}{totalDiscountAmount.toLocaleString('id-ID')}</span>
                     </div>
                 )}
 
-                <div className="flex justify-between text-base font-bold w-full mt-1"><span>Total:</span><span>{currencySymbol}{total.toLocaleString('id-ID')}</span></div>
+                <div className="flex justify-between text-base font-bold w-full mt-1.5 pt-1.5 border-t"><span>Total:</span><span>{currencySymbol}{total.toLocaleString('id-ID')}</span></div>
 
                 <div className="w-full mt-2 pt-2 border-t"><Label className="text-xs font-medium mb-1 block">Termin Pembayaran:</Label>
                      <Select value={selectedPaymentTerms} onValueChange={(value) => {setSelectedPaymentTerms(value as PaymentTerms); if (value !== 'credit') {setSelectedCustomerId(undefined); setCreditDueDate(undefined); setCustomerSearchTerm("");}}} disabled={!activeShift || cartItems.length === 0}>
@@ -941,6 +1016,63 @@ export default function POSPage() {
             </Card>
           </div>
         </div>
+
+        {/* Item Discount Dialog */}
+        <Dialog open={isItemDiscountDialogOpen} onOpenChange={(open) => {
+            if (!open) {
+                setSelectedItemForDiscount(null);
+                setCurrentDiscountValue("");
+            }
+            setIsItemDiscountDialogOpen(open);
+        }}>
+            <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle className="text-base">Diskon untuk: {selectedItemForDiscount?.productName}</DialogTitle>
+                    <DialogDescription className="text-xs">
+                        Harga Asli: {currencySymbol}{(selectedItemForDiscount?.originalPrice || 0).toLocaleString('id-ID')} per item
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="py-3 space-y-3">
+                    <div>
+                        <Label className="text-xs">Tipe Diskon</Label>
+                        <RadioGroup value={currentDiscountType} onValueChange={handleItemDiscountTypeChange} className="flex gap-4 mt-1">
+                            <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="nominal" id="nominal" />
+                                <Label htmlFor="nominal" className="text-xs font-normal">Nominal ({currencySymbol})</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="percentage" id="percentage" />
+                                <Label htmlFor="percentage" className="text-xs font-normal">Persentase (%)</Label>
+                            </div>
+                        </RadioGroup>
+                    </div>
+                    <div>
+                        <Label htmlFor="discountValue" className="text-xs">Nilai Diskon</Label>
+                        <Input
+                            id="discountValue"
+                            type="number"
+                            value={currentDiscountValue}
+                            onChange={(e) => handleItemDiscountValueChange(e.target.value)}
+                            placeholder={currentDiscountType === 'nominal' ? 'Contoh: 5000' : 'Contoh: 10'}
+                            className="h-9 text-sm mt-1"
+                        />
+                    </div>
+                    {selectedItemForDiscount && currentDiscountValue && (
+                        <div className="text-xs space-y-0.5 pt-1">
+                            <p>Diskon Dihitung: <span className="font-medium">{currencySymbol}{previewActualDiscountAmount.toLocaleString('id-ID')}</span></p>
+                            <p>Harga Baru per Item: <span className="font-medium">{currencySymbol}{previewDiscountedPrice.toLocaleString('id-ID')}</span></p>
+                        </div>
+                    )}
+                </div>
+                <DialogFooter>
+                    <Button type="button" variant="outline" className="text-xs h-8" onClick={() => setIsItemDiscountDialogOpen(false)}>Batal</Button>
+                    <Button type="button" className="text-xs h-8" onClick={handleConfirmItemDiscount} disabled={!selectedItemForDiscount || !currentDiscountValue.trim() || parseFloat(currentDiscountValue) < 0}>
+                        Terapkan Diskon
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+
 
         <Dialog open={showStartShiftModal} onOpenChange={setShowStartShiftModal}><DialogContent className="sm:max-w-xs"><DialogHeader><DialogTitle className="text-base">Mulai Shift Baru</DialogTitle><DialogDescription className="text-xs">Masukkan jumlah modal awal kas di laci kas.</DialogDescription></DialogHeader><div className="py-2 space-y-2"><Label htmlFor="initialCashInput" className="text-xs">Modal Awal Kas ({currencySymbol})</Label><Input id="initialCashInput" type="number" value={initialCashInput} onChange={(e) => setInitialCashInput(e.target.value)} placeholder="Contoh: 500000" className="h-9 text-sm" /></div><DialogFooter><DialogClose asChild><Button type="button" variant="outline" className="text-xs h-8">Batal</Button></DialogClose><Button onClick={handleStartShift} className="text-xs h-8">Mulai Shift</Button></DialogFooter></DialogContent></Dialog>
 
