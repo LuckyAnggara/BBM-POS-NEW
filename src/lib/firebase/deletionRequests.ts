@@ -24,7 +24,7 @@ export interface TransactionDeletionRequest {
   id: string; // Firestore document ID
   transactionId: string;
   transactionInvoiceNumber: string;
-  transactionDate: Timestamp;
+  transactionDate: Timestamp; // This remains Timestamp as it's what's stored/retrieved
   transactionTotalAmount: number;
   branchId: string;
   requestedByUserId: string;
@@ -38,10 +38,13 @@ export interface TransactionDeletionRequest {
   rejectionAdminReason?: string;
 }
 
+// Input type from client: transactionDate is now Date
 export type TransactionDeletionRequestInput = Omit<
   TransactionDeletionRequest,
-  'id' | 'requestTimestamp' | 'status' | 'actionTakenByUserId' | 'actionTakenByUserName' | 'actionTimestamp' | 'rejectionAdminReason'
->;
+  'id' | 'requestTimestamp' | 'status' | 'actionTakenByUserId' | 'actionTakenByUserName' | 'actionTimestamp' | 'rejectionAdminReason' | 'transactionDate'
+> & {
+  transactionDate: Date; // Changed from Timestamp to Date for client-side input
+};
 
 export async function createDeletionRequest(
   data: TransactionDeletionRequestInput
@@ -53,17 +56,18 @@ export async function createDeletionRequest(
 
   try {
     const now = serverTimestamp() as Timestamp;
-    const requestData = {
+    const requestDataForFirestore = {
       ...data,
+      transactionDate: Timestamp.fromDate(data.transactionDate), // Convert Date to Timestamp
       status: 'pending' as const,
       requestTimestamp: now,
     };
-    const docRef = await addDoc(collection(db, 'transactionDeletionRequests'), requestData);
-    const clientTimestamp = Timestamp.now();
-    return { 
-      id: docRef.id, 
-      ...requestData, 
-      requestTimestamp: clientTimestamp 
+    const docRef = await addDoc(collection(db, 'transactionDeletionRequests'), requestDataForFirestore);
+    const clientTimestamp = Timestamp.now(); // For optimistic update if needed immediately on client
+    return {
+      id: docRef.id,
+      ...requestDataForFirestore, // this now has transactionDate as Timestamp
+      requestTimestamp: clientTimestamp
     };
   } catch (error: any) {
     console.error('Error creating deletion request:', error);
@@ -114,7 +118,6 @@ export async function approveDeletionRequest(
       return { error: `Permintaan ini sudah ${requestData.status === 'approved' ? 'disetujui' : 'ditolak'}.` };
     }
 
-    // Call apiDeleteTransaction which handles password check and stock restoration
     const deleteResult = await apiDeleteTransaction(
       requestData.transactionId,
       requestData.branchId,

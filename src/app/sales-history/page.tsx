@@ -16,7 +16,7 @@ import { Printer, RotateCcw, CheckCircle, XCircle, Trash2, CalendarIcon, Search,
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogFooter as DialogModalFooter, DialogClose, DialogDescription as DialogModalDescription } from "@/components/ui/dialog";
+import { Dialog,DialogFooter, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogFooter as DialogModalFooter, DialogClose, DialogDescription as DialogModalDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -211,7 +211,7 @@ export default function SalesHistoryPage() {
     const requestInput: TransactionDeletionRequestInput = {
       transactionId: transactionToDelete.id,
       transactionInvoiceNumber: transactionToDelete.invoiceNumber,
-      transactionDate: transactionToDelete.timestamp,
+      transactionDate: transactionToDelete.timestamp.toDate(), // Convert Timestamp to Date
       transactionTotalAmount: transactionToDelete.totalAmount,
       branchId: selectedBranch.id,
       requestedByUserId: currentUser.uid,
@@ -228,7 +228,6 @@ export default function SalesHistoryPage() {
       setShowRequestDeletionDialog(false);
       setTransactionToDelete(null);
       setDeletionRequestReason("");
-      // No need to refetch transactions here as it's not deleted yet.
     }
   };
 
