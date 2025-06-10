@@ -20,7 +20,7 @@ export default function MainLayout({
 }) {
   if (focusMode) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen bg-background w-full"> {/* Added w-full */}
         {/* SidebarProvider is still needed for potential nested components that might use useSidebar, even if sidebar is not visible */}
         <SidebarProvider defaultOpen={false}> 
           <main className="w-full h-screen overflow-y-auto">
@@ -33,9 +33,9 @@ export default function MainLayout({
 
   return (
     <SidebarProvider defaultOpen>
-      <div className="min-h-screen">
+      <div className="min-h-screen w-full"> {/* Added w-full */}
         {/* <AppHeader /> */}
-        <div className="flex h-screen">
+        <div className="flex h-screen w-full"> {/* Added w-full */}
           <Sidebar className="bg-card border-r hidden md:flex bg-sidebar-accent">
             <AppSidebarNav /> 
           </Sidebar>
