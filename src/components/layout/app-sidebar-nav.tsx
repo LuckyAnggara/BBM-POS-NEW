@@ -21,6 +21,9 @@ import {
   ListChecks,
   Database,
   Landmark, 
+  Bell, // Added Bell icon
+  Send, // Added Send icon
+  History as HistoryIconLucide, // Renamed for clarity
 } from "lucide-react";
 import {
   SidebarMenu,
@@ -29,7 +32,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
-  SidebarMenuSkeleton // Added Skeleton
+  SidebarMenuSkeleton
 } from "@/components/ui/sidebar";
 import SidebarUserProfile from "./sidebar-user-profile";
 import SidebarHeaderBrand from "./sidebar-header-brand";
@@ -63,6 +66,14 @@ const navItems = [
   { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
   { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
   {
+    label: "Notifikasi", // New general notification item
+    icon: Bell,
+    adminOnly: false,
+    subItems: [
+      { href: "/notifications", label: "Lihat Notifikasi", icon: Bell, exactMatch: true },
+    ]
+  },
+  {
     href: "/reports",
     label: "Laporan",
     icon: BarChart3,
@@ -71,6 +82,15 @@ const navItems = [
       { href: "/reports", label: "Ringkasan Keuangan", icon: BarChart3, exactMatch: true },
       { href: "/reports/stock-mutation", label: "Mutasi Stok Global", icon: PackageSearch },
       { href: "/reports/stock-movement", label: "Pergerakan Stok Produk", icon: PackageOpen },
+    ]
+  },
+  {
+    label: "Admin Notifikasi", // New admin-only notification group
+    icon: Send, // Using Send for "Admin Notifikasi" parent
+    adminOnly: true,
+    subItems: [
+      { href: "/admin/send-notification", label: "Kirim Notifikasi", icon: Send },
+      { href: "/admin/notification-history", label: "Riwayat Notifikasi", icon: HistoryIconLucide },
     ]
   },
   { href: "/admin/settings", label: "Pengaturan Admin", icon: Settings, adminOnly: true },
@@ -87,8 +107,9 @@ export default function AppSidebarNav() {
       <div className="flex-grow overflow-y-auto p-2 space-y-1 mt-1">
         <SidebarMenu>
           {(loadingAuth || loadingUserData) ? (
-            // Show skeletons if user data is loading
             <>
+              <SidebarMenuSkeleton showIcon className="my-1" />
+              <SidebarMenuSkeleton showIcon className="my-1" />
               <SidebarMenuSkeleton showIcon className="my-1" />
               <SidebarMenuSkeleton showIcon className="my-1" />
               <SidebarMenuSkeleton showIcon className="my-1" />
@@ -97,8 +118,6 @@ export default function AppSidebarNav() {
             </>
           ) : (
             navItems.map((item) => {
-              // Critical check: Hide admin-only items if user is not admin
-              // This check is now more robust because it waits for userData to be loaded.
               if (item.adminOnly && userData?.role !== 'admin') {
                 return null;
               }
@@ -106,8 +125,9 @@ export default function AppSidebarNav() {
               const isNavItemDisabled = 
                                       userData?.role === 'cashier' &&
                                       userData?.branchId === null &&
-                                      item.href !== '/dashboard' && // Allow dashboard
-                                      !item.subItems?.some(sub => sub.href === '/dashboard'); // Allow parent of dashboard
+                                      item.href !== '/dashboard' &&
+                                      item.label !== 'Notifikasi' && // Allow notifications page
+                                      !item.subItems?.some(sub => sub.href === '/dashboard' || sub.href === '/notifications');
 
               if (item.subItems) {
                 return (
@@ -148,7 +168,6 @@ export default function AppSidebarNav() {
                 );
               }
 
-              // Regular menu item (no sub-items)
               if (!item.href) return null; 
 
               return (
@@ -188,5 +207,3 @@ export default function AppSidebarNav() {
     </nav>
   );
 }
-
-    
