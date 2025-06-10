@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import {
   SidebarProvider,
   Sidebar,
+  
 } from "@/components/ui/sidebar";
 import AppHeader from "@/components/layout/app-header";
 import AppSidebarNav from "@/components/layout/app-sidebar-nav";
@@ -32,10 +33,10 @@ export default function MainLayout({
 
   return (
     <SidebarProvider defaultOpen>
-      <div className="min-h-screen ">
-        <AppHeader />
-        <div className="flex h-screen pt-16">
-          <Sidebar className="bg-card border-r hidden md:flex ">
+      <div className="min-h-screen">
+        {/* <AppHeader /> */}
+        <div className="flex h-screen">
+          <Sidebar className="bg-card border-r hidden md:flex bg-sidebar-accent">
             <AppSidebarNav /> 
           </Sidebar>
           {/* 
@@ -43,7 +44,7 @@ export default function MainLayout({
             The main content padding and Breadcrumbs are now part of the page itself if needed.
           */}
           <main className="w-full h-full overflow-y-auto p-4 sm:p-6 lg:p-8 ">
-          <SidebarTrigger className="h-8 w-8 md:h-7 md:w-7" /> <Breadcrumbs />
+         <Breadcrumbs />
             {children}
           </main>
         </div>
