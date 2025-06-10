@@ -13,8 +13,12 @@ import {
   where,
   orderBy,
   limit,
+  updateDoc,
+  getDoc,
 } from 'firebase/firestore';
 import { db } from './config';
+import { getBranchById } from './branches';
+import { deleteTransaction as apiDeleteTransaction } from './pos'; // Renamed to avoid conflict if any
 
 export interface TransactionDeletionRequest {
   id: string; // Firestore document ID
@@ -28,7 +32,6 @@ export interface TransactionDeletionRequest {
   requestTimestamp: Timestamp;
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
-  // Admin action fields - to be used later
   actionTakenByUserId?: string;
   actionTakenByUserName?: string;
   actionTimestamp?: Timestamp;
@@ -89,6 +92,82 @@ export async function getPendingDeletionRequestsByBranch(branchId: string): Prom
   }
 }
 
-// Functions for approve/reject will be added later
-// export async function approveDeletionRequest(...)
-// export async function rejectDeletionRequest(...)
+export async function approveDeletionRequest(
+  requestId: string,
+  adminUserId: string,
+  adminUserName: string,
+  branchDeletionPasswordAttempt: string
+): Promise<{ success?: boolean; error?: string }> {
+  if (!requestId) return { error: "ID Permintaan tidak valid." };
+  if (!adminUserId || !adminUserName) return { error: "Detail admin tidak lengkap." };
+  if (!branchDeletionPasswordAttempt) return { error: "Password hapus cabang diperlukan."};
+
+  const requestRef = doc(db, 'transactionDeletionRequests', requestId);
+  try {
+    const requestSnap = await getDoc(requestRef);
+    if (!requestSnap.exists()) {
+      return { error: "Permintaan penghapusan tidak ditemukan." };
+    }
+    const requestData = requestSnap.data() as TransactionDeletionRequest;
+
+    if (requestData.status !== 'pending') {
+      return { error: `Permintaan ini sudah ${requestData.status === 'approved' ? 'disetujui' : 'ditolak'}.` };
+    }
+
+    // Call apiDeleteTransaction which handles password check and stock restoration
+    const deleteResult = await apiDeleteTransaction(
+      requestData.transactionId,
+      requestData.branchId,
+      branchDeletionPasswordAttempt
+    );
+
+    if (deleteResult.success) {
+      await updateDoc(requestRef, {
+        status: 'approved',
+        actionTakenByUserId: adminUserId,
+        actionTakenByUserName: adminUserName,
+        actionTimestamp: serverTimestamp(),
+      });
+      return { success: true };
+    } else {
+      return { error: deleteResult.error || "Gagal menghapus transaksi terkait." };
+    }
+  } catch (error: any) {
+    console.error('Error approving deletion request:', error);
+    return { error: error.message || 'Gagal menyetujui permintaan penghapusan.' };
+  }
+}
+
+export async function rejectDeletionRequest(
+  requestId: string,
+  adminUserId: string,
+  adminUserName: string,
+  adminRejectionReason?: string
+): Promise<{ success?: boolean; error?: string }> {
+  if (!requestId) return { error: "ID Permintaan tidak valid." };
+  if (!adminUserId || !adminUserName) return { error: "Detail admin tidak lengkap." };
+
+  const requestRef = doc(db, 'transactionDeletionRequests', requestId);
+  try {
+    const requestSnap = await getDoc(requestRef);
+    if (!requestSnap.exists()) {
+      return { error: "Permintaan penghapusan tidak ditemukan." };
+    }
+     const requestData = requestSnap.data() as TransactionDeletionRequest;
+    if (requestData.status !== 'pending') {
+      return { error: `Permintaan ini sudah ${requestData.status === 'approved' ? 'disetujui' : 'ditolak'}.` };
+    }
+
+    await updateDoc(requestRef, {
+      status: 'rejected',
+      actionTakenByUserId: adminUserId,
+      actionTakenByUserName: adminUserName,
+      actionTimestamp: serverTimestamp(),
+      rejectionAdminReason: adminRejectionReason || "",
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error rejecting deletion request:', error);
+    return { error: error.message || 'Gagal menolak permintaan penghapusan.' };
+  }
+}
