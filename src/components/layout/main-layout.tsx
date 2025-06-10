@@ -43,7 +43,7 @@ export default function MainLayout({
             SidebarInset is removed and main content takes full width after sidebar.
             The main content padding and Breadcrumbs are now part of the page itself if needed.
           */}
-          <main className="w-full h-full overflow-y-auto p-4 sm:p-6 lg:p-8 ">
+          <main className="flex-1 w-full h-full overflow-y-auto p-4 sm:p-6 lg:p-8">
          <Breadcrumbs />
             {children}
           </main>
@@ -52,3 +52,4 @@ export default function MainLayout({
     </SidebarProvider>
   );
 }
+
