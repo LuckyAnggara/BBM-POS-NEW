@@ -122,15 +122,15 @@ export interface PosTransaction {
   subtotal: number; // Subtotal after item discounts but before overall voucher/shipping
   taxAmount: number;
   shippingCost?: number;
-  voucherCode?: string;
+  voucherCode?: string | null; // Allow null
   voucherDiscountAmount?: number;
   totalDiscountAmount?: number; // Sum of all item discounts + voucher discount
   totalAmount: number; // Final amount after all discounts and shipping
   totalCost: number;
   paymentTerms: PaymentTerms;
   customerId?: string;
-  customerName?: string;
-  creditDueDate?: Timestamp;
+  customerName?: string | null; // Allow null
+  creditDueDate?: Timestamp | null; // Allow null
   isCreditSale?: boolean;
   outstandingAmount?: number;
   paymentStatus?: PaymentStatus;
@@ -140,10 +140,10 @@ export interface PosTransaction {
   invoiceNumber: string;
   status: 'completed' | 'returned';
   returnedAt?: Timestamp;
-  returnReason?: string;
+  returnReason?: string | null; // Allow null
   returnedByUserId?: string;
-  bankName?: string;
-  bankTransactionRef?: string;
+  bankName?: string | null; // Allow null
+  bankTransactionRef?: string | null; // Allow null
 }
 
 export async function recordTransaction(
@@ -165,10 +165,10 @@ export async function recordTransaction(
       branchId: transactionInput.branchId,
       userId: transactionInput.userId,
       items: transactionInput.items,
-      subtotal: transactionInput.subtotal, // This is now subtotal AFTER item discounts
+      subtotal: transactionInput.subtotal,
       taxAmount: transactionInput.taxAmount,
       shippingCost: transactionInput.shippingCost || 0,
-      voucherCode: transactionInput.voucherCode || undefined,
+      voucherCode: transactionInput.voucherCode || null, // Changed undefined to null
       voucherDiscountAmount: transactionInput.voucherDiscountAmount || 0,
       totalDiscountAmount: transactionInput.totalDiscountAmount || 0,
       totalAmount: transactionInput.totalAmount,
@@ -178,31 +178,18 @@ export async function recordTransaction(
       changeGiven: transactionInput.changeGiven,
       invoiceNumber,
       status: 'completed',
-      paymentsMade: [], // Initialize for credit sales
+      paymentsMade: [], 
       timestamp: serverTimestamp() as Timestamp,
+      // Explicitly set optional fields to null if not provided or empty, or use their value
+      customerId: transactionInput.customerId || null,
+      customerName: transactionInput.customerName?.trim() ? transactionInput.customerName.trim() : null,
+      creditDueDate: transactionInput.creditDueDate || null,
+      isCreditSale: transactionInput.isCreditSale ?? false,
+      outstandingAmount: transactionInput.outstandingAmount ?? (transactionInput.isCreditSale ? transactionInput.totalAmount : 0),
+      paymentStatus: transactionInput.paymentStatus ?? (transactionInput.isCreditSale ? 'unpaid' : 'paid'),
+      bankName: transactionInput.bankName?.trim() ? transactionInput.bankName.trim() : null,
+      bankTransactionRef: transactionInput.bankTransactionRef?.trim() ? transactionInput.bankTransactionRef.trim() : null,
     };
-
-    if (transactionInput.customerId) dataToSave.customerId = transactionInput.customerId;
-    if (transactionInput.customerName) dataToSave.customerName = transactionInput.customerName;
-    if (transactionInput.creditDueDate) dataToSave.creditDueDate = transactionInput.creditDueDate;
-    if (transactionInput.isCreditSale !== undefined) {
-        dataToSave.isCreditSale = transactionInput.isCreditSale;
-        if (transactionInput.isCreditSale) {
-            dataToSave.paymentStatus = 'unpaid';
-            dataToSave.outstandingAmount = transactionInput.totalAmount; // For credit, totalAmount IS the outstanding
-        } else {
-            dataToSave.paymentStatus = 'paid';
-            dataToSave.outstandingAmount = 0;
-        }
-    } else {
-        dataToSave.paymentStatus = 'paid'; // Default to paid if not credit sale
-        dataToSave.outstandingAmount = 0;
-    }
-
-
-    if (transactionInput.bankName && transactionInput.bankName.trim() !== "") dataToSave.bankName = transactionInput.bankName;
-    if (transactionInput.bankTransactionRef && transactionInput.bankTransactionRef.trim() !== "") dataToSave.bankTransactionRef = transactionInput.bankTransactionRef;
-
 
     batch.set(transactionRef, dataToSave);
 
@@ -219,7 +206,14 @@ export async function recordTransaction(
     }
 
     await batch.commit();
-    return { id: transactionRef.id, ...dataToSave, timestamp: Timestamp.now() };
+    // Re-fetch the document to get server-generated timestamps and ensure all fields are correctly populated
+    const savedDoc = await getDoc(transactionRef);
+    if (savedDoc.exists()) {
+        return { id: savedDoc.id, ...savedDoc.data() } as PosTransaction;
+    } else {
+        // This case should ideally not happen if batch.commit() was successful
+        return { error: "Gagal mengambil transaksi yang baru direkam setelah penyimpanan."};
+    }
   } catch (error: any) {
     console.error("Error recording transaction:", error);
     return { error: error.message || "Gagal merekam transaksi." };
@@ -251,7 +245,7 @@ export async function processFullTransactionReturn(transactionId: string, reason
       returnReason: reason,
       returnedAt: serverTimestamp(),
       returnedByUserId: returnedByUserId,
-      outstandingAmount: 0, // Retur dianggap selesai
+      outstandingAmount: 0, 
       paymentStatus: 'returned',
     });
 
@@ -299,7 +293,6 @@ export async function deleteTransaction(transactionId: string, branchId: string,
     }
     const transactionData = transactionSnap.data() as PosTransaction;
 
-    // Only restore stock if transaction was completed (not already returned)
     if (transactionData.status === 'completed') {
       for (const item of transactionData.items) {
         const productRef = doc(db, "inventoryItems", item.productId);
