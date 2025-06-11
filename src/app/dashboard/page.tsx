@@ -137,9 +137,10 @@ export default function DashboardPage() {
     
     if(loadingInventorySummary) { 
         setLoadingInventorySummary(true);
-        getInventoryItems(selectedBranch.id).then(inventoryItemsData => {
-            const totalUniqueProducts = inventoryItemsData.length;
-            const lowStockItemsCount = inventoryItemsData.filter(item => item.quantity < LOW_STOCK_THRESHOLD).length;
+        getInventoryItems(selectedBranch.id).then(result => {
+            const itemsArray = result.items;
+            const totalUniqueProducts = itemsArray.length;
+            const lowStockItemsCount = itemsArray.filter(item => item.quantity < LOW_STOCK_THRESHOLD).length;
             setInventorySummary({ totalUniqueProducts, lowStockItemsCount });
             setLoadingInventorySummary(false);
         }).catch(e => {
