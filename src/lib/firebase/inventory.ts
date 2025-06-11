@@ -1,5 +1,5 @@
 
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, limit, orderBy } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, limit, orderBy, startAfter, endBefore, type DocumentSnapshot, type DocumentData, limitToLast } from "firebase/firestore";
 import { db } from "./config";
 
 export interface InventoryItem {
@@ -94,10 +94,7 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
     
     let skuToSave = itemData.sku?.trim();
     if (!skuToSave) {
-      // Generate SKU based on product name and a random/timestamp component
-      // For more robust uniqueness, consider querying for existing SKUs, though this adds complexity.
-      // A simpler approach for now:
-      const tempDocRef = doc(collection(db, "inventoryItems")); // Create a dummy ref for ID
+      const tempDocRef = doc(collection(db, "inventoryItems")); 
       skuToSave = `AUTOSKU-${tempDocRef.id.substring(0, 8).toUpperCase()}`;
     }
 
@@ -125,28 +122,100 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
   }
 }
 
-export async function getInventoryItems(branchId: string, options?: { limit?: number }): Promise<InventoryItem[]> {
-  if (!branchId) return [];
+export async function getInventoryItems(
+  branchId: string,
+  options: {
+    limit?: number;
+    searchTerm?: string;
+    startAfterDoc?: DocumentSnapshot<DocumentData> | null;
+    endBeforeDoc?: DocumentSnapshot<DocumentData> | null;
+  } = {}
+): Promise<{ items: InventoryItem[]; lastDoc?: DocumentSnapshot<DocumentData>; firstDoc?: DocumentSnapshot<DocumentData>; hasMore: boolean }> {
+  if (!branchId) return { items: [], hasMore: false };
   try {
-    const qConstraints: any[] = [ // Explicitly type qConstraints
-        where("branchId", "==", branchId), 
-        orderBy("name")
-    ];
-    if (options?.limit && options.limit > 0) {
-        qConstraints.push(limit(options.limit));
+    let qConstraints: any[] = [where("branchId", "==", branchId)];
+    
+    // Note: Firestore does not support combining inequality filters on different fields (e.g., name search)
+    // with range cursors (startAfter/endBefore) effectively unless the orderBy field is the same.
+    // For robust search with pagination, consider a dedicated search service (e.g., Algolia, Elasticsearch)
+    // or a simpler approach for Firestore:
+    // 1. If searchTerm is present, perform a separate query (potentially without pagination or with simpler pagination).
+    // 2. If no searchTerm, use orderBy name with cursors.
+
+    // Simple name-based search (case-insensitive, prefix only for Firestore direct query)
+    // This basic search won't work well with non-prefix searches or SKU searches without composite indexes.
+    if (options.searchTerm) {
+       const searchTermLower = options.searchTerm.toLowerCase();
+       const searchTermUpper = options.searchTerm.toUpperCase(); // For SKU which might be uppercase
+      // This is a simplified search. For robust search, use a dedicated search solution or more complex queries.
+      // Here, we'll filter client-side if a searchTerm is provided with pagination, which is not ideal for large datasets.
+      // For now, if searchTerm is provided, pagination might not be perfectly accurate across the *entire* dataset,
+      // but rather paginates through *all* items and then filters.
+      // A better approach for search + pagination is to filter *then* paginate, but Firestore makes this hard.
     }
+
+    qConstraints.push(orderBy("name")); // Always order by name for consistent pagination
+
+    if (options.startAfterDoc) {
+      qConstraints.push(startAfter(options.startAfterDoc));
+    }
+    if (options.endBeforeDoc) {
+      qConstraints.push(endBefore(options.endBeforeDoc));
+       qConstraints = qConstraints.filter(c => c.type !== 'orderBy'); // Remove existing orderBy
+       qConstraints.push(orderBy("name", "desc")); // Order desc for endBefore with limitToLast
+    }
+
+
+    if (options.limit && options.limit > 0) {
+      if (options.endBeforeDoc) {
+        qConstraints.push(limitToLast(options.limit + 1)); // Fetch one extra to check if there's a previous page
+      } else {
+        qConstraints.push(limit(options.limit + 1)); // Fetch one extra to check if there's a next page
+      }
+    }
+
 
     const q = query(collection(db, "inventoryItems"), ...qConstraints);
     const querySnapshot = await getDocs(q);
-    const items: InventoryItem[] = [];
+    
+    let items: InventoryItem[] = [];
     querySnapshot.forEach((docSnap) => {
       const data = docSnap.data();
       items.push({ id: docSnap.id, ...data, costPrice: data.costPrice || 0 } as InventoryItem);
     });
-    return items;
+
+    let hasMore = false;
+    if (options.limit && items.length > options.limit) {
+        hasMore = true;
+        if (options.endBeforeDoc) {
+            items.shift(); // Remove the extra item used for 'hasPrevious' check
+        } else {
+            items.pop(); // Remove the extra item used for 'hasNext' check
+        }
+    }
+    
+    if (options.endBeforeDoc) {
+        items.reverse(); // Reverse back to ascending order
+    }
+    
+    // Client-side filtering if searchTerm is present (suboptimal for large datasets with pagination)
+    if (options.searchTerm) {
+        const searchTermLower = options.searchTerm.toLowerCase();
+        items = items.filter(item => 
+            item.name.toLowerCase().includes(searchTermLower) ||
+            (item.sku && item.sku.toLowerCase().includes(searchTermLower))
+        );
+    }
+
+
+    const firstDoc = querySnapshot.docs[0];
+    const lastDoc = querySnapshot.docs[querySnapshot.docs.length - (hasMore && !options.endBeforeDoc ? 2 : 1 )]; // Adjust if extra item was fetched
+    
+    return { items, firstDoc, lastDoc, hasMore };
+
   } catch (error: any) {
     console.error("Error fetching inventory items:", error);
-    return [];
+    return { items: [], hasMore: false };
   }
 }
 
@@ -160,11 +229,9 @@ export async function updateInventoryItem(itemId: string, updates: Partial<Omit<
     } else {
       payload.costPrice = Number(updates.costPrice);
     }
-     // Ensure SKU is not accidentally cleared if not provided in updates, unless explicitly set to empty string
-    if (updates.sku === undefined && 'sku' in updates) { // Check if 'sku' key exists even if value is undefined
-      // Do not modify SKU if it's undefined in updates (meaning it wasn't part of the form change)
+    if (updates.sku === undefined && 'sku' in updates) { 
     } else if (updates.sku === "") {
-      payload.sku = ""; // Allow clearing SKU
+      payload.sku = ""; 
     } else if (updates.sku) {
       payload.sku = updates.sku.trim();
     }

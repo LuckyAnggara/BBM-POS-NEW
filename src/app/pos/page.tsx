@@ -16,7 +16,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon, Percent } from "lucide-react";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon, Percent, ChevronLeft, ChevronRight } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -43,7 +43,7 @@ import {
   type PaymentTerms,
   type ShiftPaymentMethod
 } from "@/lib/firebase/pos";
-import { Timestamp } from "firebase/firestore";
+import { Timestamp, type DocumentSnapshot, type DocumentData } from "firebase/firestore";
 import ScanCustomerDialog from "@/components/pos/scan-customer-dialog";
 import { format } from "date-fns";
 import { Separator } from "@/components/ui/separator";
@@ -51,6 +51,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 type ViewMode = "card" | "table";
 const LOCALSTORAGE_POS_VIEW_MODE_KEY = "branchwise_posViewMode";
+const POS_ITEMS_PER_PAGE_OPTIONS = [12, 24, 48, 96];
+
 
 interface CartItem extends TransactionItem {
   itemDiscountType?: 'nominal' | 'percentage';
@@ -83,6 +85,13 @@ export default function POSPage() {
   const [products, setProducts] = useState<InventoryItem[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  
+  const [itemsPerPagePOS, setItemsPerPagePOS] = useState<number>(POS_ITEMS_PER_PAGE_OPTIONS[2]); // Default 48
+  const [currentPagePOS, setCurrentPagePOS] = useState(1);
+  const [lastVisibleProductPOS, setLastVisibleProductPOS] = useState<DocumentSnapshot<DocumentData> | null>(null);
+  const [firstVisibleProductPOS, setFirstVisibleProductPOS] = useState<DocumentSnapshot<DocumentData> | null>(null);
+  const [isLastPagePOS, setIsLastPagePOS] = useState(false);
+
 
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedPaymentTerms, setSelectedPaymentTerms] = useState<PaymentTerms>('cash');
@@ -120,12 +129,10 @@ export default function POSPage() {
   const [showShiftCashDetailsDialog, setShowShiftCashDetailsDialog] = useState(false);
   const [showAllShiftTransactionsDialog, setShowAllShiftTransactionsDialog] = useState(false);
 
-  // State for shipping and voucher
   const [shippingCostInput, setShippingCostInput] = useState("");
   const [voucherCodeInput, setVoucherCodeInput] = useState("");
   const [voucherDiscountInput, setVoucherDiscountInput] = useState("");
 
-  // State for Item Discount Dialog
   const [isItemDiscountDialogOpen, setIsItemDiscountDialogOpen] = useState(false);
   const [selectedItemForDiscount, setSelectedItemForDiscount] = useState<CartItem | null>(null);
   const [currentDiscountType, setCurrentDiscountType] = useState<'nominal' | 'percentage'>('nominal');
@@ -145,43 +152,95 @@ export default function POSPage() {
     localStorage.setItem(LOCALSTORAGE_POS_VIEW_MODE_KEY, mode);
   };
 
-
   const currencySymbol = selectedBranch?.currency === "IDR" ? "Rp" : (selectedBranch?.currency || "$");
   const taxRate = selectedBranch?.taxRate ? selectedBranch.taxRate / 100 : 0.0;
 
-
-  const fetchBranchData = useCallback(async () => {
+  const fetchPOSProducts = useCallback(async (page: number, direction?: 'next' | 'prev' | 'reset') => {
     if (!selectedBranch) {
       setProducts([]);
+      setLoadingProducts(false);
+      return;
+    }
+    setLoadingProducts(true);
+
+    let startAfterDoc = lastVisibleProductPOS;
+    let endBeforeDoc = firstVisibleProductPOS;
+
+    if (direction === 'reset' || page === 1) {
+      startAfterDoc = null;
+      endBeforeDoc = null;
+      setCurrentPagePOS(1);
+    } else if (direction === 'prev' && page > 1) {
+      startAfterDoc = null; // endBefore will be used
+    } else if (direction === 'next') {
+      endBeforeDoc = null; // startAfter will be used
+    }
+
+
+    try {
+      const { items, lastDoc, firstDoc, hasMore } = await getInventoryItems(selectedBranch.id, {
+        limit: itemsPerPagePOS,
+        startAfterDoc: direction === 'next' ? startAfterDoc : null,
+        endBeforeDoc: direction === 'prev' ? endBeforeDoc : null,
+        searchTerm: searchTerm.trim() || undefined,
+      });
+      
+      setProducts(items);
+      setLastVisibleProductPOS(lastDoc || null);
+      setFirstVisibleProductPOS(firstDoc || null);
+      setIsLastPagePOS(!hasMore);
+
+    } catch (error) {
+      console.error("Error fetching products for POS:", error);
+      toast({ title: "Gagal Memuat Produk", description: "Tidak dapat memuat daftar produk.", variant: "destructive" });
+      setProducts([]);
+    } finally {
+      setLoadingProducts(false);
+    }
+  }, [selectedBranch, itemsPerPagePOS, searchTerm, lastVisibleProductPOS, firstVisibleProductPOS, toast]);
+
+  const handlePageChangePOS = (newPage: number, direction: 'next' | 'prev') => {
+    if (newPage < 1) return;
+    setCurrentPagePOS(newPage);
+    fetchPOSProducts(newPage, direction);
+  };
+
+  useEffect(() => {
+    fetchPOSProducts(1, 'reset'); // Fetch initial products on branch/searchTerm/itemsPerPage change
+  }, [selectedBranch, searchTerm, itemsPerPagePOS]); // Removed fetchPOSProducts from dep array to avoid loop
+
+
+  const fetchCustomersAndBankAccounts = useCallback(async () => {
+    if (!selectedBranch) {
       setAllCustomers([]);
       setAvailableBankAccounts([]);
-      setLoadingProducts(false);
       setLoadingCustomers(false);
       setLoadingBankAccounts(false);
       return;
     }
-    setLoadingProducts(true);
     setLoadingCustomers(true);
     setLoadingBankAccounts(true);
     try {
-      const [items, fetchedCustomers, fetchedBankAccounts] = await Promise.all([
-        getInventoryItems(selectedBranch.id),
+      const [fetchedCustomers, fetchedBankAccounts] = await Promise.all([
         getCustomers(selectedBranch.id),
         getBankAccounts({ branchId: selectedBranch.id, isActive: true })
       ]);
-      setProducts(items);
       setAllCustomers(fetchedCustomers);
       setFilteredCustomers(fetchedCustomers.slice(0,5));
       setAvailableBankAccounts(fetchedBankAccounts);
     } catch (error) {
-        console.error("Error fetching branch data for POS:", error);
-        toast({title: "Gagal Memuat Data", description: "Tidak dapat memuat produk, pelanggan, atau rekening bank.", variant: "destructive"});
+        console.error("Error fetching customers/banks for POS:", error);
+        toast({title: "Gagal Memuat Data", description: "Tidak dapat memuat pelanggan atau rekening bank.", variant: "destructive"});
     } finally {
-        setLoadingProducts(false);
         setLoadingCustomers(false);
         setLoadingBankAccounts(false);
     }
   }, [selectedBranch, toast]);
+
+  useEffect(() => {
+    fetchCustomersAndBankAccounts();
+  }, [fetchCustomersAndBankAccounts]);
+
 
   useEffect(() => {
     if (!customerSearchTerm.trim()) {
@@ -233,9 +292,8 @@ export default function POSPage() {
   }, [currentUser, selectedBranch]);
 
   useEffect(() => {
-    fetchBranchData();
     checkForActiveShift();
-  }, [fetchBranchData, checkForActiveShift]);
+  }, [checkForActiveShift]);
 
 
   const handleStartShift = async () => {
@@ -261,12 +319,12 @@ export default function POSPage() {
   const prepareEndShiftCalculations = async () => {
     if (!activeShift) return;
     setIsEndingShift(true);
-    await fetchShiftTransactions(); // Make sure to await this
-    const currentShiftTransactions = shiftTransactions; // Use the state updated by fetchShiftTransactions
+    await fetchShiftTransactions(); 
+    const currentShiftTransactions = shiftTransactions; 
 
     const salesByPayment: Record<ShiftPaymentMethod, number> = { cash: 0, card: 0, transfer: 0 };
 
-    currentShiftTransactions.forEach(tx => { // Use the fetched transactions
+    currentShiftTransactions.forEach(tx => { 
         if (tx.paymentTerms === 'cash' || tx.paymentTerms === 'card' || tx.paymentTerms === 'transfer') {
              if (tx.status === 'completed') {
                 const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod;
@@ -363,8 +421,6 @@ export default function POSPage() {
 
   const handleItemDiscountTypeChange = (type: 'nominal' | 'percentage') => {
     setCurrentDiscountType(type);
-    // Reset value when type changes, or try to convert if makes sense
-    // For now, just reset to avoid complex conversion logic
     setCurrentDiscountValue("");
   };
 
@@ -384,12 +440,12 @@ export default function POSPage() {
     let actualDiscountAmount = 0;
     if (currentDiscountType === 'percentage') {
       actualDiscountAmount = originalPrice * (discountValueNum / 100);
-    } else { // nominal
+    } else { 
       actualDiscountAmount = discountValueNum;
     }
 
     if (actualDiscountAmount > originalPrice) {
-      actualDiscountAmount = originalPrice; // Discount cannot be more than original price
+      actualDiscountAmount = originalPrice; 
     }
     
     const discountedPrice = originalPrice - actualDiscountAmount;
@@ -406,7 +462,7 @@ export default function POSPage() {
           return {
             ...item,
             price: discountedPrice,
-            discountAmount: actualDiscountAmount, // This is per unit
+            discountAmount: actualDiscountAmount, 
             itemDiscountType: currentDiscountType,
             itemDiscountValue: parseFloat(currentDiscountValue) || 0,
             total: discountedPrice * item.quantity,
@@ -434,7 +490,7 @@ export default function POSPage() {
         setCartItems(prevItems =>
             prevItems.map(item =>
                 item.productId === productId
-                ? { ...item, quantity: productInStock.quantity, total: productInStock.quantity * item.price } // price already considers discount
+                ? { ...item, quantity: productInStock.quantity, total: productInStock.quantity * item.price } 
                 : item
             )
         );
@@ -443,7 +499,7 @@ export default function POSPage() {
     setCartItems(prevItems =>
       prevItems.map(item =>
         item.productId === productId
-          ? { ...item, quantity: newQuantity, total: newQuantity * item.price } // price already considers discount
+          ? { ...item, quantity: newQuantity, total: newQuantity * item.price } 
           : item
       )
     );
@@ -505,7 +561,7 @@ export default function POSPage() {
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
       userId: currentUser.uid,
-      items: cartItems, // cartItems now include discountAmount and originalPrice per item
+      items: cartItems, 
       subtotal: subtotalAfterItemDiscounts,
       taxAmount: tax,
       shippingCost: shippingCost,
@@ -540,7 +596,7 @@ export default function POSPage() {
       setCashAmountPaidInput("");
       setCustomerNameInputCash("");
       setCalculatedChange(null);
-      await fetchBranchData();
+      fetchPOSProducts(1, 'reset');
     }
   };
 
@@ -600,7 +656,7 @@ export default function POSPage() {
       setSelectedBankName("");
       setBankRefNumberInput("");
       setCustomerNameInputBank("");
-      await fetchBranchData();
+      fetchPOSProducts(1, 'reset');
     }
   };
 
@@ -685,7 +741,7 @@ export default function POSPage() {
       setSelectedCustomerId(undefined);
       setCreditDueDate(undefined);
       setCustomerSearchTerm("");
-      await fetchBranchData();
+      fetchPOSProducts(1, 'reset');
     }
     setIsProcessingSale(false);
   };
@@ -719,18 +775,18 @@ export default function POSPage() {
           items: transactionDetails.items.map(item => ({
             name: item.productName,
             quantity: item.quantity,
-            originalPrice: item.originalPrice, // Added
-            price: item.price, // Price after item discount
-            discountAmount: item.discountAmount, // Item discount amount per unit
+            originalPrice: item.originalPrice, 
+            price: item.price, 
+            discountAmount: item.discountAmount, 
             total: item.total,
           })),
-          subtotal: transactionDetails.subtotal, // This is subtotal AFTER item discounts
+          subtotal: transactionDetails.subtotal, 
           taxAmount: transactionDetails.taxAmount,
-          shippingCost: transactionDetails.shippingCost || 0, // Added
-          totalItemDiscount: transactionDetails.items.reduce((sum, item) => sum + (item.discountAmount || 0) * item.quantity, 0), // Added
-          voucherDiscount: transactionDetails.voucherDiscountAmount || 0, // Added
-          overallTotalDiscount: transactionDetails.totalDiscountAmount || 0, // Added
-          totalAmount: transactionDetails.totalAmount, // Grand total after all discounts and shipping
+          shippingCost: transactionDetails.shippingCost || 0, 
+          totalItemDiscount: transactionDetails.items.reduce((sum, item) => sum + (item.discountAmount || 0) * item.quantity, 0), 
+          voucherDiscount: transactionDetails.voucherDiscountAmount || 0, 
+          overallTotalDiscount: transactionDetails.totalDiscountAmount || 0, 
+          totalAmount: transactionDetails.totalAmount, 
           paymentMethod: transactionDetails.paymentTerms.charAt(0).toUpperCase() + transactionDetails.paymentTerms.slice(1),
           amountPaid: transactionDetails.amountPaid,
           changeGiven: transactionDetails.changeGiven,
@@ -781,12 +837,6 @@ export default function POSPage() {
     }
     setShowScanCustomerDialog(false);
   };
-
-
-  const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.sku?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   const totalCashSalesInShift = useMemo(() => {
     return shiftTransactions
@@ -897,33 +947,57 @@ export default function POSPage() {
                     className="pl-8 w-full rounded-md h-8 text-xs"
                     disabled={!activeShift || loadingProducts}
                     value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onChange={(e) => { setSearchTerm(e.target.value); setCurrentPagePOS(1); }}
                   />
                 </div>
+                 <Select value={itemsPerPagePOS.toString()} onValueChange={(value) => {setItemsPerPagePOS(Number(value)); setCurrentPagePOS(1);}}>
+                    <SelectTrigger className="h-8 text-xs rounded-md w-auto sm:w-[120px]">
+                        <SelectValue placeholder="Tampil" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {POS_ITEMS_PER_PAGE_OPTIONS.map(option => (
+                            <SelectItem key={option} value={option.toString()} className="text-xs">Tampil {option}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
                 <div className="flex items-center gap-1.5">
                   <Button variant={viewMode === 'card' ? 'secondary' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => handleSetViewMode('card')} aria-label="Card View" disabled={!activeShift}><LayoutGrid className="h-4 w-4" /></Button>
                   <Button variant={viewMode === 'table' ? 'secondary' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => handleSetViewMode('table')} aria-label="Table View" disabled={!activeShift}><List className="h-4 w-4" /></Button>
                 </div>
               </div>
 
-              <div className={cn("flex-grow overflow-y-auto p-0.5 -m-0.5 relative", viewMode === 'card' ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5" : "")}>
-                {loadingProducts ? (<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">{[...Array(8)].map((_,i) => <Skeleton key={i} className="h-48 w-full" />)}</div>
-                ) : filteredProducts.length === 0 ? (<div className="text-center py-10 text-muted-foreground text-sm">{products.length === 0 ? "Belum ada produk di cabang ini." : "Produk tidak ditemukan."}</div>
+              <div className={cn("flex-grow overflow-y-auto p-0.5 -m-0.5 relative", 
+                                viewMode === 'card' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5" : "")}>
+                {loadingProducts ? (<div className={cn(viewMode === 'card' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5" : "space-y-2")}>
+                    {[...Array(itemsPerPagePOS)].map((_,i) => <Skeleton key={i} className={cn(viewMode === 'card' ? "h-48 w-full" : "h-10 w-full")} />)}
+                    </div>
+                ) : products.length === 0 ? (<div className="text-center py-10 text-muted-foreground text-sm">{ "Produk tidak ditemukan atau belum ada produk."}</div>
                 ) : viewMode === 'card' ? (
-                  filteredProducts.map(product => (
-                    <Card key={product.id} className={cn("overflow-hidden shadow-sm hover:shadow-md transition-shadow rounded-md cursor-pointer", product.quantity <= 0 && "opacity-60 cursor-not-allowed")} onClick={() => product.quantity > 0 && handleAddToCart(product)}>
-                      <Image src={product.imageUrl || `https://placehold.co/150x150.png`} alt={product.name} width={150} height={150} className="w-full h-24 object-cover" data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()} onError={(e) => (e.currentTarget.src = "https://placehold.co/150x150.png")} />
-                      <CardContent className="p-2"><h3 className="font-semibold text-xs truncate leading-snug">{product.name}</h3><p className="text-primary font-bold text-sm mt-0.5">{currencySymbol}{product.price.toLocaleString('id-ID')}</p><p className="text-xs text-muted-foreground mb-1">Stok: {product.quantity}</p>
-                        <Button size="sm" className="w-full text-xs h-7" disabled={!activeShift || product.quantity <= 0} onClick={(e) => { e.stopPropagation(); if (product.quantity > 0) handleAddToCart(product); }}><PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah</Button>
+                  products.map(product => (
+                    <Card key={product.id} className={cn("overflow-hidden shadow-sm hover:shadow-md transition-shadow rounded-md cursor-pointer flex flex-col", product.quantity <= 0 && "opacity-60 cursor-not-allowed")} onClick={() => product.quantity > 0 && handleAddToCart(product)}>
+                      <div className="relative w-full aspect-[4/3]">
+                        <Image src={product.imageUrl || `https://placehold.co/150x100.png`} alt={product.name} layout="fill" objectFit="cover" className="rounded-t-md" data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()} onError={(e) => (e.currentTarget.src = "https://placehold.co/150x100.png")} />
+                      </div>
+                      <CardContent className="p-2 flex flex-col flex-grow"><h3 className="font-semibold text-xs truncate leading-snug flex-grow">{product.name}</h3><p className="text-primary font-bold text-sm mt-0.5">{currencySymbol}{product.price.toLocaleString('id-ID')}</p><p className="text-xs text-muted-foreground mb-1">Stok: {product.quantity}</p>
+                        <Button size="sm" className="w-full text-xs h-7 mt-auto" disabled={!activeShift || product.quantity <= 0} onClick={(e) => { e.stopPropagation(); if (product.quantity > 0) handleAddToCart(product); }}><PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah</Button>
                       </CardContent>
                     </Card>
                   ))
                 ) : (
                   <div className="border rounded-md overflow-hidden"><Table><TableHeader><TableRow><TableHead className="w-[40px] p-1.5 hidden sm:table-cell"></TableHead><TableHead className="p-1.5 text-xs">Nama Produk</TableHead><TableHead className="p-1.5 text-xs text-right">Harga</TableHead><TableHead className="p-1.5 text-xs text-center hidden md:table-cell">Stok</TableHead><TableHead className="p-1.5 text-xs text-center">Aksi</TableHead></TableRow></TableHeader><TableBody>
-                        {filteredProducts.map(product => (<TableRow key={product.id} className={cn(product.quantity <= 0 && "opacity-60")}><TableCell className="p-1 hidden sm:table-cell"><Image src={product.imageUrl || `https://placehold.co/28x28.png`} alt={product.name} width={28} height={28} className="rounded object-cover h-7 w-7" data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()} onError={(e) => (e.currentTarget.src = "https://placehold.co/28x28.png")} /></TableCell><TableCell className="p-1.5 text-xs font-medium">{product.name}</TableCell><TableCell className="p-1.5 text-xs text-right">{currencySymbol}{product.price.toLocaleString('id-ID')}</TableCell><TableCell className="p-1.5 text-xs text-center hidden md:table-cell">{product.quantity}</TableCell><TableCell className="p-1.5 text-xs text-center"><Button variant="outline" size="sm" className="h-7 text-xs" disabled={!activeShift || product.quantity <= 0} onClick={() => product.quantity > 0 && handleAddToCart(product)}><PackagePlus className="mr-1 h-3 w-3" /> Tambah</Button></TableCell></TableRow>))}
+                        {products.map(product => (<TableRow key={product.id} className={cn(product.quantity <= 0 && "opacity-60")}><TableCell className="p-1 hidden sm:table-cell"><Image src={product.imageUrl || `https://placehold.co/28x28.png`} alt={product.name} width={28} height={28} className="rounded object-cover h-7 w-7" data-ai-hint={product.imageHint || product.name.split(" ").slice(0,2).join(" ").toLowerCase()} onError={(e) => (e.currentTarget.src = "https://placehold.co/28x28.png")} /></TableCell><TableCell className="p-1.5 text-xs font-medium">{product.name}</TableCell><TableCell className="p-1.5 text-xs text-right">{currencySymbol}{product.price.toLocaleString('id-ID')}</TableCell><TableCell className="p-1.5 text-xs text-center hidden md:table-cell">{product.quantity}</TableCell><TableCell className="p-1.5 text-xs text-center"><Button variant="outline" size="sm" className="h-7 text-xs" disabled={!activeShift || product.quantity <= 0} onClick={() => product.quantity > 0 && handleAddToCart(product)}><PackagePlus className="mr-1 h-3 w-3" /> Tambah</Button></TableCell></TableRow>))}
                       </TableBody></Table></div>
                 )}
                 {!activeShift && (<div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-md z-10"><p className="text-sm font-medium text-muted-foreground p-4 bg-card border rounded-lg shadow-md">Mulai shift untuk mengaktifkan penjualan.</p></div>)}
+              </div>
+              <div className="flex justify-between items-center pt-2">
+                <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handlePageChangePOS(currentPagePOS - 1, 'prev')} disabled={currentPagePOS <= 1 || loadingProducts}>
+                    <ChevronLeft className="mr-1 h-4 w-4"/> Sebelumnya
+                </Button>
+                <span className="text-xs text-muted-foreground">Halaman {currentPagePOS}</span>
+                <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handlePageChangePOS(currentPagePOS + 1, 'next')} disabled={isLastPagePOS || loadingProducts}>
+                    Berikutnya <ChevronRight className="ml-1 h-4 w-4"/>
+                </Button>
               </div>
             </div>
 
@@ -1259,5 +1333,3 @@ export default function POSPage() {
     </ProtectedRoute>
   );
 }
-
-    
