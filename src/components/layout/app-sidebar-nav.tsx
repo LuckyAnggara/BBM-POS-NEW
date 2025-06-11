@@ -211,8 +211,10 @@ export default function AppSidebarNav() {
   }, [fetchUnreadCount]);
 
   useEffect(() => {
+    // Re-fetch immediately if path changes to notifications or from notifications
+    // to update badge possibly cleared by visiting the page.
     if (pathname.includes('/notifications')) {
-      setTimeout(fetchUnreadCount, 1500);
+       setTimeout(fetchUnreadCount, 1000); // slight delay to allow read status to update
     }
   }, [pathname, fetchUnreadCount]);
 
@@ -222,7 +224,7 @@ export default function AppSidebarNav() {
     <nav className="flex flex-col h-full">
       <SidebarHeaderBrand />
 
-      <div className="flex-grow overflow-y-auto p-2 space-y-1 mt-1">
+      <div className="flex-grow overflow-y-auto p-2 space-y-0.5 mt-1"> {/* Reduced space-y for tighter packing */}
         {(loadingAuth || loadingUserData) ? (
           <SidebarMenu>
             <SidebarMenuSkeleton showIcon className="my-1" />
@@ -234,86 +236,89 @@ export default function AppSidebarNav() {
             <SidebarMenuSkeleton showIcon className="my-1" />
           </SidebarMenu>
         ) : (
-          <Accordion type="multiple" className="w-full space-y-0">
+          <SidebarMenu> {/* UL as the root container for all items */}
             {navItems.map((item) => {
               if (item.adminOnly && userData?.role !== 'admin') {
                 return null;
               }
               
               const isCashierNoBranch = userData?.role === 'cashier' && !userData.branchId;
-              const isAllowedForCashierNoBranch = item.href === '/dashboard' || 
-                                                  item.label === 'Notifikasi' || 
-                                                  item.href === '/account';
 
-              const isNavItemDisabled = isCashierNoBranch && !isAllowedForCashierNoBranch && 
-                                      !item.subItems?.some(sub => sub.href === '/dashboard' || sub.href === '/notifications' || sub.href === '/account');
-
-
-              if (item.subItems) {
+              if (item.subItems && item.subItems.length > 0) {
+                // This is an accordion group
+                const isGroupDisabledForCashier = isCashierNoBranch && !item.subItems?.some(sub => sub.href === '/dashboard' || sub.href === '/notifications' || sub.href === '/account');
                 const visibleSubItems = item.subItems.filter(subItem => !(subItem.adminOnly && userData?.role !== 'admin'));
                 if (visibleSubItems.length === 0 && item.adminOnly && userData?.role !== 'admin') {
                     return null;
                 }
-                
-                const isGroupActive = visibleSubItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href))) && !isNavItemDisabled;
+                const isGroupActive = visibleSubItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href))) && !isGroupDisabledForCashier;
 
                 return (
-                  <AccordionItem value={item.label} key={item.label} className="border-none">
-                    <AccordionTrigger
-                      className={cn(
-                        "flex items-center justify-between w-full p-2 text-xs rounded-md hover:bg-sidebar-accent/50 data-[state=open]:bg-sidebar-accent/70",
-                        isGroupActive
-                          ? "bg-primary/10 text-primary hover:bg-primary/20"
-                          : "text-sidebar-foreground",
-                        isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent",
-                      )}
-                      disabled={isNavItemDisabled}
-                      aria-disabled={isNavItemDisabled}
-                      tabIndex={isNavItemDisabled ? -1 : undefined}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <item.icon className="h-4 w-4 shrink-0" />
-                        <span className="truncate text-xs">{item.label}</span>
-                      </div>
-                      {/* Chevron is part of AccordionTrigger by default */}
-                    </AccordionTrigger>
-                    <AccordionContent className="pt-0 pb-0 pl-5 pr-0 overflow-hidden"> {/* Indent sub-items */}
-                      <SidebarMenuSub className={cn("!mx-0 !px-0 !py-1 !border-l-0", isNavItemDisabled && "opacity-60 pointer-events-none")}>
-                        {visibleSubItems.map(subItem => {
-                            const isSubItemDisabled = isCashierNoBranch && subItem.href !== '/dashboard' && subItem.href !== '/notifications' && subItem.href !== '/account';
-                            const isSubItemActive = (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isSubItemDisabled;
-                            return (
-                              <SidebarMenuSubItem key={subItem.href} className="py-0.5">
-                                <Link href={isSubItemDisabled ? "#" : subItem.href} passHref legacyBehavior>
-                                    <SidebarMenuSubButton
-                                        isActive={isSubItemActive}
-                                        aria-disabled={isSubItemDisabled}
-                                        className={cn(
-                                          "text-xs h-auto py-1.5 px-2 w-full justify-start hover:bg-sidebar-accent/50",
-                                          isSubItemActive ? "text-primary font-medium bg-sidebar-accent/60" : "text-sidebar-foreground/80",
-                                          isSubItemDisabled && "cursor-not-allowed opacity-50"
-                                        )}
-                                    >
-                                      {/* Omitting subItem.icon for cleaner accordion, adjust if needed */}
-                                      <span className='text-xs'>{subItem.label}</span>
-                                      {subItem.badgeCount && subItem.badgeCount > 0 && (
-                                          <SidebarMenuBadge className="ml-auto">{subItem.badgeCount}</SidebarMenuBadge>
-                                      )}
-                                    </SidebarMenuSubButton>
-                                </Link>
-                              </SidebarMenuSubItem>
-                            );
-                        })}
-                      </SidebarMenuSub>
-                    </AccordionContent>
-                  </AccordionItem>
+                  <SidebarMenuItem key={item.label} className="w-full my-0.5 p-0 list-none"> {/* Wrapper LI */}
+                    <Accordion type="single" collapsible className="w-full">
+                      <AccordionItem value={item.label} className="border-none">
+                        <AccordionTrigger
+                          className={cn(
+                            "flex items-center justify-between w-full p-2 text-xs rounded-md hover:no-underline",
+                            "hover:bg-sidebar-accent/50 data-[state=open]:bg-sidebar-accent/60",
+                            "h-9", // Consistent height
+                            isGroupActive ? "bg-primary/10 text-primary hover:bg-primary/15 font-medium" : "text-sidebar-foreground",
+                            isGroupDisabledForCashier && "opacity-60 cursor-not-allowed hover:bg-transparent",
+                          )}
+                          disabled={isGroupDisabledForCashier}
+                          aria-disabled={isGroupDisabledForCashier}
+                          tabIndex={isGroupDisabledForCashier ? -1 : undefined}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <item.icon className="h-4 w-4 shrink-0" />
+                            <span className="truncate text-xs">{item.label}</span>
+                          </div>
+                          {/* ChevronDown is part of AccordionTrigger by default */}
+                        </AccordionTrigger>
+                        <AccordionContent className="pt-0 pb-0 pl-5 pr-0 overflow-hidden"> {/* Indent sub-items */}
+                          <SidebarMenuSub className={cn("!mx-0 !px-0 !py-1 !border-l-0", isGroupDisabledForCashier && "opacity-60 pointer-events-none")}>
+                            {visibleSubItems.map(subItem => {
+                                const isSubItemCashierNoBranch = userData?.role === 'cashier' && !userData.branchId;
+                                const isSubItemAllowedForCashierNoBranch = subItem.href === '/dashboard' || subItem.href === '/notifications' || subItem.href === '/account';
+                                const isSubItemDisabled = isSubItemCashierNoBranch && !isSubItemAllowedForCashierNoBranch;
+                                const isSubItemActive = (subItem.href && (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href))) && !isSubItemDisabled;
+                                return (
+                                  <SidebarMenuSubItem key={subItem.href || subItem.label} className="py-0.5">
+                                    <Link href={isSubItemDisabled || !subItem.href ? "#" : subItem.href} passHref legacyBehavior>
+                                        <SidebarMenuSubButton
+                                            isActive={isSubItemActive}
+                                            aria-disabled={isSubItemDisabled}
+                                            className={cn(
+                                              "text-xs h-auto py-1.5 px-2 w-full justify-start hover:bg-sidebar-accent/50",
+                                              isSubItemActive ? "text-primary font-medium bg-sidebar-accent/60" : "text-sidebar-foreground/80",
+                                              isSubItemDisabled && "cursor-not-allowed opacity-50"
+                                            )}
+                                        >
+                                          <span className='text-xs'>{subItem.label}</span>
+                                          {subItem.badgeCount && subItem.badgeCount > 0 && (
+                                              <SidebarMenuBadge className="ml-auto">{subItem.badgeCount}</SidebarMenuBadge>
+                                          )}
+                                        </SidebarMenuSubButton>
+                                    </Link>
+                                  </SidebarMenuSubItem>
+                                );
+                            })}
+                          </SidebarMenuSub>
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
+                  </SidebarMenuItem>
                 );
               }
 
               // Non-group items (direct links)
               if (!item.href) return null;
+
+              const isAllowedForCashierNoBranch = item.href === '/dashboard' || item.href === '/notifications' || item.href === '/account';
+              const isNavItemDisabled = isCashierNoBranch && !isAllowedForCashierNoBranch;
+              
               return (
-                <SidebarMenuItem key={item.label} className="w-full my-0.5"> {/* Adjusted margin/spacing */}
+                <SidebarMenuItem key={item.label} className="w-full my-0.5">
                   <Link
                     href={isNavItemDisabled ? "#" : item.href}
                     onClick={(e) => { if (isNavItemDisabled) e.preventDefault(); }}
@@ -326,7 +331,7 @@ export default function AppSidebarNav() {
                       size="default" 
                       className={cn(
                         "w-full justify-start text-xs p-2 h-9", 
-                        pathname === item.href && !isNavItemDisabled ? "bg-primary/10 text-primary hover:bg-primary/20" : "text-sidebar-foreground hover:bg-sidebar-accent/50",
+                        pathname === item.href && !isNavItemDisabled ? "bg-primary/10 text-primary hover:bg-primary/20 font-medium" : "text-sidebar-foreground hover:bg-sidebar-accent/50",
                         isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                       )}
                       isActive={!isNavItemDisabled && pathname === item.href}
@@ -342,7 +347,7 @@ export default function AppSidebarNav() {
                 </SidebarMenuItem>
               );
             })}
-          </Accordion>
+          </SidebarMenu>
         )}
       </div>
 
