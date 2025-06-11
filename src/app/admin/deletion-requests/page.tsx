@@ -22,7 +22,7 @@ import { format } from "date-fns";
 import { id as localeID } from 'date-fns/locale';
 import { Badge } from "@/components/ui/badge";
 import { Timestamp } from "firebase/firestore";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, VisuallyHidden } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogDescription as DialogModalDescription, DialogFooter as DialogModalFooter, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,7 +64,7 @@ export default function DeletionRequestsPage() {
     } finally {
         setLoadingRequests(false);
     }
-  }, [selectedBranch, userData?.role, toast, loadingRequests]); // Added loadingRequests to dep array
+  }, [selectedBranch, userData?.role, toast]); 
 
   useEffect(() => {
     fetchRequests();
@@ -225,6 +225,9 @@ export default function DeletionRequestsPage() {
         {/* Approve Dialog */}
         <Dialog open={isApproveDialogVisible} onOpenChange={(open) => { if (!open) setRequestToProcess(null); setIsApproveDialogVisible(open);}}>
             <DialogContent className="sm:max-w-md">
+                <VisuallyHidden>
+                  <DialogModalTitle>Informasi Permintaan Penghapusan</DialogModalTitle>
+                </VisuallyHidden>
                  <DialogHeader>
                     <DialogModalTitle className="text-base">Setujui Penghapusan Transaksi</DialogModalTitle>
                     <DialogModalDescription className="text-xs">
@@ -259,6 +262,9 @@ export default function DeletionRequestsPage() {
         {/* Reject Dialog */}
         <Dialog open={isRejectDialogVisible} onOpenChange={(open) => { if (!open) setRequestToProcess(null); setIsRejectDialogVisible(open);}}>
             <DialogContent className="sm:max-w-md">
+                 <VisuallyHidden>
+                  <DialogModalTitle>Informasi Permintaan Penghapusan</DialogModalTitle>
+                </VisuallyHidden>
                 <DialogHeader>
                     <DialogModalTitle className="text-base">Tolak Permintaan Penghapusan</DialogModalTitle>
                     <DialogModalDescription className="text-xs">
