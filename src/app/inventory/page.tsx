@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import MainLayout from "@/components/layout/main-layout";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/contexts/auth-context";
@@ -10,22 +10,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PlusCircle, FilePenLine, Trash2, Search, PackagePlus, Tag, X } from "lucide-react";
+import { PlusCircle, FilePenLine, Trash2, Search, PackagePlus, Tag, X, Upload, Download, FileText } from "lucide-react";
 import Image from "next/image";
 import { useForm, Controller, type SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { InventoryItem, InventoryCategory, InventoryItemInput, InventoryCategoryInput } from "@/lib/firebase/inventory"; // Updated import
+import type { InventoryItem, InventoryCategory, InventoryItemInput, InventoryCategoryInput } from "@/lib/firebase/inventory";
 import {
   addInventoryItem, getInventoryItems, updateInventoryItem, deleteInventoryItem,
   addInventoryCategory, getInventoryCategories, deleteInventoryCategory
-} from "@/lib/firebase/inventory"; // Updated import
+} from "@/lib/firebase/inventory";
 import { Timestamp } from "firebase/firestore";
+import { format } from "date-fns";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 
 const itemFormSchema = z.object({
@@ -60,6 +62,13 @@ export default function InventoryPage() {
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
 
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [parsedCsvData, setParsedCsvData] = useState<InventoryItemInput[]>([]);
+  const [csvImportFileName, setCsvImportFileName] = useState<string | null>(null);
+  const [isProcessingImport, setIsProcessingImport] = useState(false);
+
 
   const itemForm = useForm<ItemFormValues>({
     resolver: zodResolver(itemFormSchema),
@@ -170,7 +179,7 @@ export default function InventoryPage() {
       toast({ title: "Gagal Menambah Kategori", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Kategori Ditambahkan", description: `Kategori "${values.name}" telah ditambahkan.` });
-      setIsCategoryManagerOpen(false); 
+      // setIsCategoryManagerOpen(false); // Keep open to add more
       categoryForm.reset();
       const fetchedCategories = await getInventoryCategories(selectedBranch.id);
       setCategories(fetchedCategories);
@@ -187,6 +196,197 @@ export default function InventoryPage() {
       const fetchedCategories = await getInventoryCategories(selectedBranch.id);
       setCategories(fetchedCategories);
     }
+  };
+
+  const handleExportCSV = () => {
+    if (!items || items.length === 0) {
+      toast({ title: "Tidak Ada Data", description: "Tidak ada data inventaris untuk diekspor.", variant: "default" });
+      return;
+    }
+
+    const headers = ["id", "name", "sku", "categoryId", "categoryName", "quantity", "price", "costPrice", "imageUrl", "imageHint"];
+    const csvRows = [headers.join(",")];
+
+    const escapeCSVField = (field: any): string => {
+      if (field === null || field === undefined) return "";
+      const stringField = String(field);
+      if (stringField.includes(",") || stringField.includes("\"") || stringField.includes("\n")) {
+        return `"${stringField.replace(/"/g, '""')}"`;
+      }
+      return stringField;
+    };
+
+    items.forEach(item => {
+      const row = headers.map(header => escapeCSVField((item as any)[header]));
+      csvRows.push(row.join(","));
+    });
+
+    const csvString = csvRows.join("\n");
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    const branchNamePart = selectedBranch?.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'cabang';
+    const datePart = format(new Date(), 'yyyyMMdd');
+    link.setAttribute("download", `inventaris_${branchNamePart}_${datePart}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast({title: "Ekspor Berhasil", description: "Data inventaris telah diekspor ke CSV."});
+  };
+
+  const handleImportButtonClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && selectedBranch) {
+      setCsvImportFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        processCsvData(text, file.name);
+      };
+      reader.readAsText(file);
+    }
+    if (fileInputRef.current) { // Reset file input to allow re-uploading the same file
+        fileInputRef.current.value = "";
+    }
+  };
+
+  const processCsvData = (csvContent: string, fileName: string) => {
+    const lines = csvContent.split(/\r\n|\n/);
+    if (lines.length < 2) {
+      toast({ title: "File CSV Kosong atau Invalid", description: "File tidak berisi data atau header.", variant: "destructive"});
+      return;
+    }
+
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const requiredHeaders = ["name", "categoryid", "quantity", "price"];
+    const missingHeaders = requiredHeaders.filter(rh => !headers.includes(rh));
+
+    if (missingHeaders.length > 0) {
+      toast({ title: "Header CSV Tidak Lengkap", description: `Kolom berikut wajib ada: ${missingHeaders.join(', ')}.`, variant: "destructive"});
+      return;
+    }
+
+    const nameIndex = headers.indexOf("name");
+    const categoryIdIndex = headers.indexOf("categoryid");
+    const quantityIndex = headers.indexOf("quantity");
+    const priceIndex = headers.indexOf("price");
+    const skuIndex = headers.indexOf("sku");
+    const costPriceIndex = headers.indexOf("costprice");
+    const imageUrlIndex = headers.indexOf("imageurl");
+    const imageHintIndex = headers.indexOf("imagehint");
+
+
+    const data: InventoryItemInput[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue; // Skip empty lines
+      const currentline = lines[i].split(','); // Simple split, assumes no commas within fields or proper CSV escaping
+
+      const name = currentline[nameIndex]?.trim();
+      const categoryId = currentline[categoryIdIndex]?.trim();
+      const quantityStr = currentline[quantityIndex]?.trim();
+      const priceStr = currentline[priceIndex]?.trim();
+
+      if (!name || !categoryId || !quantityStr || !priceStr) {
+        console.warn(`Skipping line ${i+1} due to missing required fields in file ${fileName}`);
+        continue;
+      }
+      
+      const quantity = parseFloat(quantityStr);
+      const price = parseFloat(priceStr);
+
+      if (isNaN(quantity) || isNaN(price) || quantity < 0 || price < 0) {
+        console.warn(`Skipping line ${i+1} due to invalid numeric values for quantity/price in file ${fileName}`);
+        continue;
+      }
+
+      const categoryExists = categories.some(cat => cat.id === categoryId);
+      if (!categoryExists) {
+          console.warn(`Skipping line ${i+1} due to invalid categoryId '${categoryId}' in file ${fileName}. Category must exist.`);
+          toast({title: "Category ID Tidak Valid", description: `Baris ${i+1}: ID Kategori '${categoryId}' tidak ditemukan.`, variant:"warning", duration: 7000});
+          continue;
+      }
+
+      data.push({
+        branchId: selectedBranch!.id, // selectedBranch is checked before calling this
+        name,
+        sku: skuIndex > -1 ? currentline[skuIndex]?.trim() : undefined,
+        categoryId,
+        quantity,
+        price,
+        costPrice: costPriceIndex > -1 ? parseFloat(currentline[costPriceIndex]?.trim() || "0") : 0,
+        imageUrl: imageUrlIndex > -1 ? currentline[imageUrlIndex]?.trim() : undefined,
+        imageHint: imageHintIndex > -1 ? currentline[imageHintIndex]?.trim() : undefined,
+      });
+    }
+
+    if (data.length === 0) {
+      toast({ title: "Tidak Ada Data Valid", description: "Tidak ada data produk yang valid ditemukan di file CSV.", variant: "destructive"});
+      return;
+    }
+
+    setParsedCsvData(data);
+    setIsImportDialogOpen(true);
+  };
+
+  const handleConfirmImport = async () => {
+    if (!parsedCsvData || parsedCsvData.length === 0 || !selectedBranch) return;
+
+    setIsProcessingImport(true);
+    let successCount = 0;
+    let errorCount = 0;
+    const errorMessages: string[] = [];
+
+    const results = await Promise.allSettled(parsedCsvData.map(async (itemData) => {
+        const selectedCategory = categories.find(c => c.id === itemData.categoryId);
+        // Category validity already checked in processCsvData, but double check here for safety
+        if (!selectedCategory) {
+          throw new Error(`Kategori dengan ID '${itemData.categoryId}' untuk produk '${itemData.name}' tidak ditemukan.`);
+        }
+        return addInventoryItem(itemData, selectedCategory.name);
+    }));
+
+    results.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value && !("error" in result.value)) {
+            successCount++;
+        } else {
+            errorCount++;
+            const itemName = parsedCsvData[index]?.name || `Item di baris ${index + 2}`;
+            const errorMessage = result.status === 'rejected' ? result.reason?.message : (result.value as { error: string })?.error;
+            errorMessages.push(`${itemName}: ${errorMessage || 'Error tidak diketahui'}`);
+            console.error(`Error importing ${itemName}:`, errorMessage);
+        }
+    });
+
+    if (successCount > 0) {
+        toast({ title: "Impor Selesai", description: `${successCount} produk berhasil diimpor.${errorCount > 0 ? ` ${errorCount} produk gagal.` : ''}` });
+        await fetchData();
+    } else if (errorCount > 0) {
+        toast({ title: "Impor Gagal", description: `Semua ${errorCount} produk gagal diimpor. Cek konsol untuk detail.`, variant: "destructive" });
+    } else {
+        toast({ title: "Tidak Ada Data", description: "Tidak ada data yang diimpor.", variant: "default" });
+    }
+    
+    if(errorMessages.length > 0 && errorCount > 0) {
+        // For a long list of errors, consider a more sophisticated display or logging.
+        // For now, a simple toast with first few errors.
+        toast({
+            title: `${errorCount} Produk Gagal Diimpor`,
+            description: errorMessages.slice(0, 3).join("; ") + (errorMessages.length > 3 ? "; ..." : ""),
+            variant: "destructive",
+            duration: 10000
+        });
+    }
+
+    setIsProcessingImport(false);
+    setIsImportDialogOpen(false);
+    setParsedCsvData([]);
+    setCsvImportFileName(null);
   };
 
 
@@ -215,21 +415,28 @@ export default function InventoryPage() {
             <h1 className="text-xl md:text-2xl font-semibold font-headline">
               Inventaris {selectedBranch ? `- ${selectedBranch.name}` : ''}
             </h1>
-            <div className="flex gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-start sm:justify-end">
               <div className="relative flex-grow sm:flex-grow-0">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   type="search"
                   placeholder="Cari produk..."
-                  className="pl-8 w-full sm:w-56 rounded-md h-9 text-xs"
+                  className="pl-8 w-full sm:w-48 rounded-md h-9 text-xs"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              <Button size="sm" className="rounded-md text-xs" onClick={() => setIsCategoryManagerOpen(true)}>
+              <input type="file" ref={fileInputRef} onChange={handleFileSelected} accept=".csv" style={{ display: 'none' }} />
+              <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleImportButtonClick} disabled={!selectedBranch || loadingItems}>
+                <Upload className="mr-1.5 h-3.5 w-3.5" /> Impor CSV
+              </Button>
+              <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleExportCSV} disabled={!selectedBranch || loadingItems || items.length === 0}>
+                <Download className="mr-1.5 h-3.5 w-3.5" /> Ekspor CSV
+              </Button>
+              <Button size="sm" className="rounded-md text-xs h-9" onClick={() => setIsCategoryManagerOpen(true)}>
                 <Tag className="mr-1.5 h-3.5 w-3.5" /> Kelola Kategori
               </Button>
-              <Button size="sm" className="rounded-md text-xs" onClick={() => handleOpenItemDialog()}>
+              <Button size="sm" className="rounded-md text-xs h-9" onClick={() => handleOpenItemDialog()}>
                 <PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah Produk
               </Button>
             </div>
@@ -426,40 +633,42 @@ export default function InventoryPage() {
                 ) : categories.length === 0 ? (
                   <p className="text-xs text-muted-foreground">Belum ada kategori.</p>
                 ) : (
-                  <ul className="space-y-1 max-h-60 overflow-y-auto pr-1">
-                    {categories.map(cat => (
-                      <li key={cat.id} className="flex items-center justify-between text-xs p-1.5 bg-muted/50 rounded-md">
-                        <span>{cat.name}</span>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive/80">
-                              <X className="h-3.5 w-3.5" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                                <AlertDialogTitle>Hapus Kategori "{cat.name}"?</AlertDialogTitle>
-                                <AlertDialogDescription className="text-xs">
-                                Ini akan menghapus kategori. Pastikan tidak ada produk yang masih menggunakan kategori ini. Tindakan ini tidak dapat dibatalkan.
-                                </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                                <AlertDialogCancel className="text-xs h-8">Batal</AlertDialogCancel>
-                                <AlertDialogAction
-                                    className="text-xs h-8 bg-destructive hover:bg-destructive/90"
-                                    onClick={() => handleDeleteCategory(cat.id, cat.name)}>
-                                    Ya, Hapus Kategori
-                                </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </li>
-                    ))}
-                  </ul>
+                  <ScrollArea className="max-h-60">
+                    <ul className="space-y-1 pr-1">
+                        {categories.map(cat => (
+                        <li key={cat.id} className="flex items-center justify-between text-xs p-1.5 bg-muted/50 rounded-md">
+                            <span>{cat.name}</span>
+                            <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive/80">
+                                <X className="h-3.5 w-3.5" />
+                                </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                                <AlertDialogHeader>
+                                    <AlertDialogTitle>Hapus Kategori "{cat.name}"?</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-xs">
+                                    Ini akan menghapus kategori. Pastikan tidak ada produk yang masih menggunakan kategori ini. Tindakan ini tidak dapat dibatalkan.
+                                    </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                    <AlertDialogCancel className="text-xs h-8">Batal</AlertDialogCancel>
+                                    <AlertDialogAction
+                                        className="text-xs h-8 bg-destructive hover:bg-destructive/90"
+                                        onClick={() => handleDeleteCategory(cat.id, cat.name)}>
+                                        Ya, Hapus Kategori
+                                    </AlertDialogAction>
+                                </AlertDialogFooter>
+                            </AlertDialogContent>
+                            </AlertDialog>
+                        </li>
+                        ))}
+                    </ul>
+                  </ScrollArea>
                 )}
               </div>
             </div>
-             <DialogFooter>
+             <DialogFooter className="pt-3">
                 <DialogClose asChild>
                     <Button type="button" variant="outline" className="text-xs h-8">Tutup</Button>
                 </DialogClose>
@@ -467,9 +676,60 @@ export default function InventoryPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={isImportDialogOpen} onOpenChange={(open) => { if (!open) { setParsedCsvData([]); setCsvImportFileName(null); } setIsImportDialogOpen(open);}}>
+            <DialogContent className="sm:max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle className="text-base">Konfirmasi Impor Inventaris</DialogTitle>
+                    {csvImportFileName && <DialogDescription className="text-xs">File: {csvImportFileName}</DialogDescription>}
+                </DialogHeader>
+                <div className="py-2">
+                    {parsedCsvData.length > 0 ? (
+                        <>
+                            <p className="text-sm mb-2">Akan mengimpor <strong>{parsedCsvData.length}</strong> produk baru. Berikut adalah preview beberapa item pertama:</p>
+                            <ScrollArea className="max-h-[40vh] border rounded-md">
+                                <Table className="text-xs">
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Nama Produk</TableHead>
+                                            <TableHead>SKU</TableHead>
+                                            <TableHead>ID Kategori</TableHead>
+                                            <TableHead className="text-right">Stok</TableHead>
+                                            <TableHead className="text-right">Harga Jual</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {parsedCsvData.slice(0, 5).map((item, index) => (
+                                            <TableRow key={index}>
+                                                <TableCell>{item.name}</TableCell>
+                                                <TableCell>{item.sku || '-'}</TableCell>
+                                                <TableCell>{item.categoryId}</TableCell>
+                                                <TableCell className="text-right">{item.quantity}</TableCell>
+                                                <TableCell className="text-right">{item.price}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </ScrollArea>
+                            {parsedCsvData.length > 5 && <p className="text-xs text-muted-foreground mt-1">Dan {parsedCsvData.length - 5} item lainnya...</p>}
+                            <p className="text-xs text-amber-600 mt-3">
+                                <strong>Perhatian:</strong> Fitur ini hanya akan menambahkan produk baru. Jika SKU atau nama produk sudah ada, produk duplikat mungkin akan dibuat. Pastikan ID Kategori di CSV valid dan sudah ada di sistem untuk cabang ini.
+                            </p>
+                        </>
+                    ) : (
+                        <p className="text-sm text-muted-foreground">Tidak ada data valid untuk diimpor.</p>
+                    )}
+                </div>
+                <DialogFooter className="pt-3">
+                    <DialogClose asChild><Button type="button" variant="outline" className="text-xs h-8" disabled={isProcessingImport}>Batal</Button></DialogClose>
+                    <Button type="button" onClick={handleConfirmImport} className="text-xs h-8" disabled={isProcessingImport || parsedCsvData.length === 0}>
+                        {isProcessingImport ? "Memproses Impor..." : "Konfirmasi & Impor Produk"}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+
       </MainLayout>
     </ProtectedRoute>
   );
 }
 
-    
