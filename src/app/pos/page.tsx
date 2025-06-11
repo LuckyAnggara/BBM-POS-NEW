@@ -966,7 +966,7 @@ export default function POSPage() {
                 </div>
               </div>
 
-              <div className={cn("flex-grow overflow-y-auto p-0.5 -m-0.5 relative", 
+              <div className={cn("flex-grow overflow-y-auto p-0.5 -m-0.5 relative min-h-0", 
                                 viewMode === 'card' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5" : "")}>
                 {loadingProducts ? (<div className={cn(viewMode === 'card' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5" : "space-y-2")}>
                     {[...Array(itemsPerPagePOS)].map((_,i) => <Skeleton key={i} className={cn(viewMode === 'card' ? "h-48 w-full" : "h-10 w-full")} />)}
