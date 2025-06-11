@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -28,6 +29,7 @@ import {
 import { Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge"; // Import Badge
 
 
 const itemFormSchema = z.object({
@@ -47,6 +49,12 @@ const categoryFormSchema = z.object({
 });
 type CategoryFormValues = z.infer<typeof categoryFormSchema>;
 
+interface ParsedCsvItem extends InventoryItemInput {
+  isDuplicateSku?: boolean;
+  categoryNameForPreview?: string;
+}
+
+
 export default function InventoryPage() {
   const { userData } = useAuth();
   const { selectedBranch, loadingBranches } = useBranch();
@@ -65,7 +73,7 @@ export default function InventoryPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
-  const [parsedCsvData, setParsedCsvData] = useState<InventoryItemInput[]>([]);
+  const [parsedCsvData, setParsedCsvData] = useState<ParsedCsvItem[]>([]);
   const [csvImportFileName, setCsvImportFileName] = useState<string | null>(null);
   const [isProcessingImport, setIsProcessingImport] = useState(false);
 
@@ -179,7 +187,6 @@ export default function InventoryPage() {
       toast({ title: "Gagal Menambah Kategori", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Kategori Ditambahkan", description: `Kategori "${values.name}" telah ditambahkan.` });
-      // setIsCategoryManagerOpen(false); // Keep open to add more
       categoryForm.reset();
       const fetchedCategories = await getInventoryCategories(selectedBranch.id);
       setCategories(fetchedCategories);
@@ -251,7 +258,7 @@ export default function InventoryPage() {
       };
       reader.readAsText(file);
     }
-    if (fileInputRef.current) { // Reset file input to allow re-uploading the same file
+    if (fileInputRef.current) {
         fileInputRef.current.value = "";
     }
   };
@@ -264,11 +271,11 @@ export default function InventoryPage() {
     }
 
     const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-    const requiredHeaders = ["name", "categoryid", "quantity", "price"];
+    const requiredHeaders = ["name", "categoryid", "quantity", "price"]; // categoryId is case-insensitive
     const missingHeaders = requiredHeaders.filter(rh => !headers.includes(rh));
 
     if (missingHeaders.length > 0) {
-      toast({ title: "Header CSV Tidak Lengkap", description: `Kolom berikut wajib ada: ${missingHeaders.join(', ')}.`, variant: "destructive"});
+      toast({ title: "Header CSV Tidak Lengkap", description: `Kolom berikut wajib ada: ${missingHeaders.join(', ')}. Perhatikan penulisan (case-insensitive).`, variant: "destructive"});
       return;
     }
 
@@ -276,16 +283,16 @@ export default function InventoryPage() {
     const categoryIdIndex = headers.indexOf("categoryid");
     const quantityIndex = headers.indexOf("quantity");
     const priceIndex = headers.indexOf("price");
-    const skuIndex = headers.indexOf("sku");
-    const costPriceIndex = headers.indexOf("costprice");
-    const imageUrlIndex = headers.indexOf("imageurl");
-    const imageHintIndex = headers.indexOf("imagehint");
+    const skuIndex = headers.indexOf("sku"); // Optional
+    const costPriceIndex = headers.indexOf("costprice"); // Optional
+    const imageUrlIndex = headers.indexOf("imageurl"); // Optional
+    const imageHintIndex = headers.indexOf("imagehint"); // Optional
 
 
-    const data: InventoryItemInput[] = [];
+    const data: ParsedCsvItem[] = [];
     for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue; // Skip empty lines
-      const currentline = lines[i].split(','); // Simple split, assumes no commas within fields or proper CSV escaping
+      if (!lines[i].trim()) continue;
+      const currentline = lines[i].split(',');
 
       const name = currentline[nameIndex]?.trim();
       const categoryId = currentline[categoryIdIndex]?.trim();
@@ -304,24 +311,26 @@ export default function InventoryPage() {
         console.warn(`Skipping line ${i+1} due to invalid numeric values for quantity/price in file ${fileName}`);
         continue;
       }
+      
+      const sku = skuIndex > -1 ? currentline[skuIndex]?.trim() : undefined;
+      const isDuplicateSku = !!sku && sku.trim() !== "" && items.some(existingItem => existingItem.sku === sku);
+      
+      const category = categories.find(cat => cat.id === categoryId);
+      const categoryNameForPreview = category ? category.name : `ID: ${categoryId} (Tidak Valid)`;
 
-      const categoryExists = categories.some(cat => cat.id === categoryId);
-      if (!categoryExists) {
-          console.warn(`Skipping line ${i+1} due to invalid categoryId '${categoryId}' in file ${fileName}. Category must exist.`);
-          toast({title: "Category ID Tidak Valid", description: `Baris ${i+1}: ID Kategori '${categoryId}' tidak ditemukan.`, variant:"warning", duration: 7000});
-          continue;
-      }
 
       data.push({
-        branchId: selectedBranch!.id, // selectedBranch is checked before calling this
+        branchId: selectedBranch!.id,
         name,
-        sku: skuIndex > -1 ? currentline[skuIndex]?.trim() : undefined,
+        sku,
         categoryId,
         quantity,
         price,
         costPrice: costPriceIndex > -1 ? parseFloat(currentline[costPriceIndex]?.trim() || "0") : 0,
         imageUrl: imageUrlIndex > -1 ? currentline[imageUrlIndex]?.trim() : undefined,
         imageHint: imageHintIndex > -1 ? currentline[imageHintIndex]?.trim() : undefined,
+        isDuplicateSku,
+        categoryNameForPreview
       });
     }
 
@@ -344,11 +353,12 @@ export default function InventoryPage() {
 
     const results = await Promise.allSettled(parsedCsvData.map(async (itemData) => {
         const selectedCategory = categories.find(c => c.id === itemData.categoryId);
-        // Category validity already checked in processCsvData, but double check here for safety
         if (!selectedCategory) {
           throw new Error(`Kategori dengan ID '${itemData.categoryId}' untuk produk '${itemData.name}' tidak ditemukan.`);
         }
-        return addInventoryItem(itemData, selectedCategory.name);
+        // Ensure InventoryItemInput does not include preview-specific fields
+        const { isDuplicateSku, categoryNameForPreview, ...actualItemData } = itemData;
+        return addInventoryItem(actualItemData, selectedCategory.name);
     }));
 
     results.forEach((result, index) => {
@@ -373,8 +383,6 @@ export default function InventoryPage() {
     }
     
     if(errorMessages.length > 0 && errorCount > 0) {
-        // For a long list of errors, consider a more sophisticated display or logging.
-        // For now, a simple toast with first few errors.
         toast({
             title: `${errorCount} Produk Gagal Diimpor`,
             description: errorMessages.slice(0, 3).join("; ") + (errorMessages.length > 3 ? "; ..." : ""),
@@ -692,7 +700,7 @@ export default function InventoryPage() {
                                         <TableRow>
                                             <TableHead>Nama Produk</TableHead>
                                             <TableHead>SKU</TableHead>
-                                            <TableHead>ID Kategori</TableHead>
+                                            <TableHead>Nama Kategori</TableHead>
                                             <TableHead className="text-right">Stok</TableHead>
                                             <TableHead className="text-right">Harga Jual</TableHead>
                                         </TableRow>
@@ -700,9 +708,12 @@ export default function InventoryPage() {
                                     <TableBody>
                                         {parsedCsvData.slice(0, 5).map((item, index) => (
                                             <TableRow key={index}>
-                                                <TableCell>{item.name}</TableCell>
+                                                <TableCell>
+                                                  {item.name}
+                                                  {item.isDuplicateSku && <Badge variant="outline" className="ml-1.5 text-xs border-amber-500 text-amber-600">SKU Duplikat</Badge>}
+                                                </TableCell>
                                                 <TableCell>{item.sku || '-'}</TableCell>
-                                                <TableCell>{item.categoryId}</TableCell>
+                                                <TableCell>{item.categoryNameForPreview}</TableCell>
                                                 <TableCell className="text-right">{item.quantity}</TableCell>
                                                 <TableCell className="text-right">{item.price}</TableCell>
                                             </TableRow>
@@ -732,4 +743,5 @@ export default function InventoryPage() {
     </ProtectedRoute>
   );
 }
+
 
