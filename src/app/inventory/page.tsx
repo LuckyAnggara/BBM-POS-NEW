@@ -101,16 +101,16 @@ export default function InventoryPage() {
       return;
     }
     setLoadingItems(true);
-    setLoadingCategories(true); // Assume categories might also be re-fetched or used
-    const [fetchedItems, fetchedCategories] = await Promise.all([
-      getInventoryItems(selectedBranch.id, { limit: itemsPerPage }), // Apply limit here
+    setLoadingCategories(true); 
+    const [fetchedItemsResult, fetchedCategoriesResult] = await Promise.all([
+      getInventoryItems(selectedBranch.id, { limit: itemsPerPage }),
       getInventoryCategories(selectedBranch.id),
     ]);
-    setItems(fetchedItems);
-    setCategories(fetchedCategories); // Ensure categories are up-to-date
+    setItems(fetchedItemsResult.items); // Correctly access the items array
+    setCategories(fetchedCategoriesResult); 
     setLoadingItems(false);
     setLoadingCategories(false);
-  }, [selectedBranch, itemsPerPage]); // Add itemsPerPage as dependency
+  }, [selectedBranch, itemsPerPage]);
 
   useEffect(() => {
     fetchData();
@@ -145,11 +145,10 @@ export default function InventoryPage() {
     }
     
     let skuToSave = values.sku?.trim();
-    // SKU generation logic moved to addInventoryItem in the library for centralization
 
     const itemData: InventoryItemInput = {
       ...values,
-      sku: skuToSave, // Pass SKU (even if empty, library function will handle)
+      sku: skuToSave, 
       branchId: selectedBranch.id,
       quantity: Number(values.quantity),
       price: Number(values.price),
@@ -259,7 +258,6 @@ export default function InventoryPage() {
     const headers = ["name", "sku", "categoryId", "quantity", "price", "costPrice", "imageUrl", "imageHint"];
     let csvString = "";
 
-    // Instructions
     csvString += "# INSTRUKSI PENGISIAN DATA INVENTARIS (Hapus baris ini dan di bawahnya sebelum impor):\n";
     csvString += "# 1. 'name': Nama Produk (Wajib diisi).\n";
     csvString += "# 2. 'sku': Stock Keeping Unit (Opsional, akan dibuat otomatis jika kosong).\n";
@@ -280,7 +278,6 @@ export default function InventoryPage() {
     }
     csvString += "#--------------------------------------------------------------------------------------\n";
     csvString += headers.join(",") + "\n";
-    // Example row
     csvString += "Contoh Produk,SKU-CONTOH,ID_KATEGORI_DARI_DAFTAR_DI_ATAS,10,15000,10000,https://placehold.co/64x64.png,contoh produk\n";
 
 
@@ -319,7 +316,7 @@ export default function InventoryPage() {
   };
 
   const processCsvData = (csvContent: string, fileName: string) => {
-    const lines = csvContent.split(/\r\n|\n/).filter(line => !line.trim().startsWith("#") && line.trim() !== ""); // Ignore comment lines and empty lines
+    const lines = csvContent.split(/\r\n|\n/).filter(line => !line.trim().startsWith("#") && line.trim() !== "");
 
     if (lines.length < 2) {
       toast({ title: "File CSV Kosong atau Invalid", description: "File tidak berisi data atau header (setelah menghapus komentar).", variant: "destructive"});
@@ -368,7 +365,7 @@ export default function InventoryPage() {
         continue;
       }
       
-      const sku = skuIndex > -1 ? currentline[skuIndex]?.trim() : ""; // Default to empty string if not present
+      const sku = skuIndex > -1 ? currentline[skuIndex]?.trim() : ""; 
       const isDuplicateSku = !!sku && sku.trim() !== "" && items.some(existingItem => existingItem.sku === sku);
       
       const category = categories.find(cat => cat.id === categoryId);
@@ -378,7 +375,7 @@ export default function InventoryPage() {
       data.push({
         branchId: selectedBranch!.id,
         name,
-        sku, // Will be handled by addInventoryItem if empty
+        sku, 
         categoryId,
         quantity,
         price,
@@ -414,7 +411,6 @@ export default function InventoryPage() {
         }
         const { isDuplicateSku, categoryNameForPreview, ...actualItemData } = itemData;
         
-        // SKU generation will be handled by addInventoryItem if actualItemData.sku is empty/null
         return addInventoryItem(actualItemData, selectedCategory.name);
     }));
 
@@ -432,7 +428,7 @@ export default function InventoryPage() {
 
     if (successCount > 0) {
         toast({ title: "Impor Selesai", description: `${successCount} produk berhasil diimpor.${errorCount > 0 ? ` ${errorCount} produk gagal.` : ''}` });
-        await fetchData(); // Re-fetch with current limit
+        await fetchData(); 
     } else if (errorCount > 0) {
         toast({ title: "Impor Gagal", description: `Semua ${errorCount} produk gagal diimpor. Cek konsol untuk detail.`, variant: "destructive" });
     } else {
@@ -458,7 +454,7 @@ export default function InventoryPage() {
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     categories.find(c => c.id === item.categoryId)?.name.toLowerCase().includes(searchTerm.toLowerCase())
-  ); // Search operates on the already limited (by itemsPerPage) `items` state.
+  ); 
 
   if (loadingBranches) {
     return <MainLayout><div className="flex h-full items-center justify-center">Memuat data cabang...</div></MainLayout>;
@@ -559,7 +555,7 @@ export default function InventoryPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredItems.map((product) => ( // Display filtered items
+                  {filteredItems.map((product) => ( 
                     <TableRow key={product.id}>
                       <TableCell className="hidden sm:table-cell py-1.5 px-2">
                         <Image
@@ -818,3 +814,4 @@ export default function InventoryPage() {
     </ProtectedRoute>
   );
 }
+
