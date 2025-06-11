@@ -45,63 +45,146 @@ import { getUnreadNotificationCount } from "@/lib/firebase/notifications";
 
 
 const navItemsConfig = (unreadCount: number) => [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: false },
-  { href: "/pos", label: "Point of Sale", icon: ShoppingCart, adminOnly: false },
-  { href: "/inventory", label: "Inventaris", icon: Archive, adminOnly: false },
   {
-    label: "Master Data",
+    href: '/dashboard',
+    label: 'Dashboard',
+    icon: LayoutDashboard,
+    adminOnly: false,
+  },
+  {
+    href: '/pos',
+    label: 'Point of Sale',
+    icon: ShoppingCart,
+    adminOnly: false,
+  },
+  {
+    href: '/purchase-orders',
+    label: 'Pembelian',
+    icon: ClipboardList,
+    adminOnly: false,
+  },
+  {
+    label: 'Master Data',
     icon: Database,
     adminOnly: false,
     subItems: [
-      { href: "/customers", label: "Pelanggan", icon: Users },
-      { href: "/suppliers", label: "Pemasok", icon: Truck },
-    ]
+      { href: '/customers', label: 'Pelanggan', icon: Users },
+      { href: '/suppliers', label: 'Pemasok', icon: Truck },
+      {
+        href: '/inventory',
+        label: 'Inventaris',
+        icon: Archive,
+        adminOnly: false,
+      },
+    ],
   },
-  { href: "/purchase-orders", label: "Pesanan Pembelian", icon: ClipboardList, adminOnly: false },
-  { href: "/sales-history", label: "Riwayat Penjualan", icon: Receipt, adminOnly: false },
   {
-    label: "Keuangan",
+    label: 'Riwayat',
+    icon: History,
+    adminOnly: false,
+    subItems: [
+      {
+        href: '/sales-history',
+        label: 'Riwayat Penjualan',
+        icon: Receipt,
+        adminOnly: false,
+      },
+      {
+        href: '/shift-history',
+        label: 'Riwayat Shift',
+        icon: History,
+        adminOnly: false,
+      },
+    ],
+  },
+
+  {
+    label: 'Keuangan',
     icon: Landmark,
     adminOnly: false,
     subItems: [
-      { href: "/accounts-receivable", label: "Piutang Usaha", icon: ListChecks },
-      { href: "/accounts-payable", label: "Utang Usaha", icon: Archive },
-    ]
+      {
+        href: '/accounts-receivable',
+        label: 'Piutang Usaha',
+        icon: ListChecks,
+      },
+      { href: '/accounts-payable', label: 'Utang Usaha', icon: Archive },
+    ],
   },
-  { href: "/shift-history", label: "Riwayat Shift", icon: History, adminOnly: false },
-  { href: "/expenses", label: "Pengeluaran", icon: CreditCard, adminOnly: false },
+
   {
-    label: "Notifikasi",
-    icon: unreadCount > 0 ? BellDot : Bell,
+    href: '/expenses',
+    label: 'Pengeluaran',
+    icon: CreditCard,
     adminOnly: false,
-    subItems: [
-      { href: "/notifications", label: "Lihat Notifikasi", icon: unreadCount > 0 ? BellDot : Bell, exactMatch: true, badgeCount: unreadCount > 0 ? unreadCount : undefined },
-    ]
   },
   {
-    href: "/reports",
-    label: "Laporan",
+    label: 'Notifikasi',
+    href: '/notifications',
+    icon: unreadCount > 0 ? BellDot : Bell,
+    badgeCount: unreadCount > 0 ? unreadCount : undefined,
+    exactMatch: true,
+    adminOnly: false,
+  },
+  {
+    href: '/reports',
+    label: 'Laporan',
     icon: BarChart3,
     adminOnly: false,
     subItems: [
-      { href: "/reports", label: "Ringkasan Keuangan", icon: BarChart3, exactMatch: true },
-      { href: "/reports/stock-mutation", label: "Mutasi Stok Global", icon: PackageSearch },
-      { href: "/reports/stock-movement", label: "Pergerakan Stok Produk", icon: PackageOpen },
-    ]
+      {
+        href: '/reports',
+        label: 'Ringkasan Keuangan',
+        icon: BarChart3,
+        exactMatch: true,
+      },
+      {
+        href: '/reports/stock-mutation',
+        label: 'Mutasi Stok Global',
+        icon: PackageSearch,
+      },
+      {
+        href: '/reports/stock-movement',
+        label: 'Pergerakan Stok Produk',
+        icon: PackageOpen,
+      },
+    ],
   },
-  { href: "/branch-settings", label: "Pengaturan Cabang", icon: Settings, adminOnly: false }, 
   {
-    label: "Administrasi",
+    href: '/branch-settings',
+    label: 'Pengaturan Cabang',
+    icon: Settings,
+    adminOnly: false,
+  },
+  {
+    label: 'Administrasi',
     icon: Settings,
     adminOnly: true, // This group is admin only
     subItems: [
-      { href: "/admin/send-notification", label: "Kirim Notifikasi", icon: Send },
-      { href: "/admin/notification-history", label: "Riwayat Notifikasi", icon: HistoryIconLucide },
-      { href: "/admin/deletion-requests", label: "Permintaan Hapus Trx", icon: ShieldAlert },
-      { href: "/admin/settings", label: "Pengaturan Umum Admin", icon: Settings },
-    ]
-  }
-];
+      {
+        href: '/admin/send-notification',
+        label: 'Kirim Notifikasi',
+        icon: Send,
+      },
+      {
+        href: '/admin/notification-history',
+        label: 'Riwayat Notifikasi',
+        icon: HistoryIconLucide,
+      },
+      {
+        href: '/admin/deletion-requests',
+        label: 'Permintaan Hapus Trx',
+        icon: ShieldAlert,
+      },
+      {
+        href: '/admin/settings',
+        label: 'Pengaturan Umum Admin',
+        icon: Settings,
+      },
+    ],
+  },
+]
+
 
 export default function AppSidebarNav() {
   const pathname = usePathname();
@@ -174,7 +257,7 @@ export default function AppSidebarNav() {
                         variant="default"
                         size="default"
                         className={cn(
-                          "w-full justify-start text-sm font-medium",
+                          "w-full justify-start text-xs font-medium",
                           (item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
                           isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                         )}
@@ -184,7 +267,7 @@ export default function AppSidebarNav() {
                         aria-disabled={isNavItemDisabled}
                         tabIndex={isNavItemDisabled ? -1 : undefined}
                       >
-                        <item.icon className="mr-2.5 h-4.5 w-4.5" />
+                        <item.icon className="mr-2.5 h-4 w-4" />
                         <span className="truncate">{item.label}</span>
                          {item.subItems.some(sub => sub.badgeCount && sub.badgeCount > 0) && (
                            <SidebarMenuBadge className="ml-auto">
@@ -203,8 +286,8 @@ export default function AppSidebarNav() {
                                     aria-disabled={isSubItemDisabled}
                                     className={cn(isSubItemDisabled && "cursor-not-allowed")}
                                 >
-                                <subItem.icon className="mr-2 h-3.5 w-3.5 text-muted-foreground data-[active=true]:text-primary" />
-                                <span>{subItem.label}</span>
+                                <subItem.icon className="mr-2 h-2 w-2 text-muted-foreground data-[active=true]:text-primary" />
+                                <span className='text-xs'>{subItem.label}</span>
                                 {subItem.badgeCount && subItem.badgeCount > 0 && (
                                     <SidebarMenuBadge className="ml-auto">{subItem.badgeCount}</SidebarMenuBadge>
                                 )}
@@ -235,15 +318,15 @@ export default function AppSidebarNav() {
                       variant="default"
                       size="default"
                       className={cn(
-                        "w-full justify-start text-sm",
+                        "w-full justify-start text-xs",
                         pathname === item.href && !isNavItemDisabled ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-sidebar-accent/50",
                         isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                       )}
                       isActive={!isNavItemDisabled && pathname === item.href}
                       tooltip={isNavItemDisabled ? undefined : {children: item.label, side: "right", align: "center"}}
                     >
-                      <item.icon className="mr-2.5 h-4.5 w-4.5" />
-                      <span className="truncate">{item.label}</span>
+                      <item.icon className="mr-2.5 h-3 w-3" />
+                      <span className="truncate text-xs">{item.label}</span>
                     </SidebarMenuButton>
                   </Link>
                 </SidebarMenuItem>

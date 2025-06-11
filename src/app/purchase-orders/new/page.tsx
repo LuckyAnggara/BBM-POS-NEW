@@ -14,7 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter, CardDescription } from "@/components/ui/card";
-import { PlusCircle, Trash2, CalendarIcon, Package, AlertTriangle, ArrowLeft } from "lucide-react";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { PlusCircle, Trash2, CalendarIcon, Package, AlertTriangle, ArrowLeft, ChevronsUpDown, CheckCircle } from "lucide-react";
 import { useForm, useFieldArray, Controller, type SubmitHandler, type Control } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -30,6 +31,7 @@ import { Timestamp } from "firebase/firestore";
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 const poItemSchema = z.object({
   productId: z.string().min(1, { message: "Produk harus dipilih." }),
@@ -70,6 +72,10 @@ export default function NewPurchaseOrderPage() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [loadingSuppliers, setLoadingSuppliers] = useState(true);
   const [loadingInventory, setLoadingInventory] = useState(true);
+
+  const [productSearchTerms, setProductSearchTerms] = useState<Record<number, string>>({});
+  const [openProductPopovers, setOpenProductPopovers] = useState<Record<number, boolean>>({});
+
 
   const poForm = useForm<PurchaseOrderFormValues>({
     resolver: zodResolver(purchaseOrderFormSchema),
@@ -112,6 +118,34 @@ export default function NewPurchaseOrderPage() {
     fetchInitialData();
   }, [fetchInitialData]);
 
+  const getFilteredProductsForItem = (index: number) => {
+    const searchTerm = productSearchTerms[index] || "";
+    if (!searchTerm.trim() && inventoryItems.length > 0) {
+      return inventoryItems.slice(0, 5); // Show first 5 if no search term
+    }
+    const lowerSearch = searchTerm.toLowerCase();
+    return inventoryItems
+      .filter(
+        (product) =>
+          product.name.toLowerCase().includes(lowerSearch) ||
+          (product.sku && product.sku.toLowerCase().includes(lowerSearch))
+      )
+      .slice(0, 5); // Limit to 5 search results
+  };
+
+  const handleProductSearchChange = (index: number, value: string) => {
+    setProductSearchTerms(prev => ({ ...prev, [index]: value }));
+  };
+
+  const handleProductPopoverOpenChange = (index: number, open: boolean) => {
+    setOpenProductPopovers(prev => ({ ...prev, [index]: open }));
+    if (!open) {
+      // Optionally clear search term when popover closes if product not selected
+      // For now, let's keep it simple and not clear automatically
+    }
+  };
+
+
   const onSubmitPurchaseOrder: SubmitHandler<PurchaseOrderFormValues> = async (values) => {
     if (!selectedBranch || !currentUser) {
       toast({ title: "Error", description: "Cabang atau pengguna tidak valid.", variant: "destructive" });
@@ -128,7 +162,7 @@ export default function NewPurchaseOrderPage() {
         const inventoryProduct = inventoryItems.find(p => p.id === item.productId);
         return {
             productId: item.productId,
-            productName: inventoryProduct?.name || "Nama Produk Tidak Diketahui",
+            productName: inventoryProduct?.name || item.productName || "Nama Produk Tidak Diketahui",
             orderedQuantity: item.orderedQuantity,
             purchasePrice: item.purchasePrice,
         }
@@ -330,69 +364,108 @@ export default function NewPurchaseOrderPage() {
                      {poForm.formState.errors.items?.root && <p className="text-xs text-destructive mt-1">{poForm.formState.errors.items.root.message}</p>}
                 </CardHeader>
                 <CardContent className="space-y-3">
-                    {fields.map((field, index) => (
-                        <div key={field.id} className="grid grid-cols-12 gap-2 items-start p-2.5 border rounded-md bg-muted/30">
-                            <div className="col-span-12 sm:col-span-4">
-                                <Label htmlFor={`items.${index}.productId`} className="text-xs">Produk*</Label>
-                                <Controller
-                                    name={`items.${index}.productId`}
-                                    control={poForm.control}
-                                    render={({ field: controllerField }) => (
-                                        <Select
-                                            onValueChange={(value) => {
-                                                controllerField.onChange(value);
-                                                const selectedProduct = inventoryItems.find(p => p.id === value);
-                                                poForm.setValue(`items.${index}.productName`, selectedProduct?.name || "");
-                                                poForm.setValue(`items.${index}.purchasePrice`, selectedProduct?.costPrice || 0);
-                                            }}
-                                            value={controllerField.value}
-                                            disabled={loadingInventory}
-                                        >
-                                            <SelectTrigger className="h-8 text-xs mt-0.5">
-                                                <SelectValue placeholder={loadingInventory ? "Memuat..." : "Pilih produk"} />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {inventoryItems.length === 0 && !loadingInventory ? (
-                                                    <div className="p-2 text-xs text-muted-foreground">Tidak ada produk. Tambah di Inventaris.</div>
-                                                ): inventoryItems.map(p => (
-                                                    <SelectItem key={p.id} value={p.id} className="text-xs">
-                                                        <div className="flex items-center">
-                                                            <Package className="mr-2 h-3.5 w-3.5 text-muted-foreground"/> {p.name} (Stok: {p.quantity})
-                                                        </div>
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    )}
-                                />
-                                {poForm.formState.errors.items?.[index]?.productId && <p className="text-xs text-destructive mt-0.5">{poForm.formState.errors.items?.[index]?.productId?.message}</p>}
+                    {fields.map((field, index) => {
+                        const filteredProducts = getFilteredProductsForItem(index);
+                        const selectedProductValue = poForm.watch(`items.${index}.productId`);
+                        const currentSelectedProduct = inventoryItems.find(p => p.id === selectedProductValue);
+                        return (
+                            <div key={field.id} className="grid grid-cols-12 gap-2 items-start p-2.5 border rounded-md bg-muted/30">
+                                <div className="col-span-12 sm:col-span-4">
+                                    <Label htmlFor={`items.${index}.productId`} className="text-xs">Produk*</Label>
+                                    <Controller
+                                        name={`items.${index}.productId`}
+                                        control={poForm.control}
+                                        render={({ field: controllerField }) => (
+                                            <Popover open={openProductPopovers[index] || false} onOpenChange={(open) => handleProductPopoverOpenChange(index, open)}>
+                                                <PopoverTrigger asChild>
+                                                    <Button
+                                                        variant="outline"
+                                                        role="combobox"
+                                                        aria-expanded={openProductPopovers[index] || false}
+                                                        className="w-full justify-between h-8 text-xs mt-0.5 font-normal"
+                                                        disabled={loadingInventory || inventoryItems.length === 0}
+                                                    >
+                                                        {currentSelectedProduct
+                                                            ? (<span className="truncate max-w-[calc(100%-20px)]">{currentSelectedProduct.name}</span>)
+                                                            : (loadingInventory ? "Memuat..." : (inventoryItems.length === 0 ? "Tidak ada produk" : "Pilih produk"))
+                                                        }
+                                                        <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                                                    </Button>
+                                                </PopoverTrigger>
+                                                <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                                                    <Command shouldFilter={false}>
+                                                        <CommandInput
+                                                            placeholder="Cari produk (nama/SKU)..."
+                                                            value={productSearchTerms[index] || ""}
+                                                            onValueChange={(value) => handleProductSearchChange(index, value)}
+                                                            className="h-9 text-xs"
+                                                        />
+                                                        <CommandEmpty className="p-2 text-xs text-center">{loadingInventory ? "Memuat..." : "Produk tidak ditemukan."}</CommandEmpty>
+                                                        <CommandList>
+                                                            <CommandGroup>
+                                                                {filteredProducts.map((product) => (
+                                                                    <CommandItem
+                                                                        key={product.id}
+                                                                        value={product.id}
+                                                                        onSelect={(currentValue) => {
+                                                                            controllerField.onChange(currentValue);
+                                                                            const selectedProd = inventoryItems.find(p => p.id === currentValue);
+                                                                            poForm.setValue(`items.${index}.productName`, selectedProd?.name || "");
+                                                                            poForm.setValue(`items.${index}.purchasePrice`, selectedProd?.costPrice || 0);
+                                                                            handleProductPopoverOpenChange(index, false);
+                                                                            handleProductSearchChange(index, ""); // Clear search on select
+                                                                        }}
+                                                                        className="text-xs"
+                                                                    >
+                                                                        <CheckCircle
+                                                                            className={cn(
+                                                                                "mr-2 h-3.5 w-3.5",
+                                                                                controllerField.value === product.id ? "opacity-100" : "opacity-0"
+                                                                            )}
+                                                                        />
+                                                                        <div className="flex items-center gap-2">
+                                                                            <Package className="h-3.5 w-3.5 text-muted-foreground"/>
+                                                                            <span className="truncate">{product.name}</span>
+                                                                            <span className="text-muted-foreground">(Stok: {product.quantity})</span>
+                                                                        </div>
+                                                                    </CommandItem>
+                                                                ))}
+                                                            </CommandGroup>
+                                                        </CommandList>
+                                                    </Command>
+                                                </PopoverContent>
+                                            </Popover>
+                                        )}
+                                    />
+                                    {poForm.formState.errors.items?.[index]?.productId && <p className="text-xs text-destructive mt-0.5">{poForm.formState.errors.items?.[index]?.productId?.message}</p>}
+                                </div>
+                                <div className="col-span-6 sm:col-span-2">
+                                    <Label htmlFor={`items.${index}.orderedQuantity`} className="text-xs">Jumlah*</Label>
+                                    <Input id={`items.${index}.orderedQuantity`} type="number" {...poForm.register(`items.${index}.orderedQuantity`)} className="h-8 text-xs mt-0.5"/>
+                                    {poForm.formState.errors.items?.[index]?.orderedQuantity && <p className="text-xs text-destructive mt-0.5">{poForm.formState.errors.items?.[index]?.orderedQuantity?.message}</p>}
+                                </div>
+                                 <div className="col-span-6 sm:col-span-3">
+                                    <Label htmlFor={`items.${index}.purchasePrice`} className="text-xs">Harga Beli ({currencySymbol})*</Label>
+                                    <Input id={`items.${index}.purchasePrice`} type="number" {...poForm.register(`items.${index}.purchasePrice`)} className="h-8 text-xs mt-0.5"/>
+                                    {poForm.formState.errors.items?.[index]?.purchasePrice && <p className="text-xs text-destructive mt-0.5">{poForm.formState.errors.items?.[index]?.purchasePrice?.message}</p>}
+                                </div>
+                                <div className="col-span-9 sm:col-span-2">
+                                    <Label className="text-xs block mb-0.5">Total Item</Label>
+                                    <Input
+                                        value={`${currencySymbol}${( (Number(poForm.watch(`items.${index}.orderedQuantity`)) || 0) * (Number(poForm.watch(`items.${index}.purchasePrice`)) || 0) ).toLocaleString('id-ID')}`}
+                                        className="h-8 text-xs mt-0.5 bg-transparent border-0 px-0"
+                                        readOnly
+                                        tabIndex={-1}
+                                    />
+                                </div>
+                                <div className="col-span-3 sm:col-span-1 flex items-end justify-end">
+                                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive/80" onClick={() => remove(index)} disabled={fields.length <= 1}>
+                                        <Trash2 className="h-4 w-4"/>
+                                    </Button>
+                                </div>
                             </div>
-                            <div className="col-span-6 sm:col-span-2">
-                                <Label htmlFor={`items.${index}.orderedQuantity`} className="text-xs">Jumlah*</Label>
-                                <Input id={`items.${index}.orderedQuantity`} type="number" {...poForm.register(`items.${index}.orderedQuantity`)} className="h-8 text-xs mt-0.5"/>
-                                {poForm.formState.errors.items?.[index]?.orderedQuantity && <p className="text-xs text-destructive mt-0.5">{poForm.formState.errors.items?.[index]?.orderedQuantity?.message}</p>}
-                            </div>
-                             <div className="col-span-6 sm:col-span-3">
-                                <Label htmlFor={`items.${index}.purchasePrice`} className="text-xs">Harga Beli ({currencySymbol})*</Label>
-                                <Input id={`items.${index}.purchasePrice`} type="number" {...poForm.register(`items.${index}.purchasePrice`)} className="h-8 text-xs mt-0.5"/>
-                                {poForm.formState.errors.items?.[index]?.purchasePrice && <p className="text-xs text-destructive mt-0.5">{poForm.formState.errors.items?.[index]?.purchasePrice?.message}</p>}
-                            </div>
-                            <div className="col-span-9 sm:col-span-2">
-                                <Label className="text-xs block mb-0.5">Total Item</Label>
-                                <Input
-                                    value={`${currencySymbol}${( (Number(poForm.watch(`items.${index}.orderedQuantity`)) || 0) * (Number(poForm.watch(`items.${index}.purchasePrice`)) || 0) ).toLocaleString('id-ID')}`}
-                                    className="h-8 text-xs mt-0.5 bg-transparent border-0 px-0"
-                                    readOnly
-                                    tabIndex={-1}
-                                />
-                            </div>
-                            <div className="col-span-3 sm:col-span-1 flex items-end justify-end">
-                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive/80" onClick={() => remove(index)} disabled={fields.length <= 1}>
-                                    <Trash2 className="h-4 w-4"/>
-                                </Button>
-                            </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </CardContent>
                  <CardFooter className="flex flex-col items-end p-3 border-t space-y-1">
                     <div className="text-sm">Subtotal: <span className="font-semibold">{currencySymbol}{subtotal.toLocaleString('id-ID')}</span></div>
