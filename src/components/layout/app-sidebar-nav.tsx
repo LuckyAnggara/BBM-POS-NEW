@@ -11,7 +11,7 @@ import {
   Archive,
   CreditCard,
   BarChart3,
-  Settings, // Keep Settings icon
+  Settings,
   Receipt,
   History,
   PackageSearch,
@@ -26,7 +26,7 @@ import {
   BellDot,
   Send,
   History as HistoryIconLucide,
-  ShieldAlert, // For deletion requests
+  ShieldAlert,
 } from "lucide-react";
 import {
   SidebarMenu,
@@ -38,6 +38,12 @@ import {
   SidebarMenuSkeleton,
   SidebarMenuBadge
 } from "@/components/ui/sidebar";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import SidebarUserProfile from "./sidebar-user-profile";
 import SidebarHeaderBrand from "./sidebar-header-brand";
 import { useAuth } from "@/contexts/auth-context";
@@ -217,19 +223,19 @@ export default function AppSidebarNav() {
       <SidebarHeaderBrand />
 
       <div className="flex-grow overflow-y-auto p-2 space-y-1 mt-1">
-        <SidebarMenu>
-          {(loadingAuth || loadingUserData) ? (
-            <>
-              <SidebarMenuSkeleton showIcon className="my-1" />
-              <SidebarMenuSkeleton showIcon className="my-1" />
-              <SidebarMenuSkeleton showIcon className="my-1" />
-              <SidebarMenuSkeleton showIcon className="my-1" />
-              <SidebarMenuSkeleton showIcon className="my-1" />
-              <SidebarMenuSkeleton showIcon className="my-1" />
-              <SidebarMenuSkeleton showIcon className="my-1" />
-            </>
-          ) : (
-            navItems.map((item) => {
+        {(loadingAuth || loadingUserData) ? (
+          <SidebarMenu>
+            <SidebarMenuSkeleton showIcon className="my-1" />
+            <SidebarMenuSkeleton showIcon className="my-1" />
+            <SidebarMenuSkeleton showIcon className="my-1" />
+            <SidebarMenuSkeleton showIcon className="my-1" />
+            <SidebarMenuSkeleton showIcon className="my-1" />
+            <SidebarMenuSkeleton showIcon className="my-1" />
+            <SidebarMenuSkeleton showIcon className="my-1" />
+          </SidebarMenu>
+        ) : (
+          <Accordion type="multiple" className="w-full space-y-0">
+            {navItems.map((item) => {
               if (item.adminOnly && userData?.role !== 'admin') {
                 return null;
               }
@@ -237,103 +243,107 @@ export default function AppSidebarNav() {
               const isCashierNoBranch = userData?.role === 'cashier' && !userData.branchId;
               const isAllowedForCashierNoBranch = item.href === '/dashboard' || 
                                                   item.label === 'Notifikasi' || 
-                                                  item.href === '/account' || // Allow access to account page
-                                                  (item.adminOnly && item.href === '/admin/settings');
+                                                  item.href === '/account';
 
               const isNavItemDisabled = isCashierNoBranch && !isAllowedForCashierNoBranch && 
                                       !item.subItems?.some(sub => sub.href === '/dashboard' || sub.href === '/notifications' || sub.href === '/account');
 
 
               if (item.subItems) {
-                // Check if any sub-item should be visible for this user role
                 const visibleSubItems = item.subItems.filter(subItem => !(subItem.adminOnly && userData?.role !== 'admin'));
                 if (visibleSubItems.length === 0 && item.adminOnly && userData?.role !== 'admin') {
-                    return null; // Hide entire admin group if no sub-items are visible
+                    return null;
                 }
                 
+                const isGroupActive = visibleSubItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href))) && !isNavItemDisabled;
+
                 return (
-                  <SidebarMenuItem key={item.label} className="flex flex-col items-start">
-                    <SidebarMenuButton
-                        variant="default"
-                        size="default"
-                        className={cn(
-                          "w-full justify-start text-xs font-medium",
-                          (item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled ? "text-primary" : "hover:bg-sidebar-accent/50",
-                          isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
-                        )}
-                        isActive={(item.href && pathname.startsWith(item.href) || item.subItems.some(sub => sub.href && (sub.exactMatch ? pathname === sub.href : pathname.startsWith(sub.href)))) && !isNavItemDisabled}
-                        asChild={false}
-                        onClick={(e) => { if(isNavItemDisabled) e.preventDefault(); }}
-                        aria-disabled={isNavItemDisabled}
-                        tabIndex={isNavItemDisabled ? -1 : undefined}
-                      >
-                        <item.icon className="mr-2.5 h-4 w-4" />
-                        <span className="truncate">{item.label}</span>
-                         {item.subItems.some(sub => sub.badgeCount && sub.badgeCount > 0) && (
-                           <SidebarMenuBadge className="ml-auto">
-                            {item.subItems.find(sub => sub.badgeCount && sub.badgeCount > 0)?.badgeCount}
-                           </SidebarMenuBadge>
-                         )}
-                    </SidebarMenuButton>
-                    <SidebarMenuSub className={cn(isNavItemDisabled && "opacity-60 pointer-events-none")}>
-                      {visibleSubItems.map(subItem => {
-                          const isSubItemDisabled = isCashierNoBranch && subItem.href !== '/dashboard' && subItem.href !== '/notifications' && subItem.href !== '/account';
-                          return (
-                            <SidebarMenuSubItem key={subItem.href}>
-                            <Link href={isSubItemDisabled ? "#" : subItem.href} passHref legacyBehavior>
-                                <SidebarMenuSubButton
-                                    isActive={ (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isSubItemDisabled}
-                                    aria-disabled={isSubItemDisabled}
-                                    className={cn(isSubItemDisabled && "cursor-not-allowed")}
-                                >
-                                <subItem.icon className="mr-2 h-2 w-2 text-muted-foreground data-[active=true]:text-primary" />
-                                <span className='text-xs'>{subItem.label}</span>
-                                {subItem.badgeCount && subItem.badgeCount > 0 && (
-                                    <SidebarMenuBadge className="ml-auto">{subItem.badgeCount}</SidebarMenuBadge>
-                                )}
-                                </SidebarMenuSubButton>
-                            </Link>
-                            </SidebarMenuSubItem>
-                          );
-                      })}
-                    </SidebarMenuSub>
-                  </SidebarMenuItem>
+                  <AccordionItem value={item.label} key={item.label} className="border-none">
+                    <AccordionTrigger
+                      className={cn(
+                        "flex items-center justify-between w-full p-2 text-xs rounded-md hover:bg-sidebar-accent/50 data-[state=open]:bg-sidebar-accent/70",
+                        isGroupActive
+                          ? "bg-primary/10 text-primary hover:bg-primary/20"
+                          : "text-sidebar-foreground",
+                        isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent",
+                      )}
+                      disabled={isNavItemDisabled}
+                      aria-disabled={isNavItemDisabled}
+                      tabIndex={isNavItemDisabled ? -1 : undefined}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <item.icon className="h-4 w-4 shrink-0" />
+                        <span className="truncate text-xs">{item.label}</span>
+                      </div>
+                      {/* Chevron is part of AccordionTrigger by default */}
+                    </AccordionTrigger>
+                    <AccordionContent className="pt-0 pb-0 pl-5 pr-0 overflow-hidden"> {/* Indent sub-items */}
+                      <SidebarMenuSub className={cn("!mx-0 !px-0 !py-1 !border-l-0", isNavItemDisabled && "opacity-60 pointer-events-none")}>
+                        {visibleSubItems.map(subItem => {
+                            const isSubItemDisabled = isCashierNoBranch && subItem.href !== '/dashboard' && subItem.href !== '/notifications' && subItem.href !== '/account';
+                            const isSubItemActive = (subItem.exactMatch ? pathname === subItem.href : pathname.startsWith(subItem.href)) && !isSubItemDisabled;
+                            return (
+                              <SidebarMenuSubItem key={subItem.href} className="py-0.5">
+                                <Link href={isSubItemDisabled ? "#" : subItem.href} passHref legacyBehavior>
+                                    <SidebarMenuSubButton
+                                        isActive={isSubItemActive}
+                                        aria-disabled={isSubItemDisabled}
+                                        className={cn(
+                                          "text-xs h-auto py-1.5 px-2 w-full justify-start hover:bg-sidebar-accent/50",
+                                          isSubItemActive ? "text-primary font-medium bg-sidebar-accent/60" : "text-sidebar-foreground/80",
+                                          isSubItemDisabled && "cursor-not-allowed opacity-50"
+                                        )}
+                                    >
+                                      {/* Omitting subItem.icon for cleaner accordion, adjust if needed */}
+                                      <span className='text-xs'>{subItem.label}</span>
+                                      {subItem.badgeCount && subItem.badgeCount > 0 && (
+                                          <SidebarMenuBadge className="ml-auto">{subItem.badgeCount}</SidebarMenuBadge>
+                                      )}
+                                    </SidebarMenuSubButton>
+                                </Link>
+                              </SidebarMenuSubItem>
+                            );
+                        })}
+                      </SidebarMenuSub>
+                    </AccordionContent>
+                  </AccordionItem>
                 );
               }
 
+              // Non-group items (direct links)
               if (!item.href) return null;
-
               return (
-                <SidebarMenuItem key={item.label}>
+                <SidebarMenuItem key={item.label} className="w-full my-0.5"> {/* Adjusted margin/spacing */}
                   <Link
                     href={isNavItemDisabled ? "#" : item.href}
-                    onClick={(e) => {
-                      if (isNavItemDisabled) e.preventDefault();
-                    }}
+                    onClick={(e) => { if (isNavItemDisabled) e.preventDefault(); }}
                     aria-disabled={isNavItemDisabled}
-                    className={cn(isNavItemDisabled && "pointer-events-none focus:outline-none")}
+                    className={cn("w-full", isNavItemDisabled && "pointer-events-none focus:outline-none")}
                     tabIndex={isNavItemDisabled ? -1 : undefined}
                   >
                     <SidebarMenuButton
                       variant="default"
-                      size="default"
+                      size="default" 
                       className={cn(
-                        "w-full justify-start text-xs",
-                        pathname === item.href && !isNavItemDisabled ? "bg-primary/10 text-primary hover:bg-primary/20" : "hover:bg-sidebar-accent/50",
+                        "w-full justify-start text-xs p-2 h-9", 
+                        pathname === item.href && !isNavItemDisabled ? "bg-primary/10 text-primary hover:bg-primary/20" : "text-sidebar-foreground hover:bg-sidebar-accent/50",
                         isNavItemDisabled && "opacity-60 cursor-not-allowed hover:bg-transparent"
                       )}
                       isActive={!isNavItemDisabled && pathname === item.href}
                       tooltip={isNavItemDisabled ? undefined : {children: item.label, side: "right", align: "center"}}
                     >
-                      <item.icon className="mr-2.5 h-3 w-3" />
+                      <item.icon className="mr-2.5 h-4 w-4 shrink-0" />
                       <span className="truncate text-xs">{item.label}</span>
+                       {item.badgeCount && item.badgeCount > 0 && (
+                         <SidebarMenuBadge className="ml-auto">{item.badgeCount}</SidebarMenuBadge>
+                       )}
                     </SidebarMenuButton>
                   </Link>
                 </SidebarMenuItem>
               );
-            })
-          )}
-        </SidebarMenu>
+            })}
+          </Accordion>
+        )}
       </div>
 
       <SidebarUserProfile />
