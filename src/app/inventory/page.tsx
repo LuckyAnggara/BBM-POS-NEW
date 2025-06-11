@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -14,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PlusCircle, FilePenLine, Trash2, Search, PackagePlus, Tag, X, Upload, Download, FileText } from "lucide-react";
+import { PlusCircle, FilePenLine, Trash2, Search, PackagePlus, Tag, X, Upload, Download, FileText, Info } from "lucide-react";
 import Image from "next/image";
 import { useForm, Controller, type SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -26,10 +25,12 @@ import {
   addInventoryItem, getInventoryItems, updateInventoryItem, deleteInventoryItem,
   addInventoryCategory, getInventoryCategories, deleteInventoryCategory
 } from "@/lib/firebase/inventory";
-import { Timestamp } from "firebase/firestore";
+import { Timestamp, collection, doc as firestoreDoc } from "firebase/firestore"; // Import collection and doc for SKU generation
+import { db } from "@/lib/firebase/config"; // Import db for SKU generation
 import { format } from "date-fns";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge"; // Import Badge
+import { Badge } from "@/components/ui/badge"; 
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 
 const itemFormSchema = z.object({
@@ -54,6 +55,7 @@ interface ParsedCsvItem extends InventoryItemInput {
   categoryNameForPreview?: string;
 }
 
+const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100];
 
 export default function InventoryPage() {
   const { userData } = useAuth();
@@ -65,6 +67,8 @@ export default function InventoryPage() {
   const [loadingItems, setLoadingItems] = useState(true);
   const [loadingCategories, setLoadingCategories] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [itemsPerPage, setItemsPerPage] = useState<number>(ITEMS_PER_PAGE_OPTIONS[0]);
+
 
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
@@ -97,16 +101,16 @@ export default function InventoryPage() {
       return;
     }
     setLoadingItems(true);
-    setLoadingCategories(true);
+    setLoadingCategories(true); // Assume categories might also be re-fetched or used
     const [fetchedItems, fetchedCategories] = await Promise.all([
-      getInventoryItems(selectedBranch.id),
+      getInventoryItems(selectedBranch.id, { limit: itemsPerPage }), // Apply limit here
       getInventoryCategories(selectedBranch.id),
     ]);
     setItems(fetchedItems);
-    setCategories(fetchedCategories);
+    setCategories(fetchedCategories); // Ensure categories are up-to-date
     setLoadingItems(false);
     setLoadingCategories(false);
-  }, [selectedBranch]);
+  }, [selectedBranch, itemsPerPage]); // Add itemsPerPage as dependency
 
   useEffect(() => {
     fetchData();
@@ -139,9 +143,13 @@ export default function InventoryPage() {
         toast({ title: "Kategori Tidak Valid", description: "Kategori yang dipilih tidak ditemukan.", variant: "destructive"});
         return;
     }
+    
+    let skuToSave = values.sku?.trim();
+    // SKU generation logic moved to addInventoryItem in the library for centralization
 
     const itemData: InventoryItemInput = {
       ...values,
+      sku: skuToSave, // Pass SKU (even if empty, library function will handle)
       branchId: selectedBranch.id,
       quantity: Number(values.quantity),
       price: Number(values.price),
@@ -188,7 +196,7 @@ export default function InventoryPage() {
     } else {
       toast({ title: "Kategori Ditambahkan", description: `Kategori "${values.name}" telah ditambahkan.` });
       categoryForm.reset();
-      const fetchedCategories = await getInventoryCategories(selectedBranch.id);
+      const fetchedCategories = await getInventoryCategories(selectedBranch.id); // Re-fetch for category manager
       setCategories(fetchedCategories);
     }
   };
@@ -243,6 +251,53 @@ export default function InventoryPage() {
     toast({title: "Ekspor Berhasil", description: "Data inventaris telah diekspor ke CSV."});
   };
 
+  const handleDownloadTemplateCSV = () => {
+    if (!selectedBranch) {
+        toast({title: "Pilih Cabang", description: "Pilih cabang untuk mengunduh template yang relevan.", variant: "destructive"});
+        return;
+    }
+    const headers = ["name", "sku", "categoryId", "quantity", "price", "costPrice", "imageUrl", "imageHint"];
+    let csvString = "";
+
+    // Instructions
+    csvString += "# INSTRUKSI PENGISIAN DATA INVENTARIS (Hapus baris ini dan di bawahnya sebelum impor):\n";
+    csvString += "# 1. 'name': Nama Produk (Wajib diisi).\n";
+    csvString += "# 2. 'sku': Stock Keeping Unit (Opsional, akan dibuat otomatis jika kosong).\n";
+    csvString += "# 3. 'categoryId': ID Kategori dari daftar di bawah (Wajib diisi).\n";
+    csvString += "# 4. 'quantity': Jumlah stok awal (Wajib, angka >= 0).\n";
+    csvString += "# 5. 'price': Harga Jual Satuan (Wajib, angka >= 0).\n";
+    csvString += "# 6. 'costPrice': Harga Pokok Satuan (Opsional, angka >= 0, default 0).\n";
+    csvString += "# 7. 'imageUrl': URL Gambar Produk (Opsional, harus URL valid).\n";
+    csvString += "# 8. 'imageHint': Petunjuk untuk placeholder gambar (Opsional, 1-2 kata, contoh: 'biji kopi').\n";
+    csvString += "#--------------------------------------------------------------------------------------\n";
+    csvString += "# DAFTAR ID KATEGORI YANG TERSEDIA UNTUK CABANG INI (Gunakan 'categoryId' dari sini):\n";
+    if (categories.length > 0) {
+        categories.forEach(cat => {
+            csvString += `# categoryId: ${cat.id}, Nama Kategori: ${cat.name}\n`;
+        });
+    } else {
+        csvString += "# Belum ada kategori. Silakan buat kategori terlebih dahulu melalui menu 'Kelola Kategori'.\n";
+    }
+    csvString += "#--------------------------------------------------------------------------------------\n";
+    csvString += headers.join(",") + "\n";
+    // Example row
+    csvString += "Contoh Produk,SKU-CONTOH,ID_KATEGORI_DARI_DAFTAR_DI_ATAS,10,15000,10000,https://placehold.co/64x64.png,contoh produk\n";
+
+
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    const branchNamePart = selectedBranch.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    link.setAttribute("download", `template_inventaris_${branchNamePart}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast({title: "Template Diunduh", description: "Template CSV berhasil diunduh."});
+  };
+
+
   const handleImportButtonClick = () => {
     fileInputRef.current?.click();
   };
@@ -264,14 +319,15 @@ export default function InventoryPage() {
   };
 
   const processCsvData = (csvContent: string, fileName: string) => {
-    const lines = csvContent.split(/\r\n|\n/);
+    const lines = csvContent.split(/\r\n|\n/).filter(line => !line.trim().startsWith("#") && line.trim() !== ""); // Ignore comment lines and empty lines
+
     if (lines.length < 2) {
-      toast({ title: "File CSV Kosong atau Invalid", description: "File tidak berisi data atau header.", variant: "destructive"});
+      toast({ title: "File CSV Kosong atau Invalid", description: "File tidak berisi data atau header (setelah menghapus komentar).", variant: "destructive"});
       return;
     }
 
     const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-    const requiredHeaders = ["name", "categoryid", "quantity", "price"]; // categoryId is case-insensitive
+    const requiredHeaders = ["name", "categoryid", "quantity", "price"]; 
     const missingHeaders = requiredHeaders.filter(rh => !headers.includes(rh));
 
     if (missingHeaders.length > 0) {
@@ -283,10 +339,10 @@ export default function InventoryPage() {
     const categoryIdIndex = headers.indexOf("categoryid");
     const quantityIndex = headers.indexOf("quantity");
     const priceIndex = headers.indexOf("price");
-    const skuIndex = headers.indexOf("sku"); // Optional
-    const costPriceIndex = headers.indexOf("costprice"); // Optional
-    const imageUrlIndex = headers.indexOf("imageurl"); // Optional
-    const imageHintIndex = headers.indexOf("imagehint"); // Optional
+    const skuIndex = headers.indexOf("sku"); 
+    const costPriceIndex = headers.indexOf("costprice"); 
+    const imageUrlIndex = headers.indexOf("imageurl"); 
+    const imageHintIndex = headers.indexOf("imagehint"); 
 
 
     const data: ParsedCsvItem[] = [];
@@ -312,7 +368,7 @@ export default function InventoryPage() {
         continue;
       }
       
-      const sku = skuIndex > -1 ? currentline[skuIndex]?.trim() : undefined;
+      const sku = skuIndex > -1 ? currentline[skuIndex]?.trim() : ""; // Default to empty string if not present
       const isDuplicateSku = !!sku && sku.trim() !== "" && items.some(existingItem => existingItem.sku === sku);
       
       const category = categories.find(cat => cat.id === categoryId);
@@ -322,11 +378,11 @@ export default function InventoryPage() {
       data.push({
         branchId: selectedBranch!.id,
         name,
-        sku,
+        sku, // Will be handled by addInventoryItem if empty
         categoryId,
         quantity,
         price,
-        costPrice: costPriceIndex > -1 ? parseFloat(currentline[costPriceIndex]?.trim() || "0") : 0,
+        costPrice: costPriceIndex > -1 && currentline[costPriceIndex]?.trim() ? parseFloat(currentline[costPriceIndex].trim()) : 0,
         imageUrl: imageUrlIndex > -1 ? currentline[imageUrlIndex]?.trim() : undefined,
         imageHint: imageHintIndex > -1 ? currentline[imageHintIndex]?.trim() : undefined,
         isDuplicateSku,
@@ -356,8 +412,9 @@ export default function InventoryPage() {
         if (!selectedCategory) {
           throw new Error(`Kategori dengan ID '${itemData.categoryId}' untuk produk '${itemData.name}' tidak ditemukan.`);
         }
-        // Ensure InventoryItemInput does not include preview-specific fields
         const { isDuplicateSku, categoryNameForPreview, ...actualItemData } = itemData;
+        
+        // SKU generation will be handled by addInventoryItem if actualItemData.sku is empty/null
         return addInventoryItem(actualItemData, selectedCategory.name);
     }));
 
@@ -375,7 +432,7 @@ export default function InventoryPage() {
 
     if (successCount > 0) {
         toast({ title: "Impor Selesai", description: `${successCount} produk berhasil diimpor.${errorCount > 0 ? ` ${errorCount} produk gagal.` : ''}` });
-        await fetchData();
+        await fetchData(); // Re-fetch with current limit
     } else if (errorCount > 0) {
         toast({ title: "Impor Gagal", description: `Semua ${errorCount} produk gagal diimpor. Cek konsol untuk detail.`, variant: "destructive" });
     } else {
@@ -397,12 +454,11 @@ export default function InventoryPage() {
     setCsvImportFileName(null);
   };
 
-
   const filteredItems = items.filter(item =>
     item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     categories.find(c => c.id === item.categoryId)?.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  ); // Search operates on the already limited (by itemsPerPage) `items` state.
 
   if (loadingBranches) {
     return <MainLayout><div className="flex h-full items-center justify-center">Memuat data cabang...</div></MainLayout>;
@@ -429,32 +485,51 @@ export default function InventoryPage() {
                 <Input
                   type="search"
                   placeholder="Cari produk..."
-                  className="pl-8 w-full sm:w-48 rounded-md h-9 text-xs"
+                  className="pl-8 w-full sm:w-40 rounded-md h-9 text-xs"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
+              <Select value={itemsPerPage.toString()} onValueChange={(value) => setItemsPerPage(Number(value))}>
+                <SelectTrigger className="h-9 text-xs rounded-md w-auto sm:w-[100px]">
+                    <SelectValue placeholder="Tampil" />
+                </SelectTrigger>
+                <SelectContent>
+                    {ITEMS_PER_PAGE_OPTIONS.map(option => (
+                        <SelectItem key={option} value={option.toString()} className="text-xs">Tampil {option}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
               <input type="file" ref={fileInputRef} onChange={handleFileSelected} accept=".csv" style={{ display: 'none' }} />
+              <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleDownloadTemplateCSV} disabled={!selectedBranch || loadingCategories}>
+                <FileText className="mr-1.5 h-3.5 w-3.5" /> Template
+              </Button>
               <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleImportButtonClick} disabled={!selectedBranch || loadingItems}>
-                <Upload className="mr-1.5 h-3.5 w-3.5" /> Impor CSV
+                <Upload className="mr-1.5 h-3.5 w-3.5" /> Impor
               </Button>
               <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleExportCSV} disabled={!selectedBranch || loadingItems || items.length === 0}>
-                <Download className="mr-1.5 h-3.5 w-3.5" /> Ekspor CSV
+                <Download className="mr-1.5 h-3.5 w-3.5" /> Ekspor
               </Button>
               <Button size="sm" className="rounded-md text-xs h-9" onClick={() => setIsCategoryManagerOpen(true)}>
-                <Tag className="mr-1.5 h-3.5 w-3.5" /> Kelola Kategori
+                <Tag className="mr-1.5 h-3.5 w-3.5" /> Kategori
               </Button>
               <Button size="sm" className="rounded-md text-xs h-9" onClick={() => handleOpenItemDialog()}>
-                <PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah Produk
+                <PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah
               </Button>
             </div>
           </div>
+          
+          <Alert variant="default" className="bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/50 dark:text-blue-300">
+            <Info className="h-4 w-4 !text-blue-600 dark:!text-blue-400" />
+            <AlertDescription className="text-xs text-blue-600 dark:text-blue-400">
+              Pencarian produk dilakukan pada data yang ditampilkan sesuai batas "Tampil X item". Untuk pencarian menyeluruh, pilih "Tampil Semua" (jika tersedia) atau pastikan produk yang dicari ada dalam daftar yang dimuat.
+            </AlertDescription>
+          </Alert>
+
 
           {loadingItems || loadingCategories ? (
             <div className="space-y-2 border rounded-lg shadow-sm p-4">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
+              {[...Array(itemsPerPage)].map((_,i) => <Skeleton key={i} className="h-10 w-full" />)}
             </div>
           ) : filteredItems.length === 0 && searchTerm ? (
              <div className="border rounded-lg shadow-sm overflow-hidden p-10 text-center">
@@ -470,7 +545,7 @@ export default function InventoryPage() {
           ) : (
             <div className="border rounded-lg shadow-sm overflow-hidden">
               <Table>
-                <TableCaption className="text-xs">Daftar produk untuk {selectedBranch?.name || 'cabang terpilih'}.</TableCaption>
+                <TableCaption className="text-xs">Menampilkan {filteredItems.length} dari {items.length} produk yang dimuat untuk {selectedBranch?.name || 'cabang terpilih'}.</TableCaption>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[50px] hidden sm:table-cell text-xs px-2">Gambar</TableHead>
@@ -484,7 +559,7 @@ export default function InventoryPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredItems.map((product) => (
+                  {filteredItems.map((product) => ( // Display filtered items
                     <TableRow key={product.id}>
                       <TableCell className="hidden sm:table-cell py-1.5 px-2">
                         <Image
@@ -547,16 +622,16 @@ export default function InventoryPage() {
             </DialogHeader>
             <form onSubmit={itemForm.handleSubmit(onItemSubmit)} className="space-y-3 py-2 max-h-[70vh] overflow-y-auto pr-2">
               <div>
-                <Label htmlFor="itemName" className="text-xs">Nama Produk</Label>
+                <Label htmlFor="itemName" className="text-xs">Nama Produk*</Label>
                 <Input id="itemName" {...itemForm.register("name")} className="h-9 text-xs" />
                 {itemForm.formState.errors.name && <p className="text-xs text-destructive mt-1">{itemForm.formState.errors.name.message}</p>}
               </div>
               <div>
-                <Label htmlFor="itemSku" className="text-xs">SKU (Opsional)</Label>
+                <Label htmlFor="itemSku" className="text-xs">SKU (Opsional, otomatis jika kosong)</Label>
                 <Input id="itemSku" {...itemForm.register("sku")} className="h-9 text-xs" />
               </div>
               <div>
-                <Label htmlFor="itemCategory" className="text-xs">Kategori</Label>
+                <Label htmlFor="itemCategory" className="text-xs">Kategori*</Label>
                 <Controller
                   name="categoryId"
                   control={itemForm.control}
@@ -581,18 +656,18 @@ export default function InventoryPage() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
-                  <Label htmlFor="itemQuantity" className="text-xs">Stok</Label>
+                  <Label htmlFor="itemQuantity" className="text-xs">Stok*</Label>
                   <Input id="itemQuantity" type="number" {...itemForm.register("quantity")} className="h-9 text-xs" />
                   {itemForm.formState.errors.quantity && <p className="text-xs text-destructive mt-1">{itemForm.formState.errors.quantity.message}</p>}
                 </div>
                 <div>
-                  <Label htmlFor="itemPrice" className="text-xs">Harga Jual (Rp)</Label>
+                  <Label htmlFor="itemPrice" className="text-xs">Harga Jual (Rp)*</Label>
                   <Input id="itemPrice" type="number" {...itemForm.register("price")} className="h-9 text-xs" />
                   {itemForm.formState.errors.price && <p className="text-xs text-destructive mt-1">{itemForm.formState.errors.price.message}</p>}
                 </div>
                  <div>
                   <Label htmlFor="itemCostPrice" className="text-xs">Harga Pokok (Rp)</Label>
-                  <Input id="itemCostPrice" type="number" {...itemForm.register("costPrice")} className="h-9 text-xs" />
+                  <Input id="itemCostPrice" type="number" {...itemForm.register("costPrice")} className="h-9 text-xs" placeholder="0"/>
                   {itemForm.formState.errors.costPrice && <p className="text-xs text-destructive mt-1">{itemForm.formState.errors.costPrice.message}</p>}
                 </div>
               </div>
@@ -723,7 +798,7 @@ export default function InventoryPage() {
                             </ScrollArea>
                             {parsedCsvData.length > 5 && <p className="text-xs text-muted-foreground mt-1">Dan {parsedCsvData.length - 5} item lainnya...</p>}
                             <p className="text-xs text-amber-600 mt-3">
-                                <strong>Perhatian:</strong> Fitur ini hanya akan menambahkan produk baru. Jika SKU atau nama produk sudah ada, produk duplikat mungkin akan dibuat. Pastikan ID Kategori di CSV valid dan sudah ada di sistem untuk cabang ini.
+                                <strong>Perhatian:</strong> Fitur ini hanya akan menambahkan produk baru. Jika SKU produk sudah ada, produk duplikat mungkin akan dibuat (dengan SKU yang sama). SKU akan dibuat otomatis jika kolom SKU di CSV kosong. Pastikan ID Kategori di CSV valid dan sudah ada di sistem untuk cabang ini.
                             </p>
                         </>
                     ) : (
@@ -743,5 +818,3 @@ export default function InventoryPage() {
     </ProtectedRoute>
   );
 }
-
-

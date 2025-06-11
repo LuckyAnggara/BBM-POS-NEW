@@ -53,7 +53,7 @@ export async function getInventoryCategories(branchId: string): Promise<Inventor
       categories.push({ id: docSnap.id, ...docSnap.data() } as InventoryCategory);
     });
     return categories;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching inventory categories:", error);
     return [];
   }
@@ -74,6 +74,13 @@ export async function deleteInventoryCategory(categoryId: string): Promise<void 
   }
 }
 
+function generateSkuForProduct(productName: string, branchId?: string): string {
+  const namePart = productName.substring(0, 3).toUpperCase();
+  const randomPart = Math.random().toString(36).substring(2, 7).toUpperCase(); // 5 char random
+  const timestampPart = Timestamp.now().toMillis().toString().slice(-4); // last 4 digits of millis
+  return `SKU-${namePart}${randomPart}${timestampPart}`;
+}
+
 export async function addInventoryItem(itemData: InventoryItemInput, categoryName: string): Promise<InventoryItem | { error: string }> {
   if (!itemData.name.trim()) return { error: "Nama produk tidak boleh kosong." };
   if (!itemData.branchId) return { error: "ID Cabang diperlukan." };
@@ -84,8 +91,19 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
 
   try {
     const now = serverTimestamp() as Timestamp;
+    
+    let skuToSave = itemData.sku?.trim();
+    if (!skuToSave) {
+      // Generate SKU based on product name and a random/timestamp component
+      // For more robust uniqueness, consider querying for existing SKUs, though this adds complexity.
+      // A simpler approach for now:
+      const tempDocRef = doc(collection(db, "inventoryItems")); // Create a dummy ref for ID
+      skuToSave = `AUTOSKU-${tempDocRef.id.substring(0, 8).toUpperCase()}`;
+    }
+
     const itemRef = await addDoc(collection(db, "inventoryItems"), {
       ...itemData,
+      sku: skuToSave,
       costPrice: itemData.costPrice || 0,
       categoryName,
       createdAt: now,
@@ -95,6 +113,7 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
     return {
       id: itemRef.id,
       ...itemData,
+      sku: skuToSave,
       costPrice: itemData.costPrice || 0,
       categoryName,
       createdAt: clientTimestamp,
@@ -106,10 +125,18 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
   }
 }
 
-export async function getInventoryItems(branchId: string): Promise<InventoryItem[]> {
+export async function getInventoryItems(branchId: string, options?: { limit?: number }): Promise<InventoryItem[]> {
   if (!branchId) return [];
   try {
-    const q = query(collection(db, "inventoryItems"), where("branchId", "==", branchId), orderBy("name"));
+    const qConstraints: any[] = [ // Explicitly type qConstraints
+        where("branchId", "==", branchId), 
+        orderBy("name")
+    ];
+    if (options?.limit && options.limit > 0) {
+        qConstraints.push(limit(options.limit));
+    }
+
+    const q = query(collection(db, "inventoryItems"), ...qConstraints);
     const querySnapshot = await getDocs(q);
     const items: InventoryItem[] = [];
     querySnapshot.forEach((docSnap) => {
@@ -117,7 +144,7 @@ export async function getInventoryItems(branchId: string): Promise<InventoryItem
       items.push({ id: docSnap.id, ...data, costPrice: data.costPrice || 0 } as InventoryItem);
     });
     return items;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching inventory items:", error);
     return [];
   }
@@ -133,6 +160,15 @@ export async function updateInventoryItem(itemId: string, updates: Partial<Omit<
     } else {
       payload.costPrice = Number(updates.costPrice);
     }
+     // Ensure SKU is not accidentally cleared if not provided in updates, unless explicitly set to empty string
+    if (updates.sku === undefined && 'sku' in updates) { // Check if 'sku' key exists even if value is undefined
+      // Do not modify SKU if it's undefined in updates (meaning it wasn't part of the form change)
+    } else if (updates.sku === "") {
+      payload.sku = ""; // Allow clearing SKU
+    } else if (updates.sku) {
+      payload.sku = updates.sku.trim();
+    }
+
 
     if (newCategoryName && updates.categoryId) {
       payload.categoryName = newCategoryName;
