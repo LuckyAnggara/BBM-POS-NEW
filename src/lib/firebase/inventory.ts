@@ -94,7 +94,8 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
     
     let skuToSave = itemData.sku?.trim();
     if (!skuToSave) {
-      const tempDocRef = doc(collection(db, "inventoryItems")); 
+      // Generate a more unique SKU using part of a new Firestore ID
+      const tempDocRef = doc(collection(db, "inventoryItems")); // Generate a new ID without writing
       skuToSave = `AUTOSKU-${tempDocRef.id.substring(0, 8).toUpperCase()}`;
     }
 
@@ -126,7 +127,7 @@ export async function getInventoryItems(
   branchId: string,
   options: {
     limit?: number;
-    searchTerm?: string;
+    searchTerm?: string; // Search term is for client-side filtering on the current page for now
     startAfterDoc?: DocumentSnapshot<DocumentData> | null;
     endBeforeDoc?: DocumentSnapshot<DocumentData> | null;
   } = {}
@@ -135,42 +136,23 @@ export async function getInventoryItems(
   try {
     let qConstraints: any[] = [where("branchId", "==", branchId)];
     
-    // Note: Firestore does not support combining inequality filters on different fields (e.g., name search)
-    // with range cursors (startAfter/endBefore) effectively unless the orderBy field is the same.
-    // For robust search with pagination, consider a dedicated search service (e.g., Algolia, Elasticsearch)
-    // or a simpler approach for Firestore:
-    // 1. If searchTerm is present, perform a separate query (potentially without pagination or with simpler pagination).
-    // 2. If no searchTerm, use orderBy name with cursors.
-
-    // Simple name-based search (case-insensitive, prefix only for Firestore direct query)
-    // This basic search won't work well with non-prefix searches or SKU searches without composite indexes.
-    if (options.searchTerm) {
-       const searchTermLower = options.searchTerm.toLowerCase();
-       const searchTermUpper = options.searchTerm.toUpperCase(); // For SKU which might be uppercase
-      // This is a simplified search. For robust search, use a dedicated search solution or more complex queries.
-      // Here, we'll filter client-side if a searchTerm is provided with pagination, which is not ideal for large datasets.
-      // For now, if searchTerm is provided, pagination might not be perfectly accurate across the *entire* dataset,
-      // but rather paginates through *all* items and then filters.
-      // A better approach for search + pagination is to filter *then* paginate, but Firestore makes this hard.
-    }
-
-    qConstraints.push(orderBy("name")); // Always order by name for consistent pagination
+    // Always order by name for consistent pagination. 
+    // Search term is applied client-side on the fetched page of items.
+    qConstraints.push(orderBy("name")); 
 
     if (options.startAfterDoc) {
       qConstraints.push(startAfter(options.startAfterDoc));
     }
     if (options.endBeforeDoc) {
-      qConstraints.push(endBefore(options.endBeforeDoc));
-       qConstraints = qConstraints.filter(c => c.type !== 'orderBy'); // Remove existing orderBy
-       qConstraints.push(orderBy("name", "desc")); // Order desc for endBefore with limitToLast
-    }
-
-
-    if (options.limit && options.limit > 0) {
-      if (options.endBeforeDoc) {
-        qConstraints.push(limitToLast(options.limit + 1)); // Fetch one extra to check if there's a previous page
-      } else {
-        qConstraints.push(limit(options.limit + 1)); // Fetch one extra to check if there's a next page
+      // For endBefore, we need to reverse the orderBy and use limitToLast
+      qConstraints = qConstraints.filter(c => c.type !== 'orderBy'); // Remove existing orderBy
+      qConstraints.push(orderBy("name", "desc")); // Order desc for endBefore
+      if (options.limit && options.limit > 0) {
+        qConstraints.push(limitToLast(options.limit + 1)); // Fetch one extra
+      }
+    } else {
+      if (options.limit && options.limit > 0) {
+        qConstraints.push(limit(options.limit + 1)); // Fetch one extra
       }
     }
 
@@ -198,19 +180,9 @@ export async function getInventoryItems(
         items.reverse(); // Reverse back to ascending order
     }
     
-    // Client-side filtering if searchTerm is present (suboptimal for large datasets with pagination)
-    if (options.searchTerm) {
-        const searchTermLower = options.searchTerm.toLowerCase();
-        items = items.filter(item => 
-            item.name.toLowerCase().includes(searchTermLower) ||
-            (item.sku && item.sku.toLowerCase().includes(searchTermLower))
-        );
-    }
+    const firstDoc = items.length > 0 ? querySnapshot.docs.find(d => d.id === items[0].id) : undefined;
+    const lastDoc = items.length > 0 ? querySnapshot.docs.find(d => d.id === items[items.length -1].id) : undefined;
 
-
-    const firstDoc = querySnapshot.docs[0];
-    const lastDoc = querySnapshot.docs[querySnapshot.docs.length - (hasMore && !options.endBeforeDoc ? 2 : 1 )]; // Adjust if extra item was fetched
-    
     return { items, firstDoc, lastDoc, hasMore };
 
   } catch (error: any) {
@@ -230,21 +202,25 @@ export async function updateInventoryItem(itemId: string, updates: Partial<Omit<
       payload.costPrice = Number(updates.costPrice);
     }
     if (updates.sku === undefined && 'sku' in updates) { 
+      // SKU is explicitly being set to undefined (should not happen with current form), or was not part of updates
     } else if (updates.sku === "") {
+      // If SKU is explicitly set to an empty string, allow it (or generate one if this flow changes)
       payload.sku = ""; 
     } else if (updates.sku) {
       payload.sku = updates.sku.trim();
     }
+    // If SKU is not in updates, it remains unchanged. If it was empty and needs auto-generation on update, add logic here.
 
-
-    if (newCategoryName && updates.categoryId) {
+    if (newCategoryName && updates.categoryId) { // If categoryId changes, update categoryName
       payload.categoryName = newCategoryName;
-    } else if (updates.categoryId && !newCategoryName) {
+    } else if (updates.categoryId && !newCategoryName) { // If categoryId changes but no newCategoryName provided (e.g. direct update)
+        // Fetch category name based on new categoryId
         const catDoc = await getDoc(doc(db, "inventoryCategories", updates.categoryId));
         if (catDoc.exists()) {
             payload.categoryName = catDoc.data().name;
         } else {
             console.warn("Category for updated item not found, categoryName might be stale or incorrect.");
+            // Optionally set categoryName to a default or null if category is invalid
         }
     }
     await updateDoc(itemRef, payload);

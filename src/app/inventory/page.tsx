@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import MainLayout from "@/components/layout/main-layout";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/contexts/auth-context";
@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PlusCircle, FilePenLine, Trash2, Search, PackagePlus, Tag, X, Upload, Download, FileText, Info } from "lucide-react";
+import { PlusCircle, FilePenLine, Trash2, Search, PackagePlus, Tag, X, Upload, Download, FileText, Info, ChevronLeft, ChevronRight } from "lucide-react";
 import Image from "next/image";
 import { useForm, Controller, type SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -25,8 +25,7 @@ import {
   addInventoryItem, getInventoryItems, updateInventoryItem, deleteInventoryItem,
   addInventoryCategory, getInventoryCategories, deleteInventoryCategory
 } from "@/lib/firebase/inventory";
-import { Timestamp, collection, doc as firestoreDoc } from "firebase/firestore"; // Import collection and doc for SKU generation
-import { db } from "@/lib/firebase/config"; // Import db for SKU generation
+import { Timestamp, type DocumentSnapshot, type DocumentData } from "firebase/firestore"; // Added DocumentSnapshot & DocumentData
 import { format } from "date-fns";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge"; 
@@ -69,6 +68,12 @@ export default function InventoryPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState<number>(ITEMS_PER_PAGE_OPTIONS[0]);
 
+  const [currentPageInv, setCurrentPageInv] = useState(1);
+  const [firstVisibleProductInv, setFirstVisibleProductInv] = useState<DocumentSnapshot<DocumentData> | null>(null);
+  const [lastVisibleProductInv, setLastVisibleProductInv] = useState<DocumentSnapshot<DocumentData> | null>(null);
+  const [hasNextPageInv, setHasNextPageInv] = useState(false);
+  const [hasPreviousPageInv, setHasPreviousPageInv] = useState(false);
+
 
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
@@ -92,7 +97,7 @@ export default function InventoryPage() {
     defaultValues: { name: "" },
   });
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (action: 'next' | 'prev' | 'reset' = 'reset') => {
     if (!selectedBranch) {
       setItems([]);
       setCategories([]);
@@ -101,20 +106,78 @@ export default function InventoryPage() {
       return;
     }
     setLoadingItems(true);
-    setLoadingCategories(true); 
-    const [fetchedItemsResult, fetchedCategoriesResult] = await Promise.all([
-      getInventoryItems(selectedBranch.id, { limit: itemsPerPage }),
-      getInventoryCategories(selectedBranch.id),
-    ]);
-    setItems(fetchedItemsResult.items); // Correctly access the items array
-    setCategories(fetchedCategoriesResult); 
+    if (action === 'reset') {
+        setCurrentPageInv(1);
+        setFirstVisibleProductInv(null);
+        setLastVisibleProductInv(null);
+    }
+    
+    // Fetch categories only on 'reset' or if they haven't been loaded
+    if (action === 'reset' || categories.length === 0) {
+        setLoadingCategories(true);
+        const fetchedCategoriesResult = await getInventoryCategories(selectedBranch.id);
+        setCategories(fetchedCategoriesResult);
+        setLoadingCategories(false);
+    }
+    
+    const queryOptions: any = {
+      limit: itemsPerPage,
+      searchTerm: action === 'reset' ? searchTerm : undefined, // Apply search term only on reset for server-side filtering
+    };
+
+    if (action === 'next' && lastVisibleProductInv) {
+      queryOptions.startAfterDoc = lastVisibleProductInv;
+    } else if (action === 'prev' && firstVisibleProductInv) {
+      queryOptions.endBeforeDoc = firstVisibleProductInv;
+    }
+
+
+    const { items: fetchedItems, lastDoc, firstDoc, hasMore } = await getInventoryItems(selectedBranch.id, queryOptions);
+    
+    setItems(fetchedItems);
+    setLastVisibleProductInv(lastDoc || null);
+    setFirstVisibleProductInv(firstDoc || null);
+
+    if (action === 'next') {
+      setHasNextPageInv(hasMore);
+      setHasPreviousPageInv(true); // If we moved next, there's a previous page
+    } else if (action === 'prev') {
+      setHasPreviousPageInv(hasMore); // 'hasMore' when going prev means there are more items *before*
+      setHasNextPageInv(true); // If we moved prev, there's a next page (the one we came from)
+    } else { // reset
+      setHasNextPageInv(hasMore);
+      setHasPreviousPageInv(false);
+    }
+    
     setLoadingItems(false);
-    setLoadingCategories(false);
-  }, [selectedBranch, itemsPerPage]);
+  }, [selectedBranch, itemsPerPage, categories.length, lastVisibleProductInv, firstVisibleProductInv, searchTerm]);
+
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+     if (selectedBranch) {
+        fetchData('reset');
+     } else {
+        setItems([]);
+        setCategories([]);
+        setCurrentPageInv(1);
+        setHasNextPageInv(false);
+        setHasPreviousPageInv(false);
+        setFirstVisibleProductInv(null);
+        setLastVisibleProductInv(null);
+     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBranch, itemsPerPage, searchTerm]); // fetchData is memoized, so this is safe. Re-fetch on these changes.
+
+  const handlePageChangeInv = (direction: 'next' | 'prev') => {
+    if (direction === 'next' && hasNextPageInv) {
+      setCurrentPageInv(prev => prev + 1);
+      fetchData('next');
+    } else if (direction === 'prev' && hasPreviousPageInv) {
+      setCurrentPageInv(prev => prev - 1);
+      fetchData('prev');
+    }
+  };
+
 
   const handleOpenItemDialog = (item: InventoryItem | null = null) => {
     setEditingItem(item);
@@ -169,7 +232,7 @@ export default function InventoryPage() {
     } else {
       toast({ title: editingItem ? "Produk Diperbarui" : "Produk Ditambahkan", description: `${values.name} telah ${editingItem ? 'diperbarui' : 'ditambahkan'} ke inventaris.` });
       setIsItemDialogOpen(false);
-      await fetchData();
+      await fetchData('reset');
     }
   };
 
@@ -179,7 +242,7 @@ export default function InventoryPage() {
       toast({ title: "Gagal Menghapus", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Produk Dihapus", description: `${itemName} telah dihapus dari inventaris.` });
-      await fetchData();
+      await fetchData('reset');
     }
   };
 
@@ -195,7 +258,7 @@ export default function InventoryPage() {
     } else {
       toast({ title: "Kategori Ditambahkan", description: `Kategori "${values.name}" telah ditambahkan.` });
       categoryForm.reset();
-      const fetchedCategories = await getInventoryCategories(selectedBranch.id); // Re-fetch for category manager
+      const fetchedCategories = await getInventoryCategories(selectedBranch.id); 
       setCategories(fetchedCategories);
     }
   };
@@ -428,7 +491,7 @@ export default function InventoryPage() {
 
     if (successCount > 0) {
         toast({ title: "Impor Selesai", description: `${successCount} produk berhasil diimpor.${errorCount > 0 ? ` ${errorCount} produk gagal.` : ''}` });
-        await fetchData(); 
+        await fetchData('reset'); 
     } else if (errorCount > 0) {
         toast({ title: "Impor Gagal", description: `Semua ${errorCount} produk gagal diimpor. Cek konsol untuk detail.`, variant: "destructive" });
     } else {
@@ -450,11 +513,17 @@ export default function InventoryPage() {
     setCsvImportFileName(null);
   };
 
-  const filteredItems = items.filter(item =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    categories.find(c => c.id === item.categoryId)?.name.toLowerCase().includes(searchTerm.toLowerCase())
-  ); 
+  const displayedItems = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return items;
+    }
+    const lowerSearchTerm = searchTerm.toLowerCase();
+    return items.filter(item =>
+      item.name.toLowerCase().includes(lowerSearchTerm) ||
+      (item.sku && item.sku.toLowerCase().includes(lowerSearchTerm)) ||
+      (item.categoryName && item.categoryName.toLowerCase().includes(lowerSearchTerm))
+    );
+  }, [items, searchTerm]); 
 
   if (loadingBranches) {
     return <MainLayout><div className="flex h-full items-center justify-center">Memuat data cabang...</div></MainLayout>;
@@ -483,10 +552,10 @@ export default function InventoryPage() {
                   placeholder="Cari produk..."
                   className="pl-8 w-full sm:w-40 rounded-md h-9 text-xs"
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e) => {setSearchTerm(e.target.value); setCurrentPageInv(1); }} // Reset page on search
                 />
               </div>
-              <Select value={itemsPerPage.toString()} onValueChange={(value) => setItemsPerPage(Number(value))}>
+              <Select value={itemsPerPage.toString()} onValueChange={(value) => {setItemsPerPage(Number(value)); setCurrentPageInv(1); }}>
                 <SelectTrigger className="h-9 text-xs rounded-md w-auto sm:w-[100px]">
                     <SelectValue placeholder="Tampil" />
                 </SelectTrigger>
@@ -518,7 +587,7 @@ export default function InventoryPage() {
           <Alert variant="default" className="bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/50 dark:text-blue-300">
             <Info className="h-4 w-4 !text-blue-600 dark:!text-blue-400" />
             <AlertDescription className="text-xs text-blue-600 dark:text-blue-400">
-              Pencarian produk dilakukan pada data yang ditampilkan sesuai batas "Tampil X item". Untuk pencarian menyeluruh, pilih "Tampil Semua" (jika tersedia) atau pastikan produk yang dicari ada dalam daftar yang dimuat.
+              Pencarian produk dilakukan pada data yang ditampilkan di halaman saat ini. Untuk pencarian menyeluruh di semua data, pastikan tidak ada filter aktif dan navigasi ke semua halaman jika perlu.
             </AlertDescription>
           </Alert>
 
@@ -527,9 +596,9 @@ export default function InventoryPage() {
             <div className="space-y-2 border rounded-lg shadow-sm p-4">
               {[...Array(itemsPerPage)].map((_,i) => <Skeleton key={i} className="h-10 w-full" />)}
             </div>
-          ) : filteredItems.length === 0 && searchTerm ? (
+          ) : displayedItems.length === 0 && searchTerm ? (
              <div className="border rounded-lg shadow-sm overflow-hidden p-10 text-center">
-                <p className="text-sm text-muted-foreground">Tidak ada produk yang cocok dengan pencarian Anda.</p>
+                <p className="text-sm text-muted-foreground">Tidak ada produk yang cocok dengan pencarian Anda pada halaman ini.</p>
             </div>
           ) : items.length === 0 ? (
             <div className="border rounded-lg shadow-sm overflow-hidden p-10 text-center">
@@ -539,9 +608,12 @@ export default function InventoryPage() {
                 </Button>
             </div>
           ) : (
+            <>
             <div className="border rounded-lg shadow-sm overflow-hidden">
               <Table>
-                <TableCaption className="text-xs">Menampilkan {filteredItems.length} dari {items.length} produk yang dimuat untuk {selectedBranch?.name || 'cabang terpilih'}.</TableCaption>
+                <TableCaption className="text-xs">
+                  Menampilkan {displayedItems.length} produk (Halaman {currentPageInv}). Pencarian hanya berlaku pada data yang ditampilkan.
+                </TableCaption>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[50px] hidden sm:table-cell text-xs px-2">Gambar</TableHead>
@@ -555,7 +627,7 @@ export default function InventoryPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredItems.map((product) => ( 
+                  {displayedItems.map((product) => ( 
                     <TableRow key={product.id}>
                       <TableCell className="hidden sm:table-cell py-1.5 px-2">
                         <Image
@@ -608,6 +680,16 @@ export default function InventoryPage() {
                 </TableBody>
               </Table>
             </div>
+             <div className="flex justify-between items-center pt-2">
+                <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handlePageChangeInv('prev')} disabled={!hasPreviousPageInv || loadingItems}>
+                    <ChevronLeft className="mr-1 h-4 w-4"/> Sebelumnya
+                </Button>
+                <span className="text-xs text-muted-foreground">Halaman {currentPageInv}</span>
+                <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => handlePageChangeInv('next')} disabled={!hasNextPageInv || loadingItems}>
+                    Berikutnya <ChevronRight className="ml-1 h-4 w-4"/>
+                </Button>
+              </div>
+            </>
           )}
         </div>
 
@@ -815,3 +897,4 @@ export default function InventoryPage() {
   );
 }
 
+    
