@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCap
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PlusCircle, FilePenLine, Trash2, Search, PackagePlus, Tag, X, Upload, Download, FileText, Info, ChevronLeft, ChevronRight } from "lucide-react";
+import { PlusCircle, FilePenLine, Trash2, Search, PackagePlus, Tag, X, Upload, Download, FileText, Info, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
 import Image from "next/image";
 import { useForm, Controller, type SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -25,11 +25,12 @@ import {
   addInventoryItem, getInventoryItems, updateInventoryItem, deleteInventoryItem,
   addInventoryCategory, getInventoryCategories, deleteInventoryCategory
 } from "@/lib/firebase/inventory";
-import { Timestamp, type DocumentSnapshot, type DocumentData } from "firebase/firestore"; // Added DocumentSnapshot & DocumentData
+import { Timestamp, type DocumentSnapshot, type DocumentData } from "firebase/firestore";
 import { format } from "date-fns";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge"; 
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription as AlertDescUI } from "@/components/ui/alert"; // Renamed to avoid conflict with window.Alert
+import { cn } from "@/lib/utils";
 
 
 const itemFormSchema = z.object({
@@ -52,6 +53,7 @@ type CategoryFormValues = z.infer<typeof categoryFormSchema>;
 interface ParsedCsvItem extends InventoryItemInput {
   isDuplicateSku?: boolean;
   categoryNameForPreview?: string;
+  isCategoryInvalid?: boolean;
 }
 
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100];
@@ -85,6 +87,7 @@ export default function InventoryPage() {
   const [parsedCsvData, setParsedCsvData] = useState<ParsedCsvItem[]>([]);
   const [csvImportFileName, setCsvImportFileName] = useState<string | null>(null);
   const [isProcessingImport, setIsProcessingImport] = useState(false);
+  const [csvImportSummary, setCsvImportSummary] = useState<{ total: number, invalidCategories: number }>({ total: 0, invalidCategories: 0 });
 
 
   const itemForm = useForm<ItemFormValues>({
@@ -100,9 +103,8 @@ export default function InventoryPage() {
   const fetchData = useCallback(async (action: 'next' | 'prev' | 'reset' = 'reset') => {
     if (!selectedBranch) {
       setItems([]);
-      setCategories([]);
+      // Categories are fetched separately, so only set items here
       setLoadingItems(false);
-      setLoadingCategories(false);
       return;
     }
     setLoadingItems(true);
@@ -122,7 +124,7 @@ export default function InventoryPage() {
     
     const queryOptions: any = {
       limit: itemsPerPage,
-      searchTerm: action === 'reset' ? searchTerm : undefined, // Apply search term only on reset for server-side filtering
+      // Search term is applied client-side for now due to pagination complexity with Firestore full-text search
     };
 
     if (action === 'next' && lastVisibleProductInv) {
@@ -134,23 +136,23 @@ export default function InventoryPage() {
 
     const { items: fetchedItems, lastDoc, firstDoc, hasMore } = await getInventoryItems(selectedBranch.id, queryOptions);
     
-    setItems(fetchedItems);
+    setItems(fetchedItems); // This is an array of InventoryItem
     setLastVisibleProductInv(lastDoc || null);
     setFirstVisibleProductInv(firstDoc || null);
 
     if (action === 'next') {
       setHasNextPageInv(hasMore);
-      setHasPreviousPageInv(true); // If we moved next, there's a previous page
+      setHasPreviousPageInv(true);
     } else if (action === 'prev') {
-      setHasPreviousPageInv(hasMore); // 'hasMore' when going prev means there are more items *before*
-      setHasNextPageInv(true); // If we moved prev, there's a next page (the one we came from)
+      setHasPreviousPageInv(hasMore); 
+      setHasNextPageInv(true); 
     } else { // reset
       setHasNextPageInv(hasMore);
       setHasPreviousPageInv(false);
     }
     
     setLoadingItems(false);
-  }, [selectedBranch, itemsPerPage, categories.length, lastVisibleProductInv, firstVisibleProductInv, searchTerm]);
+  }, [selectedBranch, itemsPerPage, categories.length, lastVisibleProductInv, firstVisibleProductInv]);
 
 
   useEffect(() => {
@@ -164,9 +166,10 @@ export default function InventoryPage() {
         setHasPreviousPageInv(false);
         setFirstVisibleProductInv(null);
         setLastVisibleProductInv(null);
+        setLoadingItems(false);
+        setLoadingCategories(false);
      }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBranch, itemsPerPage, searchTerm]); // fetchData is memoized, so this is safe. Re-fetch on these changes.
+  }, [selectedBranch, itemsPerPage, fetchData]); // Removed searchTerm from here as search is client-side on paginated data
 
   const handlePageChangeInv = (direction: 'next' | 'prev') => {
     if (direction === 'next' && hasNextPageInv) {
@@ -208,10 +211,14 @@ export default function InventoryPage() {
     }
     
     let skuToSave = values.sku?.trim();
+    if (!skuToSave) {
+      skuToSave = `AUTOSKU-${doc(collection(db, "inventoryItems")).id.substring(0, 8).toUpperCase()}`;
+    }
 
     const itemData: InventoryItemInput = {
-      ...values,
-      sku: skuToSave, 
+      name: values.name,
+      sku: skuToSave,
+      categoryId: values.categoryId,
       branchId: selectedBranch.id,
       quantity: Number(values.quantity),
       price: Number(values.price),
@@ -386,7 +393,8 @@ export default function InventoryPage() {
       return;
     }
 
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+    const headersLine = lines[0].toLowerCase(); // Convert header to lowercase for case-insensitive matching
+    const headers = headersLine.split(',').map(h => h.trim());
     const requiredHeaders = ["name", "categoryid", "quantity", "price"]; 
     const missingHeaders = requiredHeaders.filter(rh => !headers.includes(rh));
 
@@ -406,8 +414,10 @@ export default function InventoryPage() {
 
 
     const data: ParsedCsvItem[] = [];
+    let invalidCategoryCount = 0;
+
     for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue;
+      if (!lines[i].trim()) continue; // Skip empty lines
       const currentline = lines[i].split(',');
 
       const name = currentline[nameIndex]?.trim();
@@ -432,8 +442,11 @@ export default function InventoryPage() {
       const isDuplicateSku = !!sku && sku.trim() !== "" && items.some(existingItem => existingItem.sku === sku);
       
       const category = categories.find(cat => cat.id === categoryId);
-      const categoryNameForPreview = category ? category.name : `ID: ${categoryId} (Tidak Valid)`;
-
+      let isCategoryInvalid = !category;
+      let categoryNameForPreview = category ? category.name : `ID: ${categoryId} (Tidak Valid)`;
+      if (isCategoryInvalid) {
+        invalidCategoryCount++;
+      }
 
       data.push({
         branchId: selectedBranch!.id,
@@ -446,7 +459,8 @@ export default function InventoryPage() {
         imageUrl: imageUrlIndex > -1 ? currentline[imageUrlIndex]?.trim() : undefined,
         imageHint: imageHintIndex > -1 ? currentline[imageHintIndex]?.trim() : undefined,
         isDuplicateSku,
-        categoryNameForPreview
+        categoryNameForPreview,
+        isCategoryInvalid
       });
     }
 
@@ -454,7 +468,7 @@ export default function InventoryPage() {
       toast({ title: "Tidak Ada Data Valid", description: "Tidak ada data produk yang valid ditemukan di file CSV.", variant: "destructive"});
       return;
     }
-
+    setCsvImportSummary({ total: data.length, invalidCategories: invalidCategoryCount });
     setParsedCsvData(data);
     setIsImportDialogOpen(true);
   };
@@ -465,43 +479,58 @@ export default function InventoryPage() {
     setIsProcessingImport(true);
     let successCount = 0;
     let errorCount = 0;
+    let skippedInvalidCategoryCount = 0;
     const errorMessages: string[] = [];
 
-    const results = await Promise.allSettled(parsedCsvData.map(async (itemData) => {
-        const selectedCategory = categories.find(c => c.id === itemData.categoryId);
-        if (!selectedCategory) {
-          throw new Error(`Kategori dengan ID '${itemData.categoryId}' untuk produk '${itemData.name}' tidak ditemukan.`);
+    const results = await Promise.allSettled(parsedCsvData.map(async (item) => {
+        if (item.isCategoryInvalid) {
+            skippedInvalidCategoryCount++;
+            throw new Error(`Kategori ID '${item.categoryId}' tidak valid untuk produk '${item.name}'. Item dilewati.`);
         }
-        const { isDuplicateSku, categoryNameForPreview, ...actualItemData } = itemData;
+        const selectedCategory = categories.find(c => c.id === item.categoryId);
+        // This check should ideally be redundant if item.isCategoryInvalid is false, but as a safeguard:
+        if (!selectedCategory) {
+            skippedInvalidCategoryCount++;
+            throw new Error(`Kategori dengan ID '${item.categoryId}' untuk produk '${item.name}' tidak ditemukan (seharusnya sudah ditandai tidak valid). Item dilewati.`);
+        }
+        const { isDuplicateSku, categoryNameForPreview, isCategoryInvalid, ...actualItemData } = item;
         
         return addInventoryItem(actualItemData, selectedCategory.name);
     }));
 
     results.forEach((result, index) => {
+        const itemName = parsedCsvData[index]?.name || `Item di baris ${index + 2}`; // CSV data starts from line 2
         if (result.status === 'fulfilled' && result.value && !("error" in result.value)) {
             successCount++;
         } else {
             errorCount++;
-            const itemName = parsedCsvData[index]?.name || `Item di baris ${index + 2}`;
             const errorMessage = result.status === 'rejected' ? result.reason?.message : (result.value as { error: string })?.error;
             errorMessages.push(`${itemName}: ${errorMessage || 'Error tidak diketahui'}`);
             console.error(`Error importing ${itemName}:`, errorMessage);
         }
     });
 
+    let toastMessage = "";
     if (successCount > 0) {
-        toast({ title: "Impor Selesai", description: `${successCount} produk berhasil diimpor.${errorCount > 0 ? ` ${errorCount} produk gagal.` : ''}` });
-        await fetchData('reset'); 
-    } else if (errorCount > 0) {
-        toast({ title: "Impor Gagal", description: `Semua ${errorCount} produk gagal diimpor. Cek konsol untuk detail.`, variant: "destructive" });
+        toastMessage += `${successCount} produk berhasil diimpor. `;
+    }
+    if (errorCount - skippedInvalidCategoryCount > 0) { // Actual errors beyond just skipped categories
+        toastMessage += `${errorCount - skippedInvalidCategoryCount} produk gagal karena error lain. `;
+    }
+    if (skippedInvalidCategoryCount > 0) {
+        toastMessage += `${skippedInvalidCategoryCount} produk dilewati karena ID kategori tidak valid. `;
+    }
+
+    if (toastMessage.trim() === "") {
+        toast({ title: "Tidak Ada Perubahan", description: "Tidak ada produk yang diimpor atau dilewati.", variant: "default" });
     } else {
-        toast({ title: "Tidak Ada Data", description: "Tidak ada data yang diimpor.", variant: "default" });
+        toast({ title: "Impor Selesai", description: toastMessage.trim() });
     }
     
     if(errorMessages.length > 0 && errorCount > 0) {
         toast({
-            title: `${errorCount} Produk Gagal Diimpor`,
-            description: errorMessages.slice(0, 3).join("; ") + (errorMessages.length > 3 ? "; ..." : ""),
+            title: `Detail Kegagalan Impor (${errorCount} item)`,
+            description: errorMessages.slice(0,3).join("; ") + (errorMessages.length > 3 ? "; ..." : ""),
             variant: "destructive",
             duration: 10000
         });
@@ -511,11 +540,12 @@ export default function InventoryPage() {
     setIsImportDialogOpen(false);
     setParsedCsvData([]);
     setCsvImportFileName(null);
+    await fetchData('reset');
   };
 
   const displayedItems = useMemo(() => {
     if (!searchTerm.trim()) {
-      return items;
+      return items; // items here is already the current page's data
     }
     const lowerSearchTerm = searchTerm.toLowerCase();
     return items.filter(item =>
@@ -525,7 +555,7 @@ export default function InventoryPage() {
     );
   }, [items, searchTerm]); 
 
-  if (loadingBranches) {
+  if (loadingBranches && !selectedBranch) { // Show global loading if branch context itself is loading
     return <MainLayout><div className="flex h-full items-center justify-center">Memuat data cabang...</div></MainLayout>;
   }
   if (!selectedBranch && userData?.role === 'admin') {
@@ -552,10 +582,10 @@ export default function InventoryPage() {
                   placeholder="Cari produk..."
                   className="pl-8 w-full sm:w-40 rounded-md h-9 text-xs"
                   value={searchTerm}
-                  onChange={(e) => {setSearchTerm(e.target.value); setCurrentPageInv(1); }} // Reset page on search
+                  onChange={(e) => {setSearchTerm(e.target.value);}} // Search is client-side for current page
                 />
               </div>
-              <Select value={itemsPerPage.toString()} onValueChange={(value) => {setItemsPerPage(Number(value)); setCurrentPageInv(1); }}>
+              <Select value={itemsPerPage.toString()} onValueChange={(value) => {setItemsPerPage(Number(value)); }}>
                 <SelectTrigger className="h-9 text-xs rounded-md w-auto sm:w-[100px]">
                     <SelectValue placeholder="Tampil" />
                 </SelectTrigger>
@@ -569,27 +599,27 @@ export default function InventoryPage() {
               <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleDownloadTemplateCSV} disabled={!selectedBranch || loadingCategories}>
                 <FileText className="mr-1.5 h-3.5 w-3.5" /> Template
               </Button>
-              <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleImportButtonClick} disabled={!selectedBranch || loadingItems}>
+              <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleImportButtonClick} disabled={!selectedBranch || loadingItems || loadingCategories}>
                 <Upload className="mr-1.5 h-3.5 w-3.5" /> Impor
               </Button>
               <Button size="sm" variant="outline" className="rounded-md text-xs h-9" onClick={handleExportCSV} disabled={!selectedBranch || loadingItems || items.length === 0}>
                 <Download className="mr-1.5 h-3.5 w-3.5" /> Ekspor
               </Button>
-              <Button size="sm" className="rounded-md text-xs h-9" onClick={() => setIsCategoryManagerOpen(true)}>
+              <Button size="sm" className="rounded-md text-xs h-9" onClick={() => setIsCategoryManagerOpen(true)} disabled={!selectedBranch || loadingCategories}>
                 <Tag className="mr-1.5 h-3.5 w-3.5" /> Kategori
               </Button>
-              <Button size="sm" className="rounded-md text-xs h-9" onClick={() => handleOpenItemDialog()}>
+              <Button size="sm" className="rounded-md text-xs h-9" onClick={() => handleOpenItemDialog()} disabled={!selectedBranch || loadingCategories || categories.length === 0}>
                 <PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah
               </Button>
             </div>
           </div>
           
-          <Alert variant="default" className="bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/50 dark:text-blue-300">
+          <AlertDescUI variant="default" className="bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/50 dark:text-blue-300 text-xs">
             <Info className="h-4 w-4 !text-blue-600 dark:!text-blue-400" />
-            <AlertDescription className="text-xs text-blue-600 dark:text-blue-400">
-              Pencarian produk dilakukan pada data yang ditampilkan di halaman saat ini. Untuk pencarian menyeluruh di semua data, pastikan tidak ada filter aktif dan navigasi ke semua halaman jika perlu.
-            </AlertDescription>
-          </Alert>
+            <AlertDescUI>
+              Pencarian produk dilakukan pada data yang ditampilkan di halaman saat ini. Untuk pencarian menyeluruh di semua data, hapus filter pencarian atau navigasi ke semua halaman jika perlu.
+            </AlertDescUI>
+          </AlertDescUI>
 
 
           {loadingItems || loadingCategories ? (
@@ -603,16 +633,17 @@ export default function InventoryPage() {
           ) : items.length === 0 ? (
             <div className="border rounded-lg shadow-sm overflow-hidden p-10 text-center">
                 <p className="text-sm text-muted-foreground">Belum ada produk di inventaris cabang ini.</p>
-                <Button size="sm" className="mt-4 text-xs" onClick={() => handleOpenItemDialog()}>
+                <Button size="sm" className="mt-4 text-xs" onClick={() => handleOpenItemDialog()} disabled={categories.length === 0}>
                     <PackagePlus className="mr-1.5 h-3.5 w-3.5" /> Tambah Produk Pertama
                 </Button>
+                 {categories.length === 0 && <p className="text-xs text-destructive mt-2">Harap tambahkan kategori terlebih dahulu melalui tombol 'Kategori'.</p>}
             </div>
           ) : (
             <>
             <div className="border rounded-lg shadow-sm overflow-hidden">
               <Table>
                 <TableCaption className="text-xs">
-                  Menampilkan {displayedItems.length} produk (Halaman {currentPageInv}). Pencarian hanya berlaku pada data yang ditampilkan.
+                  Menampilkan {displayedItems.length} dari {items.length} produk yang dimuat untuk {selectedBranch?.name || 'cabang terpilih'}. Halaman {currentPageInv}.
                 </TableCaption>
                 <TableHeader>
                   <TableRow>
@@ -716,11 +747,11 @@ export default function InventoryPage() {
                   render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value} disabled={loadingCategories}>
                       <SelectTrigger className="h-9 text-xs">
-                        <SelectValue placeholder={loadingCategories ? "Memuat kategori..." : "Pilih kategori"} />
+                        <SelectValue placeholder={loadingCategories ? "Memuat kategori..." : (categories.length === 0 ? "Tidak ada kategori" : "Pilih kategori")} />
                       </SelectTrigger>
                       <SelectContent>
                         {categories.length === 0 && !loadingCategories ? (
-                            <div className="p-2 text-xs text-muted-foreground">Belum ada kategori. Tambah dulu.</div>
+                            <div className="p-2 text-xs text-muted-foreground">Belum ada kategori. Tambah dulu via 'Kelola Kategori'.</div>
                         ) : (
                             categories.map(cat => (
                                 <SelectItem key={cat.id} value={cat.id} className="text-xs">{cat.name}</SelectItem>
@@ -762,7 +793,7 @@ export default function InventoryPage() {
                  <DialogClose asChild>
                     <Button type="button" variant="outline" className="text-xs h-8">Batal</Button>
                   </DialogClose>
-                <Button type="submit" className="text-xs h-8" disabled={itemForm.formState.isSubmitting}>
+                <Button type="submit" className="text-xs h-8" disabled={itemForm.formState.isSubmitting || categories.length === 0}>
                   {itemForm.formState.isSubmitting ? "Menyimpan..." : (editingItem ? "Simpan Perubahan" : "Tambah Produk")}
                 </Button>
               </DialogFooter>
@@ -837,7 +868,7 @@ export default function InventoryPage() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={isImportDialogOpen} onOpenChange={(open) => { if (!open) { setParsedCsvData([]); setCsvImportFileName(null); } setIsImportDialogOpen(open);}}>
+        <Dialog open={isImportDialogOpen} onOpenChange={(open) => { if (!open) { setParsedCsvData([]); setCsvImportFileName(null); setCsvImportSummary({total:0, invalidCategories:0}); } setIsImportDialogOpen(open);}}>
             <DialogContent className="sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle className="text-base">Konfirmasi Impor Inventaris</DialogTitle>
@@ -846,27 +877,40 @@ export default function InventoryPage() {
                 <div className="py-2">
                     {parsedCsvData.length > 0 ? (
                         <>
-                            <p className="text-sm mb-2">Akan mengimpor <strong>{parsedCsvData.length}</strong> produk baru. Berikut adalah preview beberapa item pertama:</p>
-                            <ScrollArea className="max-h-[40vh] border rounded-md">
+                            <p className="text-sm mb-2">Akan mengimpor <strong>{csvImportSummary.total}</strong> produk.
+                                {csvImportSummary.invalidCategories > 0 && <span className="text-destructive font-medium"> ({csvImportSummary.invalidCategories} item memiliki ID kategori tidak valid dan akan dilewati).</span>}
+                            </p>
+                            {csvImportSummary.invalidCategories > 0 && (
+                                <AlertDescUI variant="destructive" className="mb-3 text-xs">
+                                    <AlertTriangle className="h-4 w-4" />
+                                     <AlertDescUI>
+                                        <strong>Peringatan Kategori Tidak Valid:</strong> {csvImportSummary.invalidCategories} item memiliki ID Kategori yang tidak terdaftar di cabang ini. Item-item tersebut tidak akan diimpor.
+                                        Silakan tambahkan kategori yang diperlukan melalui tombol 'Kategori' di halaman inventaris, lalu coba impor ulang file ini.
+                                    </AlertDescUI>
+                                </AlertDescUI>
+                            )}
+
+                            <p className="text-sm mb-1">Berikut adalah preview beberapa item pertama (hingga 5 item):</p>
+                            <ScrollArea className="max-h-[30vh] border rounded-md">
                                 <Table className="text-xs">
                                     <TableHeader>
                                         <TableRow>
                                             <TableHead>Nama Produk</TableHead>
                                             <TableHead>SKU</TableHead>
-                                            <TableHead>Nama Kategori</TableHead>
+                                            <TableHead>Nama Kategori (dari CSV)</TableHead>
                                             <TableHead className="text-right">Stok</TableHead>
                                             <TableHead className="text-right">Harga Jual</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {parsedCsvData.slice(0, 5).map((item, index) => (
-                                            <TableRow key={index}>
+                                            <TableRow key={index} className={cn(item.isCategoryInvalid && "bg-destructive/10")}>
                                                 <TableCell>
                                                   {item.name}
                                                   {item.isDuplicateSku && <Badge variant="outline" className="ml-1.5 text-xs border-amber-500 text-amber-600">SKU Duplikat</Badge>}
                                                 </TableCell>
                                                 <TableCell>{item.sku || '-'}</TableCell>
-                                                <TableCell>{item.categoryNameForPreview}</TableCell>
+                                                <TableCell className={cn(item.isCategoryInvalid && "text-destructive font-medium")}>{item.categoryNameForPreview}</TableCell>
                                                 <TableCell className="text-right">{item.quantity}</TableCell>
                                                 <TableCell className="text-right">{item.price}</TableCell>
                                             </TableRow>
