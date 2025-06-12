@@ -16,7 +16,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon, Percent, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, PlusCircle, MinusCircle, XCircle, CheckCircle, LayoutGrid, List, PackagePlus, LogOut, PlayCircle, StopCircle, DollarSign, ShoppingCart, Printer, UserPlus, CreditCard, CalendarIcon, QrCode, Banknote, ChevronsUpDown, Info, Eye, History as HistoryIcon, Percent, ChevronLeft, ChevronRight, Edit3, Trash2 } from "lucide-react";
 import Image from "next/image";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { cn } from "@/lib/utils";
@@ -206,8 +206,8 @@ export default function POSPage() {
   };
 
   useEffect(() => {
-    fetchPOSProducts(1, 'reset'); // Fetch initial products on branch/searchTerm/itemsPerPage change
-  }, [selectedBranch, searchTerm, itemsPerPagePOS]); // Removed fetchPOSProducts from dep array to avoid loop
+    fetchPOSProducts(1, 'reset'); 
+  }, [selectedBranch, searchTerm, itemsPerPagePOS]); 
 
 
   const fetchCustomersAndBankAccounts = useCallback(async () => {
@@ -474,6 +474,29 @@ export default function POSPage() {
     setIsItemDiscountDialogOpen(false);
     setSelectedItemForDiscount(null);
     setCurrentDiscountValue("");
+  };
+
+  const handleRemoveCurrentItemDiscount = () => {
+    if (!selectedItemForDiscount) return;
+    setCartItems(prevItems =>
+      prevItems.map(item => {
+        if (item.productId === selectedItemForDiscount.productId) {
+          return {
+            ...item,
+            price: item.originalPrice || item.price, // Revert to original price
+            discountAmount: 0,
+            itemDiscountType: undefined,
+            itemDiscountValue: 0,
+            total: (item.originalPrice || item.price) * item.quantity,
+          };
+        }
+        return item;
+      })
+    );
+    setIsItemDiscountDialogOpen(false);
+    setSelectedItemForDiscount(null);
+    setCurrentDiscountValue("");
+    toast({ title: "Diskon Dihapus", description: `Diskon untuk ${selectedItemForDiscount.productName} telah dihapus.` });
   };
 
 
@@ -1008,13 +1031,17 @@ export default function POSPage() {
                         <TableCell className="font-medium text-xs py-1 px-2 truncate">
                             {item.productName}
                             {item.discountAmount && item.discountAmount > 0 && (
-                                <p className="text-[0.65rem] text-muted-foreground line-through">{currencySymbol}{(item.originalPrice || 0).toLocaleString('id-ID')}</p>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[0.65rem] text-muted-foreground line-through">{currencySymbol}{(item.originalPrice || 0).toLocaleString('id-ID')}</span>
+                                  <span className="text-[0.65rem] text-destructive">(-{currencySymbol}{(item.discountAmount).toLocaleString('id-ID')})</span>
+                                </div>
                             )}
                         </TableCell>
                         <TableCell className="text-center text-xs py-1 px-1"><div className="flex items-center justify-center gap-0.5"><Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity - 1)}><MinusCircle className="h-3.5 w-3.5" /></Button><Input type="number" value={item.quantity} onChange={(e) => handleUpdateCartQuantity(item.productId, parseInt(e.target.value) || 0)} className="h-6 w-9 text-center text-xs p-0 border-0 focus-visible:ring-0 bg-transparent" disabled={!activeShift}/><Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-foreground" disabled={!activeShift} onClick={() => handleUpdateCartQuantity(item.productId, item.quantity + 1)}><PlusCircle className="h-3.5 w-3.5" /></Button></div></TableCell>
                         <TableCell className="text-center py-1 px-1">
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleOpenItemDiscountDialog(item)} disabled={!activeShift}>
-                                <Percent className="h-3.5 w-3.5" />
+                                <Edit3 className="h-3.5 w-3.5 text-blue-600" />
+                                <span className="sr-only">Edit Diskon</span>
                             </Button>
                         </TableCell>
                         <TableCell className="text-right text-xs py-1 px-2">{currencySymbol}{item.total.toLocaleString('id-ID')}</TableCell><TableCell className="text-right py-1 px-1"><Button variant="ghost" size="icon" className="h-5 w-5 text-destructive hover:text-destructive/80" disabled={!activeShift} onClick={() => handleRemoveFromCart(item.productId)}><XCircle className="h-3.5 w-3.5" /></Button></TableCell></TableRow>))}
@@ -1138,11 +1165,22 @@ export default function POSPage() {
                         </div>
                     )}
                 </div>
-                <DialogFooter>
-                    <Button type="button" variant="outline" className="text-xs h-8" onClick={() => setIsItemDiscountDialogOpen(false)}>Batal</Button>
-                    <Button type="button" className="text-xs h-8" onClick={handleConfirmItemDiscount} disabled={!selectedItemForDiscount || !currentDiscountValue.trim() || parseFloat(currentDiscountValue) < 0}>
-                        Terapkan Diskon
+                <DialogFooter className="grid grid-cols-2 gap-2 pt-2">
+                    <Button 
+                        type="button" 
+                        variant="destructive" 
+                        className="text-xs h-8 col-span-1" 
+                        onClick={handleRemoveCurrentItemDiscount}
+                        disabled={!selectedItemForDiscount || (selectedItemForDiscount.discountAmount || 0) === 0}
+                    >
+                        <Trash2 className="mr-1.5 h-3.5 w-3.5"/> Hapus Diskon
                     </Button>
+                    <div className="col-span-1 flex justify-end gap-2">
+                        <Button type="button" variant="outline" className="text-xs h-8" onClick={() => setIsItemDiscountDialogOpen(false)}>Batal</Button>
+                        <Button type="button" className="text-xs h-8" onClick={handleConfirmItemDiscount} disabled={!selectedItemForDiscount}>
+                            Terapkan
+                        </Button>
+                    </div>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
@@ -1333,3 +1371,5 @@ export default function POSPage() {
     </ProtectedRoute>
   );
 }
+
+    
