@@ -25,11 +25,12 @@ import {
   addInventoryItem, getInventoryItems, updateInventoryItem, deleteInventoryItem,
   addInventoryCategory, getInventoryCategories, deleteInventoryCategory
 } from "@/lib/firebase/inventory";
-import { Timestamp, type DocumentSnapshot, type DocumentData } from "firebase/firestore";
+import { Timestamp, type DocumentSnapshot, type DocumentData, doc, collection } from "firebase/firestore"; // Added collection, doc
+import { db } from "@/lib/firebase/config"; // Added db
 import { format } from "date-fns";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription as AlertDescUI } from "@/components/ui/alert"; // Renamed to avoid conflict with window.Alert
+import { Alert, AlertDescription as AlertDescUI } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 
 
@@ -100,43 +101,59 @@ export default function InventoryPage() {
     defaultValues: { name: "" },
   });
 
-  const fetchData = useCallback(async (action: 'next' | 'prev' | 'reset' = 'reset') => {
-    if (!selectedBranch) {
-      setItems([]);
-      // Categories are fetched separately, so only set items here
-      setLoadingItems(false);
-      return;
-    }
-    setLoadingItems(true);
-    if (action === 'reset') {
-        setCurrentPageInv(1);
-        setFirstVisibleProductInv(null);
-        setLastVisibleProductInv(null);
-    }
-    
-    // Fetch categories only on 'reset' or if they haven't been loaded
-    if (action === 'reset' || categories.length === 0) {
+  // Effect for fetching categories when selectedBranch changes
+  useEffect(() => {
+    async function loadCategories() {
+      if (selectedBranch) {
         setLoadingCategories(true);
         const fetchedCategoriesResult = await getInventoryCategories(selectedBranch.id);
         setCategories(fetchedCategoriesResult);
         setLoadingCategories(false);
+      } else {
+        setCategories([]);
+        setLoadingCategories(false);
+      }
+    }
+    loadCategories();
+  }, [selectedBranch]);
+
+  const fetchData = useCallback(async (action: 'next' | 'prev' | 'reset' = 'reset') => {
+    if (!selectedBranch) {
+      setItems([]);
+      setLoadingItems(false);
+      setCurrentPageInv(1);
+      setHasNextPageInv(false);
+      setHasPreviousPageInv(false);
+      setFirstVisibleProductInv(null);
+      setLastVisibleProductInv(null);
+      return;
+    }
+    setLoadingItems(true);
+    
+    let queryStartAfter = null;
+    let queryEndBefore = null;
+
+    if (action === 'reset') {
+        setCurrentPageInv(1);
+    } else if (action === 'next') {
+        queryStartAfter = lastVisibleProductInv;
+    } else if (action === 'prev') {
+        queryEndBefore = firstVisibleProductInv;
     }
     
     const queryOptions: any = {
       limit: itemsPerPage,
-      // Search term is applied client-side for now due to pagination complexity with Firestore full-text search
     };
 
-    if (action === 'next' && lastVisibleProductInv) {
-      queryOptions.startAfterDoc = lastVisibleProductInv;
-    } else if (action === 'prev' && firstVisibleProductInv) {
-      queryOptions.endBeforeDoc = firstVisibleProductInv;
+    if (queryStartAfter) {
+      queryOptions.startAfterDoc = queryStartAfter;
+    } else if (queryEndBefore) {
+      queryOptions.endBeforeDoc = queryEndBefore;
     }
 
-
-    const { items: fetchedItems, lastDoc, firstDoc, hasMore } = await getInventoryItems(selectedBranch.id, queryOptions);
+    const { items: fetchedItemsArray, lastDoc, firstDoc, hasMore } = await getInventoryItems(selectedBranch.id, queryOptions);
     
-    setItems(fetchedItems); // This is an array of InventoryItem
+    setItems(fetchedItemsArray); 
     setLastVisibleProductInv(lastDoc || null);
     setFirstVisibleProductInv(firstDoc || null);
 
@@ -144,7 +161,7 @@ export default function InventoryPage() {
       setHasNextPageInv(hasMore);
       setHasPreviousPageInv(true);
     } else if (action === 'prev') {
-      setHasPreviousPageInv(hasMore); 
+      setHasPreviousPageInv(hasMore && fetchedItemsArray.length > 0); 
       setHasNextPageInv(true); 
     } else { // reset
       setHasNextPageInv(hasMore);
@@ -152,7 +169,7 @@ export default function InventoryPage() {
     }
     
     setLoadingItems(false);
-  }, [selectedBranch, itemsPerPage, categories.length, lastVisibleProductInv, firstVisibleProductInv]);
+  }, [selectedBranch, itemsPerPage, lastVisibleProductInv, firstVisibleProductInv]);
 
 
   useEffect(() => {
@@ -160,16 +177,16 @@ export default function InventoryPage() {
         fetchData('reset');
      } else {
         setItems([]);
-        setCategories([]);
+        // Categories are handled by their own useEffect
         setCurrentPageInv(1);
         setHasNextPageInv(false);
         setHasPreviousPageInv(false);
         setFirstVisibleProductInv(null);
         setLastVisibleProductInv(null);
         setLoadingItems(false);
-        setLoadingCategories(false);
      }
-  }, [selectedBranch, itemsPerPage, fetchData]); // Removed searchTerm from here as search is client-side on paginated data
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBranch, itemsPerPage]); // Removed fetchData from here
 
   const handlePageChangeInv = (direction: 'next' | 'prev') => {
     if (direction === 'next' && hasNextPageInv) {
@@ -212,7 +229,9 @@ export default function InventoryPage() {
     
     let skuToSave = values.sku?.trim();
     if (!skuToSave) {
-      skuToSave = `AUTOSKU-${doc(collection(db, "inventoryItems")).id.substring(0, 8).toUpperCase()}`;
+      // Generate a more unique SKU using part of a new Firestore ID
+      const tempDocRef = doc(collection(db, "inventoryItems")); // Generate a new ID without writing
+      skuToSave = `AUTOSKU-${tempDocRef.id.substring(0, 8).toUpperCase()}`;
     }
 
     const itemData: InventoryItemInput = {
@@ -488,7 +507,6 @@ export default function InventoryPage() {
             throw new Error(`Kategori ID '${item.categoryId}' tidak valid untuk produk '${item.name}'. Item dilewati.`);
         }
         const selectedCategory = categories.find(c => c.id === item.categoryId);
-        // This check should ideally be redundant if item.isCategoryInvalid is false, but as a safeguard:
         if (!selectedCategory) {
             skippedInvalidCategoryCount++;
             throw new Error(`Kategori dengan ID '${item.categoryId}' untuk produk '${item.name}' tidak ditemukan (seharusnya sudah ditandai tidak valid). Item dilewati.`);
@@ -499,7 +517,7 @@ export default function InventoryPage() {
     }));
 
     results.forEach((result, index) => {
-        const itemName = parsedCsvData[index]?.name || `Item di baris ${index + 2}`; // CSV data starts from line 2
+        const itemName = parsedCsvData[index]?.name || `Item di baris ${index + 2}`; 
         if (result.status === 'fulfilled' && result.value && !("error" in result.value)) {
             successCount++;
         } else {
@@ -514,7 +532,7 @@ export default function InventoryPage() {
     if (successCount > 0) {
         toastMessage += `${successCount} produk berhasil diimpor. `;
     }
-    if (errorCount - skippedInvalidCategoryCount > 0) { // Actual errors beyond just skipped categories
+    if (errorCount - skippedInvalidCategoryCount > 0) { 
         toastMessage += `${errorCount - skippedInvalidCategoryCount} produk gagal karena error lain. `;
     }
     if (skippedInvalidCategoryCount > 0) {
@@ -545,17 +563,17 @@ export default function InventoryPage() {
 
   const displayedItems = useMemo(() => {
     if (!searchTerm.trim()) {
-      return items; // items here is already the current page's data
+      return items;
     }
     const lowerSearchTerm = searchTerm.toLowerCase();
     return items.filter(item =>
       item.name.toLowerCase().includes(lowerSearchTerm) ||
       (item.sku && item.sku.toLowerCase().includes(lowerSearchTerm)) ||
-      (item.categoryName && item.categoryName.toLowerCase().includes(lowerSearchTerm))
+      (categories.find(c => c.id === item.categoryId)?.name.toLowerCase().includes(lowerSearchTerm))
     );
-  }, [items, searchTerm]); 
+  }, [items, searchTerm, categories]); 
 
-  if (loadingBranches && !selectedBranch) { // Show global loading if branch context itself is loading
+  if (loadingBranches && !selectedBranch) { 
     return <MainLayout><div className="flex h-full items-center justify-center">Memuat data cabang...</div></MainLayout>;
   }
   if (!selectedBranch && userData?.role === 'admin') {
@@ -582,7 +600,7 @@ export default function InventoryPage() {
                   placeholder="Cari produk..."
                   className="pl-8 w-full sm:w-40 rounded-md h-9 text-xs"
                   value={searchTerm}
-                  onChange={(e) => {setSearchTerm(e.target.value);}} // Search is client-side for current page
+                  onChange={(e) => {setSearchTerm(e.target.value);}} 
                 />
               </div>
               <Select value={itemsPerPage.toString()} onValueChange={(value) => {setItemsPerPage(Number(value)); }}>
@@ -672,7 +690,7 @@ export default function InventoryPage() {
                       </TableCell>
                       <TableCell className="font-medium py-1.5 px-2 text-xs">{product.name}</TableCell>
                       <TableCell className="hidden md:table-cell py-1.5 px-2 text-xs">{product.sku || "-"}</TableCell>
-                      <TableCell className="hidden lg:table-cell py-1.5 px-2 text-xs">{product.categoryName || categories.find(c => c.id === product.categoryId)?.name || "N/A"}</TableCell>
+                      <TableCell className="hidden lg:table-cell py-1.5 px-2 text-xs">{categories.find(c => c.id === product.categoryId)?.name || "N/A"}</TableCell>
                       <TableCell className="text-right py-1.5 px-2 text-xs">{product.quantity}</TableCell>
                       <TableCell className="text-right hidden sm:table-cell py-1.5 px-2 text-xs">Rp {product.price.toLocaleString('id-ID')}</TableCell>
                       <TableCell className="text-right hidden sm:table-cell py-1.5 px-2 text-xs">Rp {(product.costPrice || 0).toLocaleString('id-ID')}</TableCell>
