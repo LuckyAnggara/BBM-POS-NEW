@@ -40,12 +40,18 @@ export interface AppNotificationInput {
 export interface AppNotification extends AppNotificationInput {
   id: string;
   createdAt: Timestamp;
-  isRead?: boolean; // Akan di-populate di client-side
+  isRead?: boolean;
+  isDismissed?: boolean; // Ditambahkan untuk status dismiss
 }
 
 // Interface untuk status baca pengguna
 export interface UserNotificationReadStatus {
   readAt: Timestamp;
+}
+
+// Interface untuk status dismiss pengguna
+export interface UserNotificationDismissedStatus {
+  dismissedAt: Timestamp;
 }
 
 
@@ -91,7 +97,7 @@ export async function sendNotification(
 
 export async function getNotifications(options?: {
   limitResults?: number;
-  userId?: string; // Untuk mengambil status 'isRead'
+  userId?: string; // Untuk mengambil status 'isRead' dan 'isDismissed'
 }): Promise<AppNotification[]> {
   try {
     const qConstraints: any[] = [orderBy("createdAt", "desc")];
@@ -105,20 +111,32 @@ export async function getNotifications(options?: {
     const notifications: AppNotification[] = [];
 
     let userReadStatuses: Record<string, boolean> = {};
+    let userDismissedStatuses: Record<string, boolean> = {};
+
     if (options?.userId) {
       const userReadStatusCollectionRef = collection(db, `userNotificationStatus/${options.userId}/notificationsRead`);
       const userReadStatusSnapshot = await getDocs(userReadStatusCollectionRef);
       userReadStatusSnapshot.forEach(docSnap => {
         userReadStatuses[docSnap.id] = true;
       });
+
+      const userDismissedStatusCollectionRef = collection(db, `userNotificationStatus/${options.userId}/notificationsDismissed`);
+      const userDismissedStatusSnapshot = await getDocs(userDismissedStatusCollectionRef);
+      userDismissedStatusSnapshot.forEach(docSnap => {
+        userDismissedStatuses[docSnap.id] = true;
+      });
     }
 
     querySnapshot.forEach((docSnap) => {
-      notifications.push({
-        id: docSnap.id,
-        ...docSnap.data(),
-        isRead: options?.userId ? !!userReadStatuses[docSnap.id] : undefined,
-      } as AppNotification);
+      const isDismissed = options?.userId ? !!userDismissedStatuses[docSnap.id] : false;
+      if (!isDismissed) { // Hanya tambahkan jika belum di-dismiss
+        notifications.push({
+          id: docSnap.id,
+          ...docSnap.data(),
+          isRead: options?.userId ? !!userReadStatuses[docSnap.id] : undefined,
+          isDismissed: isDismissed,
+        } as AppNotification);
+      }
     });
     return notifications;
   } catch (error) {
@@ -156,34 +174,39 @@ export async function markAllNotificationsAsRead(userId: string, notificationIds
   }
 }
 
+export async function markNotificationAsDismissed(userId: string, notificationId: string): Promise<void | { error: string }> {
+  if (!userId || !notificationId) return { error: "User ID dan Notification ID diperlukan." };
+  try {
+    const dismissedStatusRef = doc(db, `userNotificationStatus/${userId}/notificationsDismissed`, notificationId);
+    await setDoc(dismissedStatusRef, { dismissedAt: serverTimestamp() });
+    // Juga tandai sebagai dibaca saat di-dismiss
+    await markNotificationAsRead(userId, notificationId);
+  } catch (error: any) {
+    console.error("Error marking notification as dismissed:", error);
+    return { error: error.message || "Gagal menandai notifikasi sebagai dihapus." };
+  }
+}
+
 export async function getUnreadNotificationCount(userId: string): Promise<number> {
   if (!userId) return 0;
   try {
-    // 1. Get all global notifications
     const allNotificationsQuery = query(collection(db, "notifications"), where("isGlobal", "==", true));
     const allNotificationsSnapshot = await getDocs(allNotificationsQuery);
-    const totalGlobalNotifications = allNotificationsSnapshot.size;
-
-    if (totalGlobalNotifications === 0) return 0;
-
-    // 2. Get all read notifications for the user
-    const userReadStatusCollectionRef = collection(db, `userNotificationStatus/${userId}/notificationsRead`);
-    // We can potentially optimize this by only fetching IDs if that's supported, but for now getDocs is fine.
-    const userReadStatusSnapshot = await getDocs(userReadStatusCollectionRef);
-    const totalReadByUser = userReadStatusSnapshot.size;
-    
-    // 3. Calculate unread count. This assumes all notifications are global for now.
-    // A more complex scenario would involve checking if each specific notification ID
-    // exists in the user's read statuses.
-    // For now, a simple count difference might be sufficient if all notifications are global.
-    // However, to be accurate, we should count notifications that are NOT in the user's read list.
-
     const allNotificationIds = allNotificationsSnapshot.docs.map(doc => doc.id);
+
+    if (allNotificationIds.length === 0) return 0;
+
+    const userReadStatusCollectionRef = collection(db, `userNotificationStatus/${userId}/notificationsRead`);
+    const userReadStatusSnapshot = await getDocs(userReadStatusCollectionRef);
     const readNotificationIds = new Set(userReadStatusSnapshot.docs.map(doc => doc.id));
+
+    const userDismissedStatusCollectionRef = collection(db, `userNotificationStatus/${userId}/notificationsDismissed`);
+    const userDismissedStatusSnapshot = await getDocs(userDismissedStatusCollectionRef);
+    const dismissedNotificationIds = new Set(userDismissedStatusSnapshot.docs.map(doc => doc.id));
     
     let unreadCount = 0;
     for (const notificationId of allNotificationIds) {
-      if (!readNotificationIds.has(notificationId)) {
+      if (!readNotificationIds.has(notificationId) && !dismissedNotificationIds.has(notificationId)) {
         unreadCount++;
       }
     }

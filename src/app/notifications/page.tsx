@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { 
   getNotifications, 
   markNotificationAsRead, 
-  markAllNotificationsAsRead, 
+  markAllNotificationsAsRead,
+  markNotificationAsDismissed, // Ditambahkan
   type AppNotification 
 } from "@/lib/firebase/notifications";
 import { useAuth } from "@/contexts/auth-context";
@@ -18,16 +19,29 @@ import { format } from "date-fns";
 import { id as localeID } from 'date-fns/locale';
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { BellRing, Info, CheckCheck, ExternalLink } from "lucide-react";
+import { BellRing, Info, CheckCheck, ExternalLink, Trash2 } from "lucide-react"; // Ditambahkan Trash2
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export default function NotificationsPage() {
-  const { currentUser, userData } = useAuth();
+  const { currentUser, userData, refreshAuthContextState } = useAuth(); // refreshAuthContextState ditambahkan
   const { toast } = useToast();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notificationToDelete, setNotificationToDelete] = useState<AppNotification | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const fetchUserNotifications = useCallback(async () => {
     if (!currentUser?.uid) {
@@ -47,17 +61,21 @@ export default function NotificationsPage() {
     fetchUserNotifications();
   }, [fetchUserNotifications]);
 
-  const handleMarkAsRead = async (notificationId: string) => {
+  const handleMarkAsRead = async (notificationId: string, linkUrl?: string | null) => {
     if (!currentUser?.uid || !notificationId) return;
     
     const notification = notifications.find(n => n.id === notificationId);
-    if (notification && notification.isRead) return; // Already read
+    if (notification && notification.isRead && !linkUrl) return; 
 
     await markNotificationAsRead(currentUser.uid, notificationId);
     setNotifications(prev => 
       prev.map(n => n.id === notificationId ? { ...n, isRead: true } : n)
     );
-    // No toast needed for individual read marking, maybe for "mark all"
+    await refreshAuthContextState(); // Refresh unread count in sidebar
+    
+    if (linkUrl) {
+      window.open(linkUrl, "_blank", "noopener,noreferrer");
+    }
   };
 
   const handleMarkAllRead = async () => {
@@ -68,11 +86,29 @@ export default function NotificationsPage() {
       return;
     }
 
-    setLoading(true); // Indicate processing
+    setLoading(true); 
     await markAllNotificationsAsRead(currentUser.uid, unreadNotificationIds);
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
     setLoading(false);
+    await refreshAuthContextState(); // Refresh unread count
     toast({ title: "Notifikasi Ditandai", description: "Semua notifikasi telah ditandai sebagai sudah dibaca."});
+  };
+
+  const handleOpenDeleteConfirm = (notification: AppNotification) => {
+    setNotificationToDelete(notification);
+    setShowDeleteConfirm(true);
+  };
+
+  const handleConfirmDismiss = async () => {
+    if (!currentUser?.uid || !notificationToDelete) return;
+    
+    await markNotificationAsDismissed(currentUser.uid, notificationToDelete.id);
+    // Optimistically update UI
+    setNotifications(prev => prev.filter(n => n.id !== notificationToDelete.id));
+    await refreshAuthContextState(); // Refresh unread count
+    toast({ title: "Notifikasi Dihapus", description: `Notifikasi "${notificationToDelete.title}" telah dihapus dari tampilan Anda.`});
+    setShowDeleteConfirm(false);
+    setNotificationToDelete(null);
   };
 
   const formatDate = (timestamp: Date | undefined) => {
@@ -130,15 +166,9 @@ export default function NotificationsPage() {
                   <Card 
                     key={notif.id} 
                     className={cn(
-                      "shadow-sm hover:shadow-md transition-shadow cursor-pointer",
+                      "shadow-sm hover:shadow-md transition-shadow",
                       !notif.isRead && "bg-primary/5 dark:bg-primary/10 border-primary/30"
                     )}
-                    onClick={() => {
-                      handleMarkAsRead(notif.id);
-                      if (notif.linkUrl) {
-                        window.open(notif.linkUrl, "_blank", "noopener,noreferrer");
-                      }
-                    }}
                   >
                     <CardHeader className="pb-2 pt-3 px-4">
                       <div className="flex justify-between items-start gap-2">
@@ -147,24 +177,52 @@ export default function NotificationsPage() {
                             href={notif.linkUrl} 
                             target="_blank" 
                             rel="noopener noreferrer" 
-                            className="text-sm font-semibold leading-tight hover:underline hover:text-primary group"
-                            onClick={(e) => e.stopPropagation()} // Prevent card click if link is clicked
+                            className="text-sm font-semibold leading-tight hover:underline hover:text-primary group cursor-pointer"
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              handleMarkAsRead(notif.id, notif.linkUrl);
+                            }} 
                           >
                             {notif.title}
                             <ExternalLink className="inline-block h-3.5 w-3.5 ml-1.5 text-muted-foreground group-hover:text-primary transition-colors" />
                           </Link>
                         ) : (
-                          <CardTitle className="text-sm font-semibold leading-tight">{notif.title}</CardTitle>
+                          <CardTitle 
+                            className="text-sm font-semibold leading-tight cursor-pointer hover:text-primary"
+                            onClick={() => handleMarkAsRead(notif.id)}
+                          >
+                            {notif.title}
+                          </CardTitle>
                         )}
-                        <Badge variant={notif.isRead ? "secondary" : "default"} className="text-xs shrink-0">
-                          {notif.isRead ? "Dibaca" : "Baru"}
-                        </Badge>
+                        <div className="flex items-center gap-1">
+                          <Badge variant={notif.isRead ? "secondary" : "default"} className="text-xs shrink-0">
+                            {notif.isRead ? "Dibaca" : "Baru"}
+                          </Badge>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenDeleteConfirm(notif);
+                            }}
+                            aria-label="Hapus notifikasi"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
-                      <CardDescription className="text-xs pt-0.5">
+                      <CardDescription 
+                        className="text-xs pt-0.5 cursor-pointer"
+                        onClick={() => handleMarkAsRead(notif.id)}
+                      >
                         Oleh: {notif.createdByName} ({notif.category}) <br/> {formatDate(notif.createdAt?.toDate())}
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="px-4 pb-3">
+                    <CardContent 
+                      className="px-4 pb-3 cursor-pointer"
+                      onClick={() => handleMarkAsRead(notif.id, notif.linkUrl)}
+                    >
                       <p className="text-xs text-foreground/90 whitespace-pre-wrap">{notif.message}</p>
                     </CardContent>
                   </Card>
@@ -173,6 +231,26 @@ export default function NotificationsPage() {
             </ScrollArea>
           )}
         </div>
+        <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Konfirmasi Hapus Notifikasi</AlertDialogTitle>
+              <AlertDialogDescription className="text-xs">
+                Apakah Anda yakin ingin menghapus notifikasi "{notificationToDelete?.title}" dari tampilan Anda? 
+                Tindakan ini tidak dapat dibatalkan dari sisi Anda.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="text-xs h-8" onClick={() => {setShowDeleteConfirm(false); setNotificationToDelete(null);}}>Batal</AlertDialogCancel>
+              <AlertDialogAction
+                className="text-xs h-8 bg-destructive hover:bg-destructive/90"
+                onClick={handleConfirmDismiss}
+              >
+                Ya, Hapus
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </MainLayout>
     </ProtectedRoute>
   );
