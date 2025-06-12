@@ -56,23 +56,27 @@ export default function DeletionRequestsPage() {
       const fetchedRequests = await getPendingDeletionRequestsByBranch(selectedBranch.id);
       console.log('Fetched Deletion Requests:', fetchedRequests); // Debugging line
       setRequests(fetchedRequests);
-      if (fetchedRequests.length === 0 && !loadingRequests) { 
-        toast({ title: "Tidak Ada Permintaan", description: "Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang ini.", variant: "default", duration: 4000 });
-      }
     } catch (error) {
         console.error("Error fetching deletion requests", error);
         toast({title: "Gagal Memuat", description: "Tidak dapat memuat daftar permintaan.", variant: "destructive"});
     } finally {
         setLoadingRequests(false);
     }
-  }, [selectedBranch, userData?.role, toast, loadingRequests]); // Added loadingRequests to dependency
-
+  }, [selectedBranch, userData?.role,  loadingRequests]); // Added loadingRequests to dependency
+ // Removed loadingRequests from dependency array
   useEffect(() => {
     if (userData?.role === 'admin' && selectedBranch) { // Ensure selectedBranch is also available
       fetchRequests();
     } else if (!selectedBranch && userData?.role === 'admin') {
       setRequests([]);
       setLoadingRequests(false);
+    }
+  }, [fetchRequests, selectedBranch, userData?.role]);
+
+  // Effect to show "No Requests" toast
+  useEffect(() => {
+    if (!loadingRequests && requests.length === 0 && selectedBranch && userData?.role === 'admin') {
+      toast({ title: "Tidak Ada Permintaan", description: "Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang ini.", variant: "default", duration: 4000 });
     }
   }, [fetchRequests, selectedBranch, userData?.role]);
 

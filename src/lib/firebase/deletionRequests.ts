@@ -80,7 +80,6 @@ export async function getPendingDeletionRequestsByBranch(branchId: string): Prom
   try {
     const q = query(
       collection(db, 'transactionDeletionRequests'),
-      where('branchId', '==', branchId),
       where('status', '==', 'pending'),
       orderBy('requestTimestamp', 'desc')
     );
