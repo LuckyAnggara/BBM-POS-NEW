@@ -101,7 +101,6 @@ export default function InventoryPage() {
     defaultValues: { name: "" },
   });
 
-  // Effect for fetching categories when selectedBranch changes
   useEffect(() => {
     async function loadCategories() {
       if (selectedBranch) {
@@ -185,8 +184,7 @@ export default function InventoryPage() {
         setLastVisibleProductInv(null);
         setLoadingItems(false);
      }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBranch, itemsPerPage]); // Removed fetchData from here
+  }, [selectedBranch, itemsPerPage]);
 
   const handlePageChangeInv = (direction: 'next' | 'prev') => {
     if (direction === 'next' && hasNextPageInv) {
@@ -229,8 +227,7 @@ export default function InventoryPage() {
     
     let skuToSave = values.sku?.trim();
     if (!skuToSave) {
-      // Generate a more unique SKU using part of a new Firestore ID
-      const tempDocRef = doc(collection(db, "inventoryItems")); // Generate a new ID without writing
+      const tempDocRef = doc(collection(db, "inventoryItems"));
       skuToSave = `AUTOSKU-${tempDocRef.id.substring(0, 8).toUpperCase()}`;
     }
 
@@ -412,7 +409,7 @@ export default function InventoryPage() {
       return;
     }
 
-    const headersLine = lines[0].toLowerCase(); // Convert header to lowercase for case-insensitive matching
+    const headersLine = lines[0].toLowerCase();
     const headers = headersLine.split(',').map(h => h.trim());
     const requiredHeaders = ["name", "categoryid", "quantity", "price"]; 
     const missingHeaders = requiredHeaders.filter(rh => !headers.includes(rh));
@@ -436,7 +433,7 @@ export default function InventoryPage() {
     let invalidCategoryCount = 0;
 
     for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue; // Skip empty lines
+      if (!lines[i].trim()) continue;
       const currentline = lines[i].split(',');
 
       const name = currentline[nameIndex]?.trim();
@@ -501,17 +498,17 @@ export default function InventoryPage() {
     let skippedInvalidCategoryCount = 0;
     const errorMessages: string[] = [];
 
-    const results = await Promise.allSettled(parsedCsvData.map(async (item) => {
-        if (item.isCategoryInvalid) {
+    const results = await Promise.allSettled(parsedCsvData.map(async (itemData) => {
+        if (itemData.isCategoryInvalid) {
             skippedInvalidCategoryCount++;
-            throw new Error(`Kategori ID '${item.categoryId}' tidak valid untuk produk '${item.name}'. Item dilewati.`);
+            throw new Error(`Kategori ID '${itemData.categoryId}' tidak valid untuk produk '${itemData.name}'. Item dilewati.`);
         }
-        const selectedCategory = categories.find(c => c.id === item.categoryId);
+        const selectedCategory = categories.find(c => c.id === itemData.categoryId);
         if (!selectedCategory) {
             skippedInvalidCategoryCount++;
-            throw new Error(`Kategori dengan ID '${item.categoryId}' untuk produk '${item.name}' tidak ditemukan (seharusnya sudah ditandai tidak valid). Item dilewati.`);
+            throw new Error(`Kategori dengan ID '${itemData.categoryId}' untuk produk '${itemData.name}' tidak ditemukan. Item dilewati.`);
         }
-        const { isDuplicateSku, categoryNameForPreview, isCategoryInvalid, ...actualItemData } = item;
+        const { isDuplicateSku, categoryNameForPreview, isCategoryInvalid, ...actualItemData } = itemData;
         
         return addInventoryItem(actualItemData, selectedCategory.name);
     }));
@@ -847,10 +844,13 @@ export default function InventoryPage() {
                     <ul className="space-y-1 pr-1">
                         {categories.map(cat => (
                         <li key={cat.id} className="flex items-center justify-between text-xs p-1.5 bg-muted/50 rounded-md">
-                            <span>{cat.name}</span>
+                            <div className="truncate">
+                                <span className="font-medium">{cat.name}</span>
+                                <span className="text-muted-foreground ml-1.5 text-[0.7rem]">(ID: {cat.id})</span>
+                            </div>
                             <AlertDialog>
                             <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive/80">
+                                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive/80 shrink-0">
                                 <X className="h-3.5 w-3.5" />
                                 </Button>
                             </AlertDialogTrigger>
