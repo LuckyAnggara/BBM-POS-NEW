@@ -60,6 +60,7 @@ export default function SalesHistoryPage() {
   const [showRequestDeletionDialog, setShowRequestDeletionDialog] = useState(false);
   const [deletionRequestReason, setDeletionRequestReason] = useState("");
   const [isRequestingDeletion, setIsRequestingDeletion] = useState(false);
+  const [requestedDeletionIds, setRequestedDeletionIds] = useState<Set<string>>(new Set());
 
 
   const fetchTransactions = useCallback(async () => {
@@ -225,6 +226,7 @@ export default function SalesHistoryPage() {
       toast({ title: "Gagal Mengajukan", description: result.error, variant: "destructive" });
     } else {
       toast({ title: "Permintaan Terkirim", description: "Permintaan penghapusan transaksi telah dikirim ke admin." });
+      setRequestedDeletionIds(prev => new Set(prev).add(transactionToDelete.id));
       setShowRequestDeletionDialog(false);
       setTransactionToDelete(null);
       setDeletionRequestReason("");
@@ -391,9 +393,10 @@ export default function SalesHistoryPage() {
                                 <DropdownMenuItem
                                   className="text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
                                   onClick={() => handleOpenDeleteAction(tx)}
+                                  disabled={requestedDeletionIds.has(tx.id)}
                                 >
                                   <Trash2 className="mr-2 h-3.5 w-3.5" />
-                                  {userData?.role === 'admin' ? "Hapus Transaksi" : "Ajukan Hapus"}
+                                  {userData?.role === 'admin' ? "Hapus Transaksi" : (requestedDeletionIds.has(tx.id) ? "Permintaan Terkirim" : "Ajukan Hapus")}
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>

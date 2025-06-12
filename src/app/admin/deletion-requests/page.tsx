@@ -54,8 +54,9 @@ export default function DeletionRequestsPage() {
     setLoadingRequests(true);
     try {
       const fetchedRequests = await getPendingDeletionRequestsByBranch(selectedBranch.id);
+      console.log('Fetched Deletion Requests:', fetchedRequests); // Debugging line
       setRequests(fetchedRequests);
-      if (fetchedRequests.length === 0 && !loadingRequests) { // Check loadingRequests to avoid toast on initial empty load
+      if (fetchedRequests.length === 0 && !loadingRequests) { 
         toast({ title: "Tidak Ada Permintaan", description: "Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang ini.", variant: "default", duration: 4000 });
       }
     } catch (error) {
@@ -64,11 +65,16 @@ export default function DeletionRequestsPage() {
     } finally {
         setLoadingRequests(false);
     }
-  }, [selectedBranch, userData?.role, toast]); 
+  }, [selectedBranch, userData?.role, toast, loadingRequests]); // Added loadingRequests to dependency
 
   useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
+    if (userData?.role === 'admin' && selectedBranch) { // Ensure selectedBranch is also available
+      fetchRequests();
+    } else if (!selectedBranch && userData?.role === 'admin') {
+      setRequests([]);
+      setLoadingRequests(false);
+    }
+  }, [fetchRequests, selectedBranch, userData?.role]);
 
   const formatDate = (timestamp: Timestamp | undefined, withTime = true) => {
     if (!timestamp) return "N/A";
