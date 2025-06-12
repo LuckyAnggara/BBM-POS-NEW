@@ -769,17 +769,19 @@ export default function POSPage() {
     setIsProcessingSale(false);
   };
 
-  const handlePrintInvoice = async () => {
-    if (!lastTransactionId || !selectedBranch || !currentUser || !userData) {
+  const handlePrintInvoice = async (transactionIdToPrint?: string) => {
+    const targetTransactionId = transactionIdToPrint || lastTransactionId;
+
+    if (!targetTransactionId || !selectedBranch || !currentUser || !userData) {
       toast({ title: "Data Tidak Lengkap", description: "Tidak dapat mencetak invoice, data kurang.", variant: "destructive" });
-      setShowPrintInvoiceDialog(false);
-      setLastTransactionId(null);
+      setShowPrintInvoiceDialog(false); // Close if it was open from a new sale
+      setLastTransactionId(null); // Always reset if we were relying on this state
       return;
     }
 
     if (userData.localPrinterUrl) {
       try {
-        const transactionDetails = await getTransactionById(lastTransactionId);
+        const transactionDetails = await getTransactionById(targetTransactionId);
         if (!transactionDetails) {
           toast({ title: "Gagal Cetak", description: "Detail transaksi tidak ditemukan.", variant: "destructive" });
           setShowPrintInvoiceDialog(false);
@@ -827,12 +829,12 @@ export default function POSPage() {
         } else {
           const errorData = await response.text();
           toast({ title: "Gagal Kirim ke Printer", description: `Printer lokal merespons dengan kesalahan: ${response.status} - ${errorData || response.statusText}`, variant: "destructive", duration: 7000 });
-          window.open(`/invoice/${lastTransactionId}/view`, '_blank');
+          window.open(`/invoice/${targetTransactionId}/view`, '_blank');
         }
       } catch (error: any) {
         console.error("Error sending to local printer:", error);
         toast({ title: "Error Printer Lokal", description: `Tidak dapat terhubung ke printer lokal: ${error.message}. Invoice web akan dibuka.`, variant: "destructive", duration: 7000 });
-        window.open(`/invoice/${lastTransactionId}/view`, '_blank');
+        window.open(`/invoice/${targetTransactionId}/view`, '_blank');
       }
     } else {
       toast({
@@ -841,11 +843,15 @@ export default function POSPage() {
         variant: "default",
         duration: 7000
       });
-      window.open(`/invoice/${lastTransactionId}/view`, '_blank');
+      window.open(`/invoice/${targetTransactionId}/view`, '_blank');
     }
 
-    setShowPrintInvoiceDialog(false);
-    setLastTransactionId(null);
+    setShowPrintInvoiceDialog(false); // Always close the confirmation dialog
+    setLastTransactionId(null); // Reset for next new sale
+  };
+  
+  const handlePrintInvoiceFromHistory = (transactionIdForReprint: string) => {
+    handlePrintInvoice(transactionIdForReprint);
   };
 
   const handleScanCustomerSuccess = (scannedId: string) => {
@@ -1212,7 +1218,7 @@ export default function POSPage() {
 
         <Dialog open={showPrintInvoiceDialog} onOpenChange={(open) => { if (!open) {setShowPrintInvoiceDialog(false); setLastTransactionId(null);} else {setShowPrintInvoiceDialog(true);}}}>
             <DialogContent className="sm:max-w-xs"><DialogHeader><DialogTitle className="text-base">Transaksi Berhasil</DialogTitle><DialogDescription className="text-xs">Penjualan telah berhasil direkam.</DialogDescription></DialogHeader><div className="py-4"><p className="text-sm text-center">Apakah Anda ingin mencetak invoice untuk transaksi ini?</p></div>
-                <DialogFooter className="sm:justify-center"><Button type="button" variant="outline" className="text-xs h-8" onClick={() => {setShowPrintInvoiceDialog(false); setLastTransactionId(null);}}>Tutup</Button><Button onClick={handlePrintInvoice} className="text-xs h-8" disabled={!lastTransactionId}><Printer className="mr-1.5 h-4 w-4" /> Cetak Invoice</Button></DialogFooter></DialogContent></Dialog>
+                <DialogFooter className="sm:justify-center"><Button type="button" variant="outline" className="text-xs h-8" onClick={() => {setShowPrintInvoiceDialog(false); setLastTransactionId(null);}}>Tutup</Button><Button onClick={() => handlePrintInvoice()} className="text-xs h-8" disabled={!lastTransactionId}><Printer className="mr-1.5 h-4 w-4" /> Cetak Invoice</Button></DialogFooter></DialogContent></Dialog>
 
         <ScanCustomerDialog isOpen={showScanCustomerDialog} onClose={() => setShowScanCustomerDialog(false)} onScanSuccess={handleScanCustomerSuccess} branchId={selectedBranch?.id || ""}/>
 
@@ -1330,6 +1336,7 @@ export default function POSPage() {
                                     <TableHead className="text-xs">Metode</TableHead>
                                     <TableHead className="text-xs text-right">Total</TableHead>
                                     <TableHead className="text-xs text-center">Status</TableHead>
+                                    <TableHead className="text-xs text-center">Cetak</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -1346,6 +1353,12 @@ export default function POSPage() {
                                         )}>
                                             {tx.status === 'completed' ? 'Selesai' : 'Diretur'}
                                         </span>
+                                    </TableCell>
+                                    <TableCell className="text-xs text-center py-1.5">
+                                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handlePrintInvoiceFromHistory(tx.id)}>
+                                        <Printer className="h-3.5 w-3.5 text-muted-foreground hover:text-primary" />
+                                        <span className="sr-only">Cetak Ulang</span>
+                                      </Button>
                                     </TableCell>
                                 </TableRow>
                                 ))}
@@ -1371,5 +1384,7 @@ export default function POSPage() {
     </ProtectedRoute>
   );
 }
+
+    
 
     
