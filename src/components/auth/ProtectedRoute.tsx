@@ -7,6 +7,10 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Building } from "lucide-react";
 
+interface ProtectedRouteProps {
+  children: ReactNode;
+}
+
 const loadingMessagesProtected = [
   "Memverifikasi sesi Anda...",
   "Memastikan keamanan...",
@@ -36,7 +40,9 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     }
   }, [currentUser, loadingAuth, router, pathname]);
 
-  if (loadingAuth) {
+  // MODIFIED: Show full page loader only if currentUser is not yet determined AND loadingAuth is true.
+  // If currentUser already exists, we assume a refresh is happening, so don't show this full page loader.
+  if (loadingAuth && !currentUser) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
         <Building className="h-16 w-16 text-primary animate-pulse mb-4" />
@@ -48,8 +54,9 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     );
   }
 
+  // Fallback redirect loader if user is not authenticated and tries to access protected route after initial auth check.
   if (!currentUser && pathname !== "/login" && pathname !== "/register") {
-    // This case should ideally be caught by the useEffect, but as a fallback
+    // This loader is shown while redirecting an unauthenticated user from a protected page.
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4">
         <Building className="h-16 w-16 text-primary animate-pulse mb-4" />
