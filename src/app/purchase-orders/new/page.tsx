@@ -99,12 +99,12 @@ export default function NewPurchaseOrderPage() {
     setLoadingSuppliers(true);
     setLoadingInventory(true);
     try {
-      const [fetchedSuppliers, fetchedInventory] = await Promise.all([
+      const [fetchedSuppliers, fetchedInventoryResult] = await Promise.all([
         getSuppliers(selectedBranch.id),
-        getInventoryItems(selectedBranch.id),
+        getInventoryItems(selectedBranch.id), // This returns an object { items: [], ... }
       ]);
       setSuppliers(fetchedSuppliers);
-      setInventoryItems(fetchedInventory);
+      setInventoryItems(fetchedInventoryResult.items); // Correctly access the .items array
     } catch (error) {
       console.error("Error fetching initial data for PO:", error);
       toast({ title: "Gagal Memuat Data", description: "Tidak dapat memuat pemasok atau inventaris.", variant: "destructive" });
