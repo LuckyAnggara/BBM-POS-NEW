@@ -10,19 +10,24 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Eye, CheckSquare, XSquare, RefreshCw } from "lucide-react";
+import { Eye, CheckSquare, XSquare, RefreshCw, Search, MoreHorizontal, Send } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  getPendingDeletionRequestsByBranch, 
+import {
+  getPendingDeletionRequestsByBranch,
   approveDeletionRequest,
   rejectDeletionRequest,
-  type TransactionDeletionRequest 
+  type TransactionDeletionRequest
 } from "@/lib/firebase/deletionRequests";
-import { format as formatDateFn, isValid as isValidDate, parseISO } from "date-fns"; 
+import { format as formatDateFn, isValid as isValidDate, parseISO } from "date-fns";
 import { id as localeID } from 'date-fns/locale';
 import { Badge } from "@/components/ui/badge";
 import { Timestamp } from "firebase/firestore";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogDescription as DialogModalDescription, DialogFooter as DialogModalFooter, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,7 +40,9 @@ export default function DeletionRequestsPage() {
   const { toast } = useToast();
 
   const [requests, setRequests] = useState<TransactionDeletionRequest[]>([]);
+  const [filteredRequests, setFilteredRequests] = useState<TransactionDeletionRequest[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [requestToProcess, setRequestToProcess] = useState<TransactionDeletionRequest | null>(null);
   const [isApproveDialogVisible, setIsApproveDialogVisible] = useState(false);
@@ -49,29 +56,25 @@ export default function DeletionRequestsPage() {
   const userRole = userData?.role;
 
   const fetchRequests = useCallback(async (currentBranchId: string, currentBranchName: string | undefined) => {
+    console.log(`[DeletionRequestsPage] Fetching requests for branch ID: ${currentBranchId}, Branch Name: ${currentBranchName}`);
     setLoadingRequests(true);
     try {
-      console.log(`[DeletionRequestsPage] Fetching requests for branch ID: ${currentBranchId}, Branch Name: ${currentBranchName}`);
       const fetchedRequestsData = await getPendingDeletionRequestsByBranch(currentBranchId);
       console.log('[DeletionRequestsPage] Fetched Deletion Requests from Firestore:', fetchedRequestsData);
       setRequests(fetchedRequestsData);
-      
-      // Pastikan toast ini hanya muncul jika tidak ada request SETELAH loading selesai
-      if (fetchedRequestsData.length === 0 && !loadingRequests) { // Error di sini, !loadingRequests akan false karena baru diset true
-        // Seharusnya kondisi ini dicek SETELAH setLoadingRequests(false) di blok finally
-      }
+      setFilteredRequests(fetchedRequestsData); // Initialize filteredRequests with all data
+
     } catch (error) {
         console.error("Error fetching deletion requests", error);
         toast({title: "Gagal Memuat", description: "Tidak dapat memuat daftar permintaan.", variant: "destructive"});
     } finally {
         setLoadingRequests(false);
-        // Pindahkan pengecekan toast ke sini
-        const currentFetchedRequests = await getPendingDeletionRequestsByBranch(currentBranchId); // Re-fetch for the toast or use the one from try block if available in this scope reliably
-        if (currentFetchedRequests.length === 0) {
-             toast({ title: "Tidak Ada Permintaan", description: `Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang "${currentBranchName}".`, variant: "default", duration: 5000 });
-        }
+        // Check current requests state after update to decide on toast
+        // This is a bit tricky as state update might not be immediate for this check
+        // A direct check on fetchedRequestsData before it's set might be better if needed
+        // For now, let's rely on the general emptiness check after loading
     }
-  }, [toast]); // Hapus loadingRequests dari dependensi
+  }, [toast]);
 
 
   useEffect(() => {
@@ -79,9 +82,24 @@ export default function DeletionRequestsPage() {
       fetchRequests(branchId, branchName);
     } else if (!branchId && userRole === 'admin') {
       setRequests([]);
-      setLoadingRequests(false); // Ensure loading is false if no branch selected
+      setFilteredRequests([]);
+      setLoadingRequests(false);
     }
   }, [branchId, branchName, userRole, fetchRequests]);
+
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setFilteredRequests(requests);
+      return;
+    }
+    const lowerSearchTerm = searchTerm.toLowerCase();
+    const searchResults = requests.filter(req =>
+      req.transactionInvoiceNumber.toLowerCase().includes(lowerSearchTerm) ||
+      req.requestedByUserName.toLowerCase().includes(lowerSearchTerm) ||
+      req.reason.toLowerCase().includes(lowerSearchTerm)
+    );
+    setFilteredRequests(searchResults);
+  }, [searchTerm, requests]);
 
 
   const formatDate = (timestampInput: Timestamp | Date | string | number | undefined, withTime = true): string => {
@@ -112,11 +130,11 @@ export default function DeletionRequestsPage() {
     if (dateToFormat && isValidDate(dateToFormat)) {
       return formatDateFn(dateToFormat, withTime ? "dd MMM yy, HH:mm" : "dd MMM yy", { locale: localeID });
     }
-    
+
     console.warn("[DeletionRequestsPage] Invalid or unparseable date received in formatDate:", timestampInput);
     return "Tanggal Invalid";
   };
-  
+
   const formatCurrency = (amount: number | undefined) => {
     if (amount === undefined) return "N/A";
     return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID')}`;
@@ -197,9 +215,22 @@ export default function DeletionRequestsPage() {
             <h1 className="text-xl md:text-2xl font-semibold font-headline">
               Permintaan Hapus Transaksi {selectedBranch ? `- ${selectedBranch.name}` : ''}
             </h1>
-            <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => { if (branchId) fetchRequests(branchId, branchName);}} disabled={loadingRequests || !selectedBranch}>
-                <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loadingRequests ? 'animate-spin' : ''}`}/> Segarkan Daftar
-            </Button>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+                <div className="relative flex-grow sm:flex-grow-0">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                    type="search"
+                    placeholder="Cari Inv/Pemohon/Alasan..."
+                    className="pl-8 w-full sm:w-56 rounded-md h-9 text-xs"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    disabled={loadingRequests || !selectedBranch}
+                    />
+                </div>
+                <Button variant="outline" size="sm" className="text-xs h-9" onClick={() => { if (branchId) fetchRequests(branchId, branchName);}} disabled={loadingRequests || !selectedBranch}>
+                    <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loadingRequests ? 'animate-spin' : ''}`}/> Segarkan
+                </Button>
+            </div>
           </div>
 
           <Card>
@@ -218,9 +249,13 @@ export default function DeletionRequestsPage() {
                 <p className="text-sm text-muted-foreground text-center py-6">
                   Pilih cabang untuk melihat permintaan.
                 </p>
+              ) : filteredRequests.length === 0 && searchTerm.trim() ? (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  Tidak ada permintaan yang cocok dengan pencarian Anda.
+                </p>
               ) : requests.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">
-                  Belum ada permintaan penghapusan transaksi yang tertunda.
+                  Belum ada permintaan penghapusan transaksi yang tertunda untuk cabang "{branchName}".
                 </p>
               ) : (
                 <div className="border rounded-md overflow-x-auto">
@@ -238,7 +273,7 @@ export default function DeletionRequestsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {requests.map((req) => (
+                      {filteredRequests.map((req) => (
                         <TableRow key={req.id}>
                           <TableCell className="py-2 text-xs font-medium">{req.transactionInvoiceNumber}</TableCell>
                           <TableCell className="py-2 text-xs hidden md:table-cell">{formatDate(req.transactionDate)}</TableCell>
@@ -247,12 +282,30 @@ export default function DeletionRequestsPage() {
                           <TableCell className="py-2 text-xs max-w-[200px] truncate" title={req.reason}>{req.reason}</TableCell>
                           <TableCell className="py-2 text-xs hidden sm:table-cell">{formatDate(req.requestTimestamp)}</TableCell>
                           <TableCell className="text-center py-1.5">
-                            <Button variant="outline" size="sm" className="h-7 text-xs mr-1" onClick={() => handleOpenApproveDialog(req)} disabled={processingAction}>
-                               <CheckSquare className="mr-1 h-3 w-3" /> Setujui
-                            </Button>
-                            <Button variant="outline" size="sm" className="h-7 text-xs text-destructive border-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => handleOpenRejectDialog(req)} disabled={processingAction}>
-                               <XSquare className="mr-1 h-3 w-3" /> Tolak
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" disabled={processingAction}>
+                                  <MoreHorizontal className="h-4 w-4" />
+                                  <span className="sr-only">Aksi</span>
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  className="text-xs cursor-pointer"
+                                  onClick={() => handleOpenApproveDialog(req)}
+                                  disabled={processingAction}
+                                >
+                                  <CheckSquare className="mr-2 h-3.5 w-3.5" /> Setujui
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+                                  onClick={() => handleOpenRejectDialog(req)}
+                                  disabled={processingAction}
+                                >
+                                  <XSquare className="mr-2 h-3.5 w-3.5" /> Tolak
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -267,10 +320,7 @@ export default function DeletionRequestsPage() {
         {/* Approve Dialog */}
         <Dialog open={isApproveDialogVisible} onOpenChange={(open) => { if (!open) setRequestToProcess(null); setIsApproveDialogVisible(open);}}>
             <DialogContent className="sm:max-w-md">
-               
-                  <DialogModalTitle>Informasi Permintaan Penghapusan</DialogModalTitle>
-               
-                 <DialogHeader>
+                <DialogHeader>
                     <DialogModalTitle className="text-base">Setujui Penghapusan Transaksi</DialogModalTitle>
                     <DialogModalDescription className="text-xs">
                         Anda akan menyetujui penghapusan untuk Invoice: <strong>{requestToProcess?.transactionInvoiceNumber}</strong>.
@@ -304,9 +354,6 @@ export default function DeletionRequestsPage() {
         {/* Reject Dialog */}
         <Dialog open={isRejectDialogVisible} onOpenChange={(open) => { if (!open) setRequestToProcess(null); setIsRejectDialogVisible(open);}}>
             <DialogContent className="sm:max-w-md">
-              
-                  <DialogModalTitle>Informasi Permintaan Penghapusan</DialogModalTitle>
-                
                 <DialogHeader>
                     <DialogModalTitle className="text-base">Tolak Permintaan Penghapusan</DialogModalTitle>
                     <DialogModalDescription className="text-xs">
@@ -338,5 +385,5 @@ export default function DeletionRequestsPage() {
     </ProtectedRoute>
   );
 }
-
+    
     
