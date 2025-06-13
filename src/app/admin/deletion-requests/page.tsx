@@ -22,15 +22,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import {
-  getPendingDeletionRequestsByBranch, // This function name might be misleading now as it fetches all
+  getPendingDeletionRequestsByBranch, 
   approveDeletionRequest,
   rejectDeletionRequest,
-  type TransactionDeletionRequest
+  type TransactionDeletionRequest // This type should now expect string dates
 } from "@/lib/firebase/deletionRequests";
 import { format as formatDateFn, isValid as isValidDate, parseISO } from "date-fns";
 import { id as localeID } from 'date-fns/locale';
 import { Badge } from "@/components/ui/badge";
-import { Timestamp } from "firebase/firestore";
+import { Timestamp } from "firebase/firestore"; // Keep for type hints if needed locally, but data will be string
 import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogDescription as DialogModalDescription, DialogFooter as DialogModalFooter, DialogClose } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
@@ -60,23 +60,27 @@ export default function DeletionRequestsPage() {
     console.log(`[DeletionRequestsPage] Fetching requests for branch ID: ${currentBranchId}, Branch Name: ${currentBranchName}`);
     setLoadingRequests(true);
     try {
-      const fetchedRequestsData = await getPendingDeletionRequestsByBranch(currentBranchId); // Consider renaming if it fetches more than pending
+      const fetchedRequestsData = await getPendingDeletionRequestsByBranch(currentBranchId); 
       console.log('[DeletionRequestsPage] Fetched Deletion Requests from Firestore:', fetchedRequestsData);
       setRequests(fetchedRequestsData);
+      if (fetchedRequestsData.length === 0 && !loadingRequests) { // Check loadingRequests to avoid premature toast
+        toast({ title: "Tidak Ada Permintaan", description: `Tidak ada permintaan hapus transaksi tertunda untuk cabang "${currentBranchName}".`, variant: "default" });
+      }
     } catch (error) {
         console.error("Error fetching deletion requests", error);
         toast({title: "Gagal Memuat", description: "Tidak dapat memuat daftar permintaan.", variant: "destructive"});
     } finally {
         setLoadingRequests(false);
     }
-  }, [toast]);
+  }, [toast]); // Removed loadingRequests from here
 
 
   useEffect(() => {
     if (userRole === 'admin' && branchId && branchName) {
       fetchRequests(branchId, branchName);
     } else if (userRole === 'admin' && !branchId) {
-      setRequests([]);
+      setRequests([]); // Clear requests if no branch is selected
+      setFilteredRequests([]);
       setLoadingRequests(false); // Stop loading if no branch is selected
     }
   }, [branchId, branchName, userRole, fetchRequests]);
@@ -96,7 +100,7 @@ export default function DeletionRequestsPage() {
   }, [searchTerm, requests]);
 
 
-  const formatDate = (timestampInput: Timestamp | Date | string | number | undefined, withTime = true): string => {
+  const formatDate = (timestampInput: string | Date | Timestamp | number | undefined, withTime = true): string => {
     if (!timestampInput) return "N/A";
 
     let dateToFormat: Date | null = null;
@@ -111,12 +115,12 @@ export default function DeletionRequestsPage() {
         dateToFormat = parsedDate;
       } else {
         const numericTimestamp = Number(timestampInput);
-        if (!isNaN(numericTimestamp) && numericTimestamp > 0) {
+        if (!isNaN(numericTimestamp) && numericTimestamp > 0 && new Date(numericTimestamp).getFullYear() > 1970) { // Basic check for valid timestamp numbers
           dateToFormat = new Date(numericTimestamp);
         }
       }
     } else if (typeof timestampInput === 'number') {
-      if (timestampInput > 0) {
+      if (timestampInput > 0 && new Date(timestampInput).getFullYear() > 1970) {
         dateToFormat = new Date(timestampInput);
       }
     }
@@ -128,6 +132,7 @@ export default function DeletionRequestsPage() {
     console.warn("[DeletionRequestsPage] Invalid or unparseable date received in formatDate:", timestampInput);
     return "Tanggal Invalid";
   };
+
 
   const formatCurrency = (amount: number | undefined) => {
     if (amount === undefined) return "N/A";
@@ -260,9 +265,13 @@ export default function DeletionRequestsPage() {
                 <p className="text-sm text-muted-foreground text-center py-6">
                   Tidak ada permintaan yang cocok dengan pencarian Anda.
                 </p>
-              ) : requests.length === 0 ? (
+              ) : requests.length === 0 ? ( // Changed from filteredRequests to requests for initial "no data" message
                 <p className="text-sm text-muted-foreground text-center py-6">
                   Belum ada permintaan penghapusan transaksi untuk cabang "{branchName}".
+                </p>
+              ) : filteredRequests.length === 0 ? ( // If requests has data, but filtered is empty due to search
+                 <p className="text-sm text-muted-foreground text-center py-6">
+                  Tidak ada permintaan yang cocok dengan pencarian Anda.
                 </p>
               ) : (
                 <div className="border rounded-md overflow-x-auto">

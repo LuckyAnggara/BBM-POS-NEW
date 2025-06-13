@@ -24,26 +24,26 @@ export interface TransactionDeletionRequest {
   id: string; // Firestore document ID
   transactionId: string;
   transactionInvoiceNumber: string;
-  transactionDate: Timestamp; // This remains Timestamp as it's what's stored/retrieved
+  transactionDate: string; // Changed from Timestamp
   transactionTotalAmount: number;
   branchId: string;
   requestedByUserId: string;
   requestedByUserName: string;
-  requestTimestamp: Timestamp;
+  requestTimestamp: string; // Changed from Timestamp
   reason: string;
   status: 'pending' | 'approved' | 'rejected';
   actionTakenByUserId?: string;
   actionTakenByUserName?: string;
-  actionTimestamp?: Timestamp;
+  actionTimestamp?: string; // Changed from Timestamp
   rejectionAdminReason?: string;
 }
 
-// Input type from client: transactionDate is now Date
+// Input type from client: transactionDate is Date
 export type TransactionDeletionRequestInput = Omit<
   TransactionDeletionRequest,
-  'id' | 'requestTimestamp' | 'status' | 'actionTakenByUserId' | 'actionTakenByUserName' | 'actionTimestamp' | 'rejectionAdminReason' | 'transactionDate'
+  'id' | 'requestTimestamp' | 'status' | 'actionTakenByUserId' | 'actionTakenByUserName' | 'actionTimestamp' | 'rejectionAdminReason' | 'transactionDate' | 'requestTimestamp'
 > & {
-  transactionDate: Date; // Changed from Timestamp to Date for client-side input
+  transactionDate: Date; // Input from client is Date
 };
 
 export async function createDeletionRequest(
@@ -55,19 +55,30 @@ export async function createDeletionRequest(
   if (!data.reason.trim()) return { error: 'Alasan permintaan harus diisi.' };
 
   try {
-    const now = serverTimestamp() as Timestamp;
+    const nowServer = serverTimestamp() as Timestamp;
+    const nowClient = Timestamp.now(); // For immediate return if needed
+
     const requestDataForFirestore = {
       ...data,
-      transactionDate: Timestamp.fromDate(data.transactionDate), // Convert Date to Timestamp
+      transactionDate: Timestamp.fromDate(data.transactionDate), // Convert Date to Timestamp for Firestore
       status: 'pending' as const,
-      requestTimestamp: now,
+      requestTimestamp: nowServer,
     };
     const docRef = await addDoc(collection(db, 'transactionDeletionRequests'), requestDataForFirestore);
-    const clientTimestamp = Timestamp.now(); // For optimistic update if needed immediately on client
+    
+    // Prepare the object to return, converting Timestamps to strings for client compatibility
     return {
       id: docRef.id,
-      ...requestDataForFirestore, // this now has transactionDate as Timestamp
-      requestTimestamp: clientTimestamp
+      transactionId: data.transactionId,
+      transactionInvoiceNumber: data.transactionInvoiceNumber,
+      transactionDate: data.transactionDate.toISOString(), // Convert original Date input to ISO string
+      transactionTotalAmount: data.transactionTotalAmount,
+      branchId: data.branchId,
+      requestedByUserId: data.requestedByUserId,
+      requestedByUserName: data.requestedByUserName,
+      requestTimestamp: nowClient.toDate().toISOString(), // Convert client-side Timestamp to ISO string
+      reason: data.reason,
+      status: 'pending' as const,
     };
   } catch (error: any) {
     console.error('Error creating deletion request:', error);
@@ -80,14 +91,31 @@ export async function getPendingDeletionRequestsByBranch(branchId: string): Prom
   try {
     const q = query(
       collection(db, 'transactionDeletionRequests'),
-      // where('status', '==', 'pending'),
-      // where('branchId', '==', branchId),
-      // orderBy('requestTimestamp', 'desc')
+      where('branchId', '==', branchId),
+      // where('status', '==', 'pending'), // Temporarily remove to see all for debugging
+      orderBy('requestTimestamp', 'desc')
     );
     const querySnapshot = await getDocs(q);
     const requests: TransactionDeletionRequest[] = [];
     querySnapshot.forEach((docSnap) => {
-      requests.push({ id: docSnap.id, ...docSnap.data() } as TransactionDeletionRequest);
+      const data = docSnap.data();
+      requests.push({ 
+        id: docSnap.id,
+        transactionId: data.transactionId,
+        transactionInvoiceNumber: data.transactionInvoiceNumber,
+        transactionDate: (data.transactionDate as Timestamp).toDate().toISOString(),
+        transactionTotalAmount: data.transactionTotalAmount,
+        branchId: data.branchId,
+        requestedByUserId: data.requestedByUserId,
+        requestedByUserName: data.requestedByUserName,
+        requestTimestamp: (data.requestTimestamp as Timestamp).toDate().toISOString(),
+        reason: data.reason,
+        status: data.status,
+        actionTakenByUserId: data.actionTakenByUserId,
+        actionTakenByUserName: data.actionTakenByUserName,
+        actionTimestamp: data.actionTimestamp ? (data.actionTimestamp as Timestamp).toDate().toISOString() : undefined,
+        rejectionAdminReason: data.rejectionAdminReason,
+      } as TransactionDeletionRequest);
     });
     return requests;
   } catch (error) {
@@ -112,7 +140,10 @@ export async function approveDeletionRequest(
     if (!requestSnap.exists()) {
       return { error: "Permintaan penghapusan tidak ditemukan." };
     }
-    const requestData = requestSnap.data() as TransactionDeletionRequest;
+    const requestData = requestSnap.data() as Omit<TransactionDeletionRequest, 'transactionDate' | 'requestTimestamp' | 'actionTimestamp'> & {
+        transactionDate: Timestamp; requestTimestamp: Timestamp; actionTimestamp?: Timestamp; // Firestore types
+    };
+
 
     if (requestData.status !== 'pending') {
       return { error: `Permintaan ini sudah ${requestData.status === 'approved' ? 'disetujui' : 'ditolak'}.` };
@@ -156,7 +187,7 @@ export async function rejectDeletionRequest(
     if (!requestSnap.exists()) {
       return { error: "Permintaan penghapusan tidak ditemukan." };
     }
-     const requestData = requestSnap.data() as TransactionDeletionRequest;
+     const requestData = requestSnap.data() as TransactionDeletionRequest; // Assuming it's already converted type by now for this check
     if (requestData.status !== 'pending') {
       return { error: `Permintaan ini sudah ${requestData.status === 'approved' ? 'disetujui' : 'ditolak'}.` };
     }
