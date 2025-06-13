@@ -1,6 +1,7 @@
 
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, limit, orderBy, startAfter, endBefore, type DocumentSnapshot, type DocumentData, limitToLast } from "firebase/firestore";
 import { db } from "./config";
+import { addStockMutation, type StockMutationInput } from "./stockMutations"; // Added import
 
 export interface InventoryItem {
   id: string;
@@ -81,7 +82,12 @@ function generateSkuForProduct(productName: string, branchId?: string): string {
   return `SKU-${namePart}${randomPart}${timestampPart}`;
 }
 
-export async function addInventoryItem(itemData: InventoryItemInput, categoryName: string): Promise<InventoryItem | { error: string }> {
+export async function addInventoryItem(
+  itemData: InventoryItemInput, 
+  categoryName: string,
+  userId?: string, // Optional: for stock mutation logging
+  userName?: string // Optional: for stock mutation logging
+): Promise<InventoryItem | { error: string }> {
   if (!itemData.name.trim()) return { error: "Nama produk tidak boleh kosong." };
   if (!itemData.branchId) return { error: "ID Cabang diperlukan." };
   if (!itemData.categoryId) return { error: "Kategori produk diperlukan." };
@@ -91,24 +97,27 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
 
   try {
     const now = serverTimestamp() as Timestamp;
+    const clientTimestamp = Timestamp.now();
     
     let skuToSave = itemData.sku?.trim();
     if (!skuToSave) {
-      // Generate a more unique SKU using part of a new Firestore ID
-      const tempDocRef = doc(collection(db, "inventoryItems")); // Generate a new ID without writing
+      const tempDocRef = doc(collection(db, "inventoryItems")); 
       skuToSave = `AUTOSKU-${tempDocRef.id.substring(0, 8).toUpperCase()}`;
     }
 
-    const itemRef = await addDoc(collection(db, "inventoryItems"), {
+    const itemRef = doc(collection(db, "inventoryItems")); // Generate ID beforehand
+    const itemToSave = {
       ...itemData,
+      id: itemRef.id, // Use the generated ID
       sku: skuToSave,
       costPrice: itemData.costPrice || 0,
       categoryName,
       createdAt: now,
       updatedAt: now,
-    });
-    const clientTimestamp = Timestamp.now();
-    return {
+    };
+    await setDoc(itemRef, itemToSave); // Use setDoc with the pre-generated ref
+
+    const savedItem: InventoryItem = {
       id: itemRef.id,
       ...itemData,
       sku: skuToSave,
@@ -117,6 +126,29 @@ export async function addInventoryItem(itemData: InventoryItemInput, categoryNam
       createdAt: clientTimestamp,
       updatedAt: clientTimestamp
     };
+
+    if (itemData.quantity > 0) {
+      const mutationInput: StockMutationInput = {
+        branchId: itemData.branchId,
+        productId: savedItem.id,
+        productName: savedItem.name,
+        sku: savedItem.sku,
+        mutationTime: clientTimestamp, // Use the same clientTimestamp as item creation
+        type: "INITIAL_STOCK",
+        quantityChange: itemData.quantity,
+        currentProductStock: 0, // Initial stock always starts from 0 for this item
+        notes: `Stok awal produk baru: ${savedItem.name}`,
+        userId: userId,
+        userName: userName,
+      };
+      const mutationResult = await addStockMutation(mutationInput);
+      if ("error" in mutationResult) {
+        console.warn(`Inventory item ${savedItem.name} added, but failed to log initial stock mutation: ${mutationResult.error}`);
+        // Decide if this should be a hard error or just a warning
+      }
+    }
+    return savedItem;
+
   } catch (error: any) {
     console.error("Error adding inventory item:", error);
     return { error: error.message || "Gagal menambah produk." };
@@ -127,7 +159,7 @@ export async function getInventoryItems(
   branchId: string,
   options: {
     limit?: number;
-    searchTerm?: string; // Search term is for client-side filtering on the current page for now
+    searchTerm?: string; 
     startAfterDoc?: DocumentSnapshot<DocumentData> | null;
     endBeforeDoc?: DocumentSnapshot<DocumentData> | null;
   } = {}
@@ -136,23 +168,20 @@ export async function getInventoryItems(
   try {
     let qConstraints: any[] = [where("branchId", "==", branchId)];
     
-    // Always order by name for consistent pagination. 
-    // Search term is applied client-side on the fetched page of items.
     qConstraints.push(orderBy("name")); 
 
     if (options.startAfterDoc) {
       qConstraints.push(startAfter(options.startAfterDoc));
     }
     if (options.endBeforeDoc) {
-      // For endBefore, we need to reverse the orderBy and use limitToLast
-      qConstraints = qConstraints.filter(c => c.type !== 'orderBy'); // Remove existing orderBy
-      qConstraints.push(orderBy("name", "desc")); // Order desc for endBefore
+      qConstraints = qConstraints.filter(c => c.type !== 'orderBy'); 
+      qConstraints.push(orderBy("name", "desc")); 
       if (options.limit && options.limit > 0) {
-        qConstraints.push(limitToLast(options.limit + 1)); // Fetch one extra
+        qConstraints.push(limitToLast(options.limit + 1)); 
       }
     } else {
       if (options.limit && options.limit > 0) {
-        qConstraints.push(limit(options.limit + 1)); // Fetch one extra
+        qConstraints.push(limit(options.limit + 1)); 
       }
     }
 
@@ -170,14 +199,14 @@ export async function getInventoryItems(
     if (options.limit && items.length > options.limit) {
         hasMore = true;
         if (options.endBeforeDoc) {
-            items.shift(); // Remove the extra item used for 'hasPrevious' check
+            items.shift(); 
         } else {
-            items.pop(); // Remove the extra item used for 'hasNext' check
+            items.pop(); 
         }
     }
     
     if (options.endBeforeDoc) {
-        items.reverse(); // Reverse back to ascending order
+        items.reverse(); 
     }
     
     const firstDoc = items.length > 0 ? querySnapshot.docs.find(d => d.id === items[0].id) : undefined;
@@ -193,34 +222,34 @@ export async function getInventoryItems(
 
 export async function updateInventoryItem(itemId: string, updates: Partial<Omit<InventoryItem, 'id' | 'branchId' | 'createdAt'>>, newCategoryName?: string): Promise<void | { error: string }> {
   if (!itemId) return { error: "ID Produk tidak valid." };
+  // Note: Stock quantity updates should ideally go through a dedicated stock adjustment function
+  // that also logs a stock mutation. This function should primarily be for metadata updates.
+  // If 'quantity' is in updates, it's a direct override and needs careful handling or disallowing.
+  if (updates.quantity !== undefined) {
+      return { error: "Pembaruan stok langsung tidak diizinkan melalui fungsi ini. Gunakan fungsi penyesuaian stok."}
+  }
   try {
     const itemRef = doc(db, "inventoryItems", itemId);
     const payload: any = { ...updates, updatedAt: serverTimestamp() };
     if (updates.costPrice === undefined || updates.costPrice === null || isNaN(Number(updates.costPrice))) {
-      // No change or invalid cost price
     } else {
       payload.costPrice = Number(updates.costPrice);
     }
     if (updates.sku === undefined && 'sku' in updates) { 
-      // SKU is explicitly being set to undefined (should not happen with current form), or was not part of updates
     } else if (updates.sku === "") {
-      // If SKU is explicitly set to an empty string, allow it (or generate one if this flow changes)
       payload.sku = ""; 
     } else if (updates.sku) {
       payload.sku = updates.sku.trim();
     }
-    // If SKU is not in updates, it remains unchanged. If it was empty and needs auto-generation on update, add logic here.
 
-    if (newCategoryName && updates.categoryId) { // If categoryId changes, update categoryName
+    if (newCategoryName && updates.categoryId) { 
       payload.categoryName = newCategoryName;
-    } else if (updates.categoryId && !newCategoryName) { // If categoryId changes but no newCategoryName provided (e.g. direct update)
-        // Fetch category name based on new categoryId
+    } else if (updates.categoryId && !newCategoryName) { 
         const catDoc = await getDoc(doc(db, "inventoryCategories", updates.categoryId));
         if (catDoc.exists()) {
             payload.categoryName = catDoc.data().name;
         } else {
             console.warn("Category for updated item not found, categoryName might be stale or incorrect.");
-            // Optionally set categoryName to a default or null if category is invalid
         }
     }
     await updateDoc(itemRef, payload);
@@ -232,6 +261,9 @@ export async function updateInventoryItem(itemId: string, updates: Partial<Omit<
 
 export async function deleteInventoryItem(itemId: string): Promise<void | { error: string }> {
   if (!itemId) return { error: "ID Produk tidak valid." };
+  // Add check: disallow deletion if there are stock mutations referencing this item?
+  // Or mark as "deleted" instead of actual deletion for audit trail.
+  // For now, direct deletion.
   try {
     await deleteDoc(doc(db, "inventoryItems", itemId));
   } catch (error: any) {

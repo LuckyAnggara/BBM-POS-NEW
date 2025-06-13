@@ -1,11 +1,11 @@
 
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion, runTransaction } from "firebase/firestore";
 import { db } from "./config";
 import type { InventoryItem } from "./inventory";
 import type { Branch } from "@/contexts/branch-context";
 import { getBranchById } from "./branches";
 import type { QueryOptions } from "./types";
-
+import { createStockMutationInTransaction, type StockMutationInput } from "./stockMutations"; // Added import
 
 export type ShiftPaymentMethod = 'cash' | 'card' | 'transfer'; // For shift reporting
 export type PaymentTerms = 'cash' | 'card' | 'transfer' | 'credit'; // For transaction recording
@@ -147,72 +147,87 @@ export interface PosTransaction {
 }
 
 export async function recordTransaction(
-  transactionInput: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId' | 'paymentsMade'>
+  transactionInput: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId' | 'paymentsMade'>,
+  userName?: string // Optional: for stock mutation logging
 ): Promise<PosTransaction | { error: string }> {
   if (!transactionInput.shiftId || !transactionInput.branchId || !transactionInput.userId) {
     return { error: "Shift ID, Branch ID, dan User ID diperlukan untuk transaksi." };
   }
   if (transactionInput.items.length === 0) return { error: "Transaksi tidak memiliki item." };
 
-  const batch = writeBatch(db);
+  const transactionRef = doc(collection(db, "posTransactions"));
+  const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
+  const transactionTimestamp = Timestamp.now(); // Use client-side timestamp for mutation records
 
   try {
-    const transactionRef = doc(collection(db, "posTransactions"));
-    const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
+    await runTransaction(db, async (firestoreTransaction) => {
+      const dataToSave: Omit<PosTransaction, 'id'> = {
+        shiftId: transactionInput.shiftId,
+        branchId: transactionInput.branchId,
+        userId: transactionInput.userId,
+        items: transactionInput.items,
+        subtotal: transactionInput.subtotal,
+        taxAmount: transactionInput.taxAmount,
+        shippingCost: transactionInput.shippingCost || 0,
+        voucherCode: transactionInput.voucherCode || null,
+        voucherDiscountAmount: transactionInput.voucherDiscountAmount || 0,
+        totalDiscountAmount: transactionInput.totalDiscountAmount || 0,
+        totalAmount: transactionInput.totalAmount,
+        totalCost: transactionInput.totalCost,
+        paymentTerms: transactionInput.paymentTerms,
+        amountPaid: transactionInput.amountPaid,
+        changeGiven: transactionInput.changeGiven,
+        invoiceNumber,
+        status: 'completed',
+        paymentsMade: [],
+        timestamp: serverTimestamp() as Timestamp, // Use server timestamp for the actual transaction record
+        customerId: transactionInput.customerId || null,
+        customerName: transactionInput.customerName?.trim() ? transactionInput.customerName.trim() : null,
+        creditDueDate: transactionInput.creditDueDate || null,
+        isCreditSale: transactionInput.isCreditSale ?? false,
+        outstandingAmount: transactionInput.outstandingAmount ?? (transactionInput.isCreditSale ? transactionInput.totalAmount : 0),
+        paymentStatus: transactionInput.paymentStatus ?? (transactionInput.isCreditSale ? 'unpaid' : 'paid'),
+        bankName: transactionInput.bankName?.trim() ? transactionInput.bankName.trim() : null,
+        bankTransactionRef: transactionInput.bankTransactionRef?.trim() ? transactionInput.bankTransactionRef.trim() : null,
+      };
+      firestoreTransaction.set(transactionRef, dataToSave);
 
-    const dataToSave: Omit<PosTransaction, 'id'> = {
-      shiftId: transactionInput.shiftId,
-      branchId: transactionInput.branchId,
-      userId: transactionInput.userId,
-      items: transactionInput.items,
-      subtotal: transactionInput.subtotal,
-      taxAmount: transactionInput.taxAmount,
-      shippingCost: transactionInput.shippingCost || 0,
-      voucherCode: transactionInput.voucherCode || null, // Changed undefined to null
-      voucherDiscountAmount: transactionInput.voucherDiscountAmount || 0,
-      totalDiscountAmount: transactionInput.totalDiscountAmount || 0,
-      totalAmount: transactionInput.totalAmount,
-      totalCost: transactionInput.totalCost,
-      paymentTerms: transactionInput.paymentTerms,
-      amountPaid: transactionInput.amountPaid,
-      changeGiven: transactionInput.changeGiven,
-      invoiceNumber,
-      status: 'completed',
-      paymentsMade: [], 
-      timestamp: serverTimestamp() as Timestamp,
-      // Explicitly set optional fields to null if not provided or empty, or use their value
-      customerId: transactionInput.customerId || null,
-      customerName: transactionInput.customerName?.trim() ? transactionInput.customerName.trim() : null,
-      creditDueDate: transactionInput.creditDueDate || null,
-      isCreditSale: transactionInput.isCreditSale ?? false,
-      outstandingAmount: transactionInput.outstandingAmount ?? (transactionInput.isCreditSale ? transactionInput.totalAmount : 0),
-      paymentStatus: transactionInput.paymentStatus ?? (transactionInput.isCreditSale ? 'unpaid' : 'paid'),
-      bankName: transactionInput.bankName?.trim() ? transactionInput.bankName.trim() : null,
-      bankTransactionRef: transactionInput.bankTransactionRef?.trim() ? transactionInput.bankTransactionRef.trim() : null,
-    };
+      for (const item of transactionInput.items) {
+        const productRef = doc(db, "inventoryItems", item.productId);
+        const productSnap = await firestoreTransaction.get(productRef);
+        if (productSnap.exists()) {
+          const productData = productSnap.data() as InventoryItem;
+          const currentStock = productData.quantity;
+          const newStock = currentStock - item.quantity;
+          firestoreTransaction.update(productRef, { quantity: newStock < 0 ? 0 : newStock, updatedAt: serverTimestamp() });
 
-    batch.set(transactionRef, dataToSave);
-
-    for (const item of transactionInput.items) {
-      const productRef = doc(db, "inventoryItems", item.productId);
-      const productSnap = await getDoc(productRef);
-      if (productSnap.exists()) {
-        const currentStock = productSnap.data().quantity as number;
-        const newStock = currentStock - item.quantity;
-        batch.update(productRef, { quantity: newStock < 0 ? 0 : newStock, updatedAt: serverTimestamp() });
-      } else {
-        console.warn(`Product with ID ${item.productId} not found in inventory. Stock not updated.`);
+          const mutationInput: Omit<StockMutationInput, 'currentProductStock'> = {
+            branchId: transactionInput.branchId,
+            productId: item.productId,
+            productName: productData.name,
+            sku: productData.sku,
+            mutationTime: transactionTimestamp,
+            type: "SALE",
+            quantityChange: -item.quantity,
+            referenceId: transactionRef.id, // Will be transactionRef.id after commit
+            notes: `Penjualan Inv: ${invoiceNumber}`,
+            userId: transactionInput.userId,
+            userName: userName,
+          };
+          createStockMutationInTransaction(firestoreTransaction, productRef, mutationInput, currentStock);
+        } else {
+          console.warn(`Product with ID ${item.productId} not found in inventory. Stock not updated and mutation not logged.`);
+          // Optionally throw an error here to rollback the transaction if strict consistency is required
+          // throw new Error(`Product with ID ${item.productId} not found.`);
+        }
       }
-    }
+    });
 
-    await batch.commit();
-    // Re-fetch the document to get server-generated timestamps and ensure all fields are correctly populated
     const savedDoc = await getDoc(transactionRef);
     if (savedDoc.exists()) {
-        return { id: savedDoc.id, ...savedDoc.data() } as PosTransaction;
+      return { id: savedDoc.id, ...savedDoc.data() } as PosTransaction;
     } else {
-        // This case should ideally not happen if batch.commit() was successful
-        return { error: "Gagal mengambil transaksi yang baru direkam setelah penyimpanan."};
+      return { error: "Gagal mengambil transaksi yang baru direkam setelah penyimpanan." };
     }
   } catch (error: any) {
     console.error("Error recording transaction:", error);
@@ -221,59 +236,87 @@ export async function recordTransaction(
 }
 
 
-export async function processFullTransactionReturn(transactionId: string, reason: string, returnedByUserId: string): Promise<void | { error: string }> {
+export async function processFullTransactionReturn(
+  transactionId: string, 
+  reason: string, 
+  returnedByUserId: string,
+  returnedByUserName?: string // Optional: for stock mutation logging
+): Promise<void | { error: string }> {
   if (!transactionId) return { error: "ID Transaksi tidak valid." };
   if (!reason.trim()) return { error: "Alasan retur harus diisi." };
   if (!returnedByUserId) return { error: "ID Pengguna yang memproses retur diperlukan." };
 
   const transactionRef = doc(db, "posTransactions", transactionId);
-  const batch = writeBatch(db);
+  const returnTimestamp = Timestamp.now(); // Client-side timestamp for mutation
 
   try {
-    const transactionSnap = await getDoc(transactionRef);
-    if (!transactionSnap.exists()) {
-      return { error: "Transaksi tidak ditemukan." };
-    }
-
-    const transactionData = transactionSnap.data() as PosTransaction;
-    if (transactionData.status === 'returned') {
-      return { error: "Transaksi ini sudah pernah diretur." };
-    }
-
-    batch.update(transactionRef, {
-      status: 'returned',
-      returnReason: reason,
-      returnedAt: serverTimestamp(),
-      returnedByUserId: returnedByUserId,
-      outstandingAmount: 0, 
-      paymentStatus: 'returned',
-    });
-
-    for (const item of transactionData.items) {
-      const productRef = doc(db, "inventoryItems", item.productId);
-      const productSnap = await getDoc(productRef);
-      if (productSnap.exists()) {
-        const currentStock = productSnap.data().quantity as number;
-        const newStock = currentStock + item.quantity;
-        batch.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
-      } else {
-        console.warn(`Product with ID ${item.productId} not found while processing return. Stock not restored.`);
+    await runTransaction(db, async (firestoreTransaction) => {
+      const transactionSnap = await firestoreTransaction.get(transactionRef);
+      if (!transactionSnap.exists()) {
+        throw new Error("Transaksi tidak ditemukan.");
       }
-    }
+      const transactionData = transactionSnap.data() as PosTransaction;
+      if (transactionData.status === 'returned') {
+        throw new Error("Transaksi ini sudah pernah diretur.");
+      }
 
-    await batch.commit();
+      firestoreTransaction.update(transactionRef, {
+        status: 'returned',
+        returnReason: reason,
+        returnedAt: serverTimestamp(),
+        returnedByUserId: returnedByUserId,
+        outstandingAmount: 0,
+        paymentStatus: 'returned',
+      });
+
+      for (const item of transactionData.items) {
+        const productRef = doc(db, "inventoryItems", item.productId);
+        const productSnap = await firestoreTransaction.get(productRef);
+        if (productSnap.exists()) {
+          const productData = productSnap.data() as InventoryItem;
+          const currentStock = productData.quantity;
+          const newStock = currentStock + item.quantity;
+          firestoreTransaction.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
+
+          const mutationInput: Omit<StockMutationInput, 'currentProductStock'> = {
+            branchId: transactionData.branchId,
+            productId: item.productId,
+            productName: productData.name,
+            sku: productData.sku,
+            mutationTime: returnTimestamp,
+            type: "SALE_RETURN",
+            quantityChange: item.quantity,
+            referenceId: transactionData.id,
+            notes: `Retur Inv: ${transactionData.invoiceNumber}. Alasan: ${reason}`,
+            userId: returnedByUserId,
+            userName: returnedByUserName,
+          };
+          createStockMutationInTransaction(firestoreTransaction, productRef, mutationInput, currentStock);
+        } else {
+          console.warn(`Product with ID ${item.productId} not found while processing return. Stock not restored and mutation not logged.`);
+        }
+      }
+    });
   } catch (error: any) {
     console.error("Error processing transaction return:", error);
     return { error: error.message || "Gagal memproses retur transaksi." };
   }
 }
 
-export async function deleteTransaction(transactionId: string, branchId: string, passwordAttempt: string): Promise<{ success?: boolean; error?: string }> {
+export async function deleteTransaction(
+    transactionId: string, 
+    branchId: string, 
+    passwordAttempt: string,
+    deletedByUserId?: string, // Optional: for stock mutation logging
+    deletedByUserName?: string // Optional: for stock mutation logging
+): Promise<{ success?: boolean; error?: string }> {
   if (!transactionId) return { error: "ID Transaksi tidak valid." };
   if (!branchId) return { error: "ID Cabang tidak valid." };
   if (!passwordAttempt) return { error: "Password hapus diperlukan." };
 
-  const batch = writeBatch(db);
+  const transactionRef = doc(db, "posTransactions", transactionId);
+  const deletionTimestamp = Timestamp.now(); // Client-side timestamp for mutation
+
   try {
     const branchDoc = await getBranchById(branchId);
     if (!branchDoc) {
@@ -285,31 +328,49 @@ export async function deleteTransaction(transactionId: string, branchId: string,
     if (branchDoc.transactionDeletionPassword !== passwordAttempt) {
       return { error: "Password hapus transaksi salah." };
     }
+    
+    await runTransaction(db, async (firestoreTransaction) => {
+      const transactionSnap = await firestoreTransaction.get(transactionRef);
+      if (!transactionSnap.exists()) {
+        throw new Error("Transaksi tidak ditemukan.");
+      }
+      const transactionData = transactionSnap.data() as PosTransaction;
 
-    const transactionRef = doc(db, "posTransactions", transactionId);
-    const transactionSnap = await getDoc(transactionRef);
-    if (!transactionSnap.exists()) {
-      return { error: "Transaksi tidak ditemukan." };
-    }
-    const transactionData = transactionSnap.data() as PosTransaction;
+      if (transactionData.status === 'completed') {
+        for (const item of transactionData.items) {
+          const productRef = doc(db, "inventoryItems", item.productId);
+          const productSnap = await firestoreTransaction.get(productRef);
+          if (productSnap.exists()) {
+            const productData = productSnap.data() as InventoryItem;
+            const currentStock = productData.quantity;
+            const newStock = currentStock + item.quantity;
+            firestoreTransaction.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
 
-    if (transactionData.status === 'completed') {
-      for (const item of transactionData.items) {
-        const productRef = doc(db, "inventoryItems", item.productId);
-        const productSnap = await getDoc(productRef);
-        if (productSnap.exists()) {
-          const currentStock = productSnap.data().quantity as number;
-          const newStock = currentStock + item.quantity;
-          batch.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
-        } else {
-          console.warn(`Product with ID ${item.productId} not found while deleting transaction. Stock not restored.`);
+            const mutationInput: Omit<StockMutationInput, 'currentProductStock'> = {
+              branchId: transactionData.branchId,
+              productId: item.productId,
+              productName: productData.name,
+              sku: productData.sku,
+              mutationTime: deletionTimestamp,
+              type: "TRANSACTION_DELETED_SALE_RESTOCK",
+              quantityChange: item.quantity,
+              referenceId: transactionData.id,
+              notes: `Hapus Inv: ${transactionData.invoiceNumber}`,
+              userId: deletedByUserId,
+              userName: deletedByUserName,
+            };
+            createStockMutationInTransaction(firestoreTransaction, productRef, mutationInput, currentStock);
+          } else {
+            console.warn(`Product with ID ${item.productId} not found while deleting transaction. Stock not restored and mutation not logged.`);
+          }
         }
       }
-    }
+      // If transaction status is 'returned', stock was already restored, so no stock update here.
+      // A mutation for 'TRANSACTION_DELETED_RETURN_ADJUSTMENT' could be logged if complex audit needed.
 
-    batch.delete(transactionRef);
+      firestoreTransaction.delete(transactionRef);
+    });
 
-    await batch.commit();
     return { success: true };
   } catch (error: any) {
     console.error("Error deleting transaction:", error);
