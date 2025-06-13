@@ -102,7 +102,7 @@ export async function addStockMutation(
 // Fungsi helper untuk digunakan dalam transaksi Firestore
 // PENTING: Fungsi ini TIDAK mengupdate stok di inventoryItems, hanya mencatat mutasi.
 // Update stok di inventoryItems harus dilakukan dalam transaksi yang sama oleh pemanggil.
-export function createStockMutationInTransaction(
+export async function createStockMutationInTransaction(
   transaction: any, // Firestore Transaction object
   productDocRef: any, // Firestore DocumentReference for the product in inventoryItems
   mutationInput: Omit<StockMutationInput, 'currentProductStock'>, // currentProductStock will be read within the transaction
