@@ -18,7 +18,7 @@ import {
   rejectDeletionRequest,
   type TransactionDeletionRequest 
 } from "@/lib/firebase/deletionRequests";
-import { format as formatDateFn, isValid as isValidDate, parseISO } from "date-fns"; // Renamed format to formatDateFn
+import { format as formatDateFn, isValid as isValidDate, parseISO } from "date-fns"; 
 import { id as localeID } from 'date-fns/locale';
 import { Badge } from "@/components/ui/badge";
 import { Timestamp } from "firebase/firestore";
@@ -56,23 +56,30 @@ export default function DeletionRequestsPage() {
       console.log('[DeletionRequestsPage] Fetched Deletion Requests from Firestore:', fetchedRequestsData);
       setRequests(fetchedRequestsData);
       
-      if (fetchedRequestsData.length === 0 && !loadingRequests) { // Ensure loading is false before toasting
-        toast({ title: "Tidak Ada Permintaan", description: `Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang "${currentBranchName}".`, variant: "default", duration: 5000 });
+      // Pastikan toast ini hanya muncul jika tidak ada request SETELAH loading selesai
+      if (fetchedRequestsData.length === 0 && !loadingRequests) { // Error di sini, !loadingRequests akan false karena baru diset true
+        // Seharusnya kondisi ini dicek SETELAH setLoadingRequests(false) di blok finally
       }
     } catch (error) {
         console.error("Error fetching deletion requests", error);
         toast({title: "Gagal Memuat", description: "Tidak dapat memuat daftar permintaan.", variant: "destructive"});
     } finally {
         setLoadingRequests(false);
+        // Pindahkan pengecekan toast ke sini
+        const currentFetchedRequests = await getPendingDeletionRequestsByBranch(currentBranchId); // Re-fetch for the toast or use the one from try block if available in this scope reliably
+        if (currentFetchedRequests.length === 0) {
+             toast({ title: "Tidak Ada Permintaan", description: `Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang "${currentBranchName}".`, variant: "default", duration: 5000 });
+        }
     }
-  }, [toast, loadingRequests]); // Added loadingRequests to prevent premature toast
+  }, [toast]); // Hapus loadingRequests dari dependensi
+
 
   useEffect(() => {
     if (userRole === 'admin' && branchId) {
       fetchRequests(branchId, branchName);
     } else if (!branchId && userRole === 'admin') {
       setRequests([]);
-      setLoadingRequests(false);
+      setLoadingRequests(false); // Ensure loading is false if no branch selected
     }
   }, [branchId, branchName, userRole, fetchRequests]);
 
@@ -87,18 +94,16 @@ export default function DeletionRequestsPage() {
     } else if (timestampInput instanceof Date) {
       dateToFormat = timestampInput;
     } else if (typeof timestampInput === 'string') {
-      const parsedDate = parseISO(timestampInput); // Attempt to parse ISO string
+      const parsedDate = parseISO(timestampInput);
       if (isValidDate(parsedDate)) {
         dateToFormat = parsedDate;
       } else {
-        // Try parsing as number (milliseconds) if string parsing fails
         const numericTimestamp = Number(timestampInput);
         if (!isNaN(numericTimestamp) && numericTimestamp > 0) {
           dateToFormat = new Date(numericTimestamp);
         }
       }
     } else if (typeof timestampInput === 'number') {
-      // Assuming it's milliseconds
       if (timestampInput > 0) {
         dateToFormat = new Date(timestampInput);
       }
@@ -108,7 +113,7 @@ export default function DeletionRequestsPage() {
       return formatDateFn(dateToFormat, withTime ? "dd MMM yy, HH:mm" : "dd MMM yy", { locale: localeID });
     }
     
-    console.warn("Invalid or unparseable date received in formatDate:", timestampInput);
+    console.warn("[DeletionRequestsPage] Invalid or unparseable date received in formatDate:", timestampInput);
     return "Tanggal Invalid";
   };
   
