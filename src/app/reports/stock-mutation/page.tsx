@@ -89,7 +89,9 @@ export default function StockMutationReportPage() {
     setReportData(null);
 
     try {
-      const inventoryItems = await getInventoryItems(selectedBranch.id);
+      const inventoryItemsResult = await getInventoryItems(selectedBranch.id);
+      const itemsArrayForReport = inventoryItemsResult.items; // Correctly access the array
+
       const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
       
       const purchaseOrdersUpdatedInPeriod = await getPurchaseOrdersByBranch(selectedBranch.id, {
@@ -120,21 +122,17 @@ export default function StockMutationReportPage() {
       purchaseOrdersUpdatedInPeriod.forEach(po => {
         if (po.status === 'partially_received' || po.status === 'fully_received') {
           po.items.forEach(poItem => {
-            // Only count items that were actually received within the PO update period for this logic
-            // This still relies on PO's updatedAt falling in range, which might not be perfect for item receipt date.
             stockInFromPOMap.set(poItem.productId, (stockInFromPOMap.get(poItem.productId) || 0) + poItem.receivedQuantity);
           });
         }
       });
 
-      const processedData: StockMutationReportItem[] = inventoryItems.map(item => {
+      const processedData: StockMutationReportItem[] = itemsArrayForReport.map(item => { // Use itemsArrayForReport here
         const stockSold = soldQuantitiesMap.get(item.id) || 0;
         const stockReturned = returnedQuantitiesMap.get(item.id) || 0;
         const stockInFromPOForPeriod = stockInFromPOMap.get(item.id) || 0; 
         const finalStock = item.quantity; 
         
-        // Calculate initial stock by working backwards from current actual stock
-        // InitialStock = CurrentStock - StockInDuringPeriod + StockSoldDuringPeriod - StockReturnedDuringPeriod
         const initialStock = finalStock - stockInFromPOForPeriod + stockSold - stockReturned;
 
         return {
@@ -151,14 +149,15 @@ export default function StockMutationReportPage() {
       });
 
       setReportData(processedData);
-      if (processedData.length === 0 && inventoryItems.length > 0) {
-        toast({ title: "Tidak Ada Mutasi", description: "Tidak ada pergerakan stok (penjualan, retur, atau penerimaan PO) untuk produk pada periode ini, namun produk terdaftar di inventaris.", variant: "default" });
-      } else if (inventoryItems.length === 0) {
+      
+      if (itemsArrayForReport.length === 0) {
          toast({ title: "Tidak Ada Produk", description: "Tidak ada produk inventaris ditemukan untuk cabang ini.", variant: "default" });
+      } else if (processedData.length > 0 && processedData.every(p => p.initialStock === p.finalStock && p.stockInFromPO === 0 && p.stockSold === 0 && p.stockReturned === 0)) {
+         toast({ title: "Tidak Ada Mutasi", description: "Tidak ada pergerakan stok (penjualan, retur, atau penerimaan PO) untuk produk pada periode ini.", variant: "default" });
       }
 
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error generating stock mutation report:", error);
       toast({ title: "Gagal Membuat Laporan", description: "Terjadi kesalahan saat mengambil data.", variant: "destructive" });
     } finally {
