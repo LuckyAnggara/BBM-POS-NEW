@@ -30,7 +30,7 @@ import {
   type PurchaseOrderItem
 } from "@/lib/firebase/purchaseOrders";
 import { Timestamp } from "firebase/firestore";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription as AlertDescUI, AlertTitle as AlertTitleUI } from "@/components/ui/alert"; // Renamed AlertDescription and AlertTitle
 
 interface StockMovement {
   date: Timestamp;
@@ -98,8 +98,8 @@ export default function StockMovementReportPage() {
       return;
     }
     setLoadingInventory(true);
-    const items = await getInventoryItems(selectedBranch.id);
-    setInventoryItems(items);
+    const fetchedItemsResult = await getInventoryItems(selectedBranch.id);
+    setInventoryItems(fetchedItemsResult.items); // Correctly assign the items array
     setLoadingInventory(false);
   }, [selectedBranch]);
 
@@ -148,7 +148,7 @@ export default function StockMovementReportPage() {
                 date: tx.returnedAt || tx.timestamp,
                 type: "Retur Jual",
                 documentId: tx.invoiceNumber,
-                notes: tx.returnReason,
+                notes: tx.returnReason || undefined,
                 quantityChange: item.quantity,
               });
             } else {
@@ -168,7 +168,6 @@ export default function StockMovementReportPage() {
         if (po.status === 'partially_received' || po.status === 'fully_received') {
           po.items.forEach(poItem => {
             if (poItem.productId === selectedProductId && poItem.receivedQuantity > 0) {
-              // For simplicity, use PO's updatedAt for movement date. More accurate would be specific receipt dates.
               movements.push({
                 date: po.updatedAt,
                 type: "Penerimaan PO",
@@ -379,7 +378,7 @@ export default function StockMovementReportPage() {
                                     <TableCell className="text-xs py-1.5">{formatMovementDate(move.date)}</TableCell>
                                     <TableCell className="text-xs py-1.5 font-medium">{move.type}</TableCell>
                                     <TableCell className="text-xs hidden sm:table-cell py-1.5">{move.documentId || '-'}</TableCell>
-                                    <TableCell className="text-xs hidden md:table-cell py-1.5 max-w-[200px] truncate" title={move.notes}>{move.notes || '-'}</TableCell>
+                                    <TableCell className="text-xs hidden md:table-cell py-1.5 max-w-[200px] truncate" title={move.notes || ""}>{move.notes || '-'}</TableCell>
                                     <TableCell className={`text-xs text-right py-1.5 font-semibold ${move.quantityChange > 0 ? 'text-green-600' : move.quantityChange < 0 ? 'text-destructive' : ''}`}>
                                         {move.quantityChange > 0 ? `+${move.quantityChange}` : (move.quantityChange < 0 ? `${move.quantityChange}` : '-')}
                                     </TableCell>
@@ -391,14 +390,14 @@ export default function StockMovementReportPage() {
                     </Table>
                     <Alert variant="default" className="mt-4 text-xs bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/50 dark:text-blue-300">
                         <Info className="h-4 w-4 !text-blue-600 dark:!text-blue-400" />
-                        <AlertTitle className="font-semibold text-blue-700 dark:text-blue-200">Catatan Kalkulasi</AlertTitle>
-                        <AlertDescription className="text-blue-600 dark:text-blue-400">
+                        <AlertTitleUI className="font-semibold text-blue-700 dark:text-blue-200">Catatan Kalkulasi</AlertTitleUI>
+                        <AlertDescUI className="text-blue-600 dark:text-blue-400">
                             <ul className="list-disc pl-4">
                                 <li><strong>Stok Awal:</strong> Dihitung mundur dari Stok Saat Ini di inventaris, dengan memperhitungkan semua pergerakan (penjualan, retur, estimasi penerimaan PO) selama periode laporan.</li>
                                 <li><strong>Penerimaan PO:</strong> Estimasi berdasarkan Pesanan Pembelian yang statusnya 'Diterima Sebagian' atau 'Diterima Penuh' dan tanggal <i>update</i> PO-nya masuk dalam periode laporan. Ini menggunakan total kuantitas diterima pada PO tersebut sebagai proxy.</li>
                                 <li><strong>Stok Akhir per Baris:</strong> Adalah stok setelah pergerakan pada baris tersebut. Stok akhir di baris terakhir mungkin berbeda dari 'Stok Saat Ini' jika ada transaksi setelah akhir periode laporan.</li>
                             </ul>
-                        </AlertDescription>
+                        </AlertDescUI>
                     </Alert>
                     </>
                 ) : (
