@@ -7,10 +7,13 @@ import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/contexts/auth-context";
 import { useBranch } from "@/contexts/branch-context";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Eye, CheckSquare, XSquare, RefreshCw, Search, MoreHorizontal, Send } from "lucide-react";
+import { Eye, CheckSquare, XSquare, RefreshCw, Search, MoreHorizontal, Send, Info } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,7 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import {
-  getPendingDeletionRequestsByBranch,
+  getPendingDeletionRequestsByBranch, // This function name might be misleading now as it fetches all
   approveDeletionRequest,
   rejectDeletionRequest,
   type TransactionDeletionRequest
@@ -29,9 +32,7 @@ import { id as localeID } from 'date-fns/locale';
 import { Badge } from "@/components/ui/badge";
 import { Timestamp } from "firebase/firestore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogDescription as DialogModalDescription, DialogFooter as DialogModalFooter, DialogClose } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 
 export default function DeletionRequestsPage() {
@@ -59,31 +60,24 @@ export default function DeletionRequestsPage() {
     console.log(`[DeletionRequestsPage] Fetching requests for branch ID: ${currentBranchId}, Branch Name: ${currentBranchName}`);
     setLoadingRequests(true);
     try {
-      const fetchedRequestsData = await getPendingDeletionRequestsByBranch(currentBranchId);
+      const fetchedRequestsData = await getPendingDeletionRequestsByBranch(currentBranchId); // Consider renaming if it fetches more than pending
       console.log('[DeletionRequestsPage] Fetched Deletion Requests from Firestore:', fetchedRequestsData);
       setRequests(fetchedRequestsData);
-      setFilteredRequests(fetchedRequestsData); // Initialize filteredRequests with all data
-
     } catch (error) {
         console.error("Error fetching deletion requests", error);
         toast({title: "Gagal Memuat", description: "Tidak dapat memuat daftar permintaan.", variant: "destructive"});
     } finally {
         setLoadingRequests(false);
-        // Check current requests state after update to decide on toast
-        // This is a bit tricky as state update might not be immediate for this check
-        // A direct check on fetchedRequestsData before it's set might be better if needed
-        // For now, let's rely on the general emptiness check after loading
     }
   }, [toast]);
 
 
   useEffect(() => {
-    if (userRole === 'admin' && branchId) {
+    if (userRole === 'admin' && branchId && branchName) {
       fetchRequests(branchId, branchName);
-    } else if (!branchId && userRole === 'admin') {
+    } else if (userRole === 'admin' && !branchId) {
       setRequests([]);
-      setFilteredRequests([]);
-      setLoadingRequests(false);
+      setLoadingRequests(false); // Stop loading if no branch is selected
     }
   }, [branchId, branchName, userRole, fetchRequests]);
 
@@ -168,7 +162,7 @@ export default function DeletionRequestsPage() {
 
     if (result.success) {
         toast({ title: "Permintaan Disetujui", description: `Transaksi ${requestToProcess.transactionInvoiceNumber} telah dihapus.` });
-        if (branchId) fetchRequests(branchId, branchName);
+        if (branchId && branchName) fetchRequests(branchId, branchName);
     } else {
         toast({ title: "Gagal Menyetujui", description: result.error || "Terjadi kesalahan.", variant: "destructive" });
     }
@@ -187,11 +181,24 @@ export default function DeletionRequestsPage() {
 
     if (result.success) {
         toast({ title: "Permintaan Ditolak", description: `Permintaan hapus untuk ${requestToProcess.transactionInvoiceNumber} telah ditolak.` });
-        if (branchId) fetchRequests(branchId, branchName);
+        if (branchId && branchName) fetchRequests(branchId, branchName);
     } else {
         toast({ title: "Gagal Menolak", description: result.error || "Terjadi kesalahan.", variant: "destructive" });
     }
     setRequestToProcess(null);
+  };
+
+  const getDeletionRequestStatusBadge = (status: 'pending' | 'approved' | 'rejected' | undefined) => {
+    switch (status) {
+      case 'pending':
+        return <Badge variant="outline" className="text-xs border-yellow-500 text-yellow-600">Tertunda</Badge>;
+      case 'approved':
+        return <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700">Disetujui</Badge>;
+      case 'rejected':
+        return <Badge variant="destructive" className="text-xs">Ditolak</Badge>;
+      default:
+        return <Badge variant="secondary" className="text-xs">Tidak Diketahui</Badge>;
+    }
   };
 
 
@@ -227,7 +234,7 @@ export default function DeletionRequestsPage() {
                     disabled={loadingRequests || !selectedBranch}
                     />
                 </div>
-                <Button variant="outline" size="sm" className="text-xs h-9" onClick={() => { if (branchId) fetchRequests(branchId, branchName);}} disabled={loadingRequests || !selectedBranch}>
+                <Button variant="outline" size="sm" className="text-xs h-9" onClick={() => { if (branchId && branchName) fetchRequests(branchId, branchName);}} disabled={loadingRequests || !selectedBranch}>
                     <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loadingRequests ? 'animate-spin' : ''}`}/> Segarkan
                 </Button>
             </div>
@@ -235,7 +242,7 @@ export default function DeletionRequestsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base font-semibold">Daftar Permintaan Tertunda</CardTitle>
+              <CardTitle className="text-base font-semibold">Daftar Permintaan</CardTitle>
               <CardDescription className="text-xs">
                 Tinjau dan proses permintaan penghapusan transaksi dari kasir.
               </CardDescription>
@@ -255,7 +262,7 @@ export default function DeletionRequestsPage() {
                 </p>
               ) : requests.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">
-                  Belum ada permintaan penghapusan transaksi yang tertunda untuk cabang "{branchName}".
+                  Belum ada permintaan penghapusan transaksi untuk cabang "{branchName}".
                 </p>
               ) : (
                 <div className="border rounded-md overflow-x-auto">
@@ -269,6 +276,7 @@ export default function DeletionRequestsPage() {
                         <TableHead className="text-xs">Diminta Oleh</TableHead>
                         <TableHead className="text-xs">Alasan</TableHead>
                         <TableHead className="text-xs hidden sm:table-cell">Tgl. Permintaan</TableHead>
+                        <TableHead className="text-xs text-center">Status Permintaan</TableHead>
                         <TableHead className="text-xs text-center">Aksi</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -279,12 +287,13 @@ export default function DeletionRequestsPage() {
                           <TableCell className="py-2 text-xs hidden md:table-cell">{formatDate(req.transactionDate)}</TableCell>
                           <TableCell className="py-2 text-xs hidden lg:table-cell text-right">{formatCurrency(req.transactionTotalAmount)}</TableCell>
                           <TableCell className="py-2 text-xs">{req.requestedByUserName}</TableCell>
-                          <TableCell className="py-2 text-xs max-w-[200px] truncate" title={req.reason}>{req.reason}</TableCell>
+                          <TableCell className="py-2 text-xs max-w-[150px] truncate" title={req.reason}>{req.reason}</TableCell>
                           <TableCell className="py-2 text-xs hidden sm:table-cell">{formatDate(req.requestTimestamp)}</TableCell>
+                          <TableCell className="text-center py-1.5">{getDeletionRequestStatusBadge(req.status)}</TableCell>
                           <TableCell className="text-center py-1.5">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" disabled={processingAction}>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" disabled={processingAction || req.status !== 'pending'}>
                                   <MoreHorizontal className="h-4 w-4" />
                                   <span className="sr-only">Aksi</span>
                                 </Button>
@@ -293,14 +302,14 @@ export default function DeletionRequestsPage() {
                                 <DropdownMenuItem
                                   className="text-xs cursor-pointer"
                                   onClick={() => handleOpenApproveDialog(req)}
-                                  disabled={processingAction}
+                                  disabled={processingAction || req.status !== 'pending'}
                                 >
                                   <CheckSquare className="mr-2 h-3.5 w-3.5" /> Setujui
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   className="text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
                                   onClick={() => handleOpenRejectDialog(req)}
-                                  disabled={processingAction}
+                                  disabled={processingAction || req.status !== 'pending'}
                                 >
                                   <XSquare className="mr-2 h-3.5 w-3.5" /> Tolak
                                 </DropdownMenuItem>
