@@ -13,7 +13,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { CalendarIcon, Download, Package, AlertTriangle, Info } from "lucide-react";
-import { format, startOfMonth, endOfMonth, parseISO, startOfWeek, endOfDay, startOfDay, subDays } from "date-fns";
+import { format, startOfMonth, endOfMonth, parseISO, startOfWeek, endOfDay, startOfDay, subDays, isValid } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
 import {
@@ -23,14 +23,14 @@ import {
 import {
   getStockLevelAtDate,
   getMutationsForProductInRange,
-  type StockMutation
-} from "@/lib/firebase/stockMutations"; // Updated imports
+  type ClientStockMutation // Changed to ClientStockMutation
+} from "@/lib/firebase/stockMutations"; 
 import { Timestamp } from "firebase/firestore";
 import { Alert, AlertDescription as AlertDescUI, AlertTitle as AlertTitleUI } from "@/components/ui/alert";
 
 interface StockMovementReportData {
   product: InventoryItem;
-  movements: StockMutation[]; // Now uses StockMutation directly, plus one initial stock row
+  movements: ClientStockMutation[]; // Use ClientStockMutation
   currentStock: number;
 }
 
@@ -129,25 +129,23 @@ export default function StockMovementReportPage() {
 
       const mutationsFromDB = await getMutationsForProductInRange(selectedProductId, selectedBranch.id, startDate, endDate, 'asc');
 
-      const movementsForReport: StockMutation[] = [];
+      const movementsForReport: ClientStockMutation[] = [];
 
-      // Add initial stock row
       movementsForReport.push({
-        id: 'initial-stock-row', // Dummy ID
+        id: 'initial-stock-row', 
         branchId: selectedBranch.id,
         productId: selectedProductId,
         productName: product.name,
         sku: product.sku,
-        mutationTime: Timestamp.fromDate(startDate), // Start of the period
+        mutationTime: startDate.toISOString(), // Store as ISO string
         type: "INITIAL_STOCK",
         quantityChange: 0,
         stockBeforeMutation: initialStockLevel,
         stockAfterMutation: initialStockLevel,
-        createdAt: Timestamp.fromDate(startDate), // Dummy timestamp
+        createdAt: startDate.toISOString(), // Store as ISO string
         notes: "Stok Awal Periode"
-      });
+      } as ClientStockMutation); 
       
-      // Add actual mutations from DB
       movementsForReport.push(...mutationsFromDB);
       
       setReportData({ product, movements: movementsForReport, currentStock });
@@ -165,8 +163,11 @@ export default function StockMovementReportPage() {
   }, [selectedBranch, selectedProductId, startDate, endDate, toast, inventoryItems]);
 
 
-  const formatMovementDate = (timestamp: Timestamp) => {
-    return format(timestamp.toDate(), "dd MMM yyyy, HH:mm");
+  const formatMovementDate = (dateString: string) => {
+    if (!dateString) return "N/A";
+    const date = parseISO(dateString);
+    if (!isValid(date)) return "Tanggal Invalid";
+    return format(date, "dd MMM yyyy, HH:mm");
   };
 
 
@@ -363,6 +364,3 @@ export default function StockMovementReportPage() {
     </ProtectedRoute>
   );
 }
-
-
-    

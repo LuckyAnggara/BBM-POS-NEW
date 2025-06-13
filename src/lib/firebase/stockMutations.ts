@@ -16,44 +16,50 @@ import {
   limit,
   orderBy,
   limitToLast,
-  type DocumentReference, // Added DocumentReference
+  type DocumentReference, 
 } from "firebase/firestore";
 import { db } from "./config";
 
 export type StockMutationType =
-  | "INITIAL_STOCK" // Stok awal saat produk dibuat atau sistem diinisiasi
-  | "SALE" // Penjualan produk
-  | "PURCHASE_RECEIPT" // Penerimaan barang dari Purchase Order
-  | "SALE_RETURN" // Retur dari pelanggan
-  | "PURCHASE_RETURN" // Retur ke supplier (Belum diimplementasikan)
-  | "ADJUSTMENT_IN" // Penyesuaian stok masuk (misal, stock opname, barang ditemukan)
-  | "ADJUSTMENT_OUT" // Penyesuaian stok keluar (misal, barang rusak, hilang)
-  | "TRANSACTION_DELETED_SALE_RESTOCK"; // Stok dikembalikan karena penjualan dihapus
+  | "INITIAL_STOCK" 
+  | "SALE" 
+  | "PURCHASE_RECEIPT" 
+  | "SALE_RETURN" 
+  | "PURCHASE_RETURN" 
+  | "ADJUSTMENT_IN" 
+  | "ADJUSTMENT_OUT" 
+  | "TRANSACTION_DELETED_SALE_RESTOCK"; 
 
 export interface StockMutation {
   id: string;
   branchId: string;
   productId: string;
-  productName: string; // Denormalized
-  sku?: string; // Denormalized
-  mutationTime: Timestamp; // Kapan mutasi ini efektif terjadi
+  productName: string; 
+  sku?: string; 
+  mutationTime: Timestamp; 
   type: StockMutationType;
-  quantityChange: number; // Positif untuk masuk, negatif untuk keluar
+  quantityChange: number; 
   stockBeforeMutation: number;
   stockAfterMutation: number;
-  referenceId?: string; // ID dokumen terkait (invoice penjualan, PO, ID penyesuaian)
+  referenceId?: string; 
   notes?: string;
-  userId?: string; // Siapa yang melakukan aksi yang menyebabkan mutasi
-  userName?: string; // Nama pengguna
-  createdAt: Timestamp; // Kapan record mutasi ini dibuat di sistem
+  userId?: string; 
+  userName?: string; 
+  createdAt: Timestamp; 
 }
 
 export type StockMutationInput = Omit<
   StockMutation,
   "id" | "createdAt" | "stockBeforeMutation" | "stockAfterMutation"
 > & {
-    currentProductStock: number; // Stok produk saat ini (sebelum mutasi ini) untuk menghitung stockBefore/After
+    currentProductStock: number; 
 };
+
+// Type for data passed to Client Components
+export interface ClientStockMutation extends Omit<StockMutation, 'mutationTime' | 'createdAt'> {
+  mutationTime: string; // ISO string
+  createdAt: string;    // ISO string
+}
 
 
 export async function addStockMutation(
@@ -76,7 +82,7 @@ export async function addStockMutation(
       productId: mutationData.productId,
       productName: mutationData.productName,
       sku: mutationData.sku || undefined,
-      mutationTime: mutationData.mutationTime || clientNow, // Default to now if not specified
+      mutationTime: mutationData.mutationTime || clientNow, 
       type: mutationData.type,
       quantityChange: mutationData.quantityChange,
       stockBeforeMutation: stockBefore,
@@ -94,7 +100,7 @@ export async function addStockMutation(
       id: docRef.id,
       ...dataToSave,
       mutationTime: mutationData.mutationTime || clientNow,
-      createdAt: clientNow, // Return client-side timestamp for immediate use
+      createdAt: clientNow, 
     };
   } catch (error: any) {
     console.error("Error adding stock mutation:", error);
@@ -102,16 +108,14 @@ export async function addStockMutation(
   }
 }
 
-// PENTING: Fungsi ini TIDAK mengupdate stok di inventoryItems dan TIDAK melakukan transaction.set().
-// Ia hanya MENYIAPKAN data dan referensi untuk mutasi.
-// Pemanggilan transaction.set() harus dilakukan oleh fungsi pemanggil di dalam callback runTransaction.
-export function prepareStockMutationData( // Renamed and modified
+
+export async function prepareStockMutationData(
   mutationInput: Omit<StockMutationInput, 'currentProductStock'>,
-  currentProductStock: number // Stok produk yang dibaca DI DALAM transaksi sebelum update
-): { mutationRef: DocumentReference; mutationToSave: Omit<StockMutation, "id"> } {
+  currentProductStock: number 
+): Promise<{ mutationRef: DocumentReference; mutationToSave: Omit<StockMutation, "id"> }> {
   const mutationRef = doc(collection(db, "stockMutations"));
-  const now = serverTimestamp() as Timestamp; // Untuk createdAt
-  const clientNow = Timestamp.now(); // Untuk mutationTime jika tidak disediakan
+  const now = serverTimestamp() as Timestamp; 
+  const clientNow = Timestamp.now(); 
 
   const stockBefore = currentProductStock;
   const stockAfter = currentProductStock + mutationInput.quantityChange;
@@ -189,17 +193,9 @@ export async function getStockLevelAtDate(productId: string, branchId: string, s
         if (initialMutation.mutationTime.toDate() > specificDate) {
             return 0;
         }
-        // If initial stock is found and it's before or on specificDate,
-        // and no other mutations were found by the first query,
-        // this implies the stock was its initial value.
-        // However, the first query should catch this if the mutationTime is <= specificDate.
-        // If the first query is empty, it means no mutation *at or before* specificDate.
-        // This can happen if INITIAL_STOCK is the ONLY mutation and it's *after* specificDate.
-        // Or if there are no mutations at all.
-        // Thus, if the first query is empty, the stock at `specificDate` is 0 (or whatever value it was before any recorded mutations).
     }
 
-    return 0; // Default to 0 if no mutations found on or before the specific date
+    return 0; 
   } catch (error) {
     console.error("Error fetching stock level at date:", error);
     return 0;
@@ -212,7 +208,7 @@ export async function getMutationsForProductInRange(
   startDate: Date,
   endDate: Date,
   orderByTime: 'asc' | 'desc' = 'asc'
-): Promise<StockMutation[]> {
+): Promise<ClientStockMutation[]> {
   if (!productId || !branchId || !startDate || !endDate) return [];
   try {
     const startTimestamp = Timestamp.fromDate(startDate);
@@ -229,9 +225,26 @@ export async function getMutationsForProductInRange(
       orderBy("mutationTime", orderByTime)
     );
     const querySnapshot = await getDocs(q);
-    const mutations: StockMutation[] = [];
+    const mutations: ClientStockMutation[] = [];
     querySnapshot.forEach((docSnap) => {
-      mutations.push({ id: docSnap.id, ...docSnap.data() } as StockMutation);
+      const data = docSnap.data();
+      mutations.push({
+        id: docSnap.id,
+        branchId: data.branchId,
+        productId: data.productId,
+        productName: data.productName,
+        sku: data.sku,
+        mutationTime: (data.mutationTime as Timestamp).toDate().toISOString(),
+        type: data.type,
+        quantityChange: data.quantityChange,
+        stockBeforeMutation: data.stockBeforeMutation,
+        stockAfterMutation: data.stockAfterMutation,
+        referenceId: data.referenceId,
+        notes: data.notes,
+        userId: data.userId,
+        userName: data.userName,
+        createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
+      } as ClientStockMutation); // Ensure the object matches ClientStockMutation
     });
     return mutations;
   } catch (error) {
@@ -239,5 +252,3 @@ export async function getMutationsForProductInRange(
     return [];
   }
 }
-
-    
