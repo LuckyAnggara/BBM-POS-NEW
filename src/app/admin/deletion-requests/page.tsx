@@ -18,7 +18,7 @@ import {
   rejectDeletionRequest,
   type TransactionDeletionRequest 
 } from "@/lib/firebase/deletionRequests";
-import { format } from "date-fns";
+import { format as formatDateFn, isValid as isValidDate, parseISO } from "date-fns"; // Renamed format to formatDateFn
 import { id as localeID } from 'date-fns/locale';
 import { Badge } from "@/components/ui/badge";
 import { Timestamp } from "firebase/firestore";
@@ -44,18 +44,11 @@ export default function DeletionRequestsPage() {
   const [adminRejectionReasonInput, setAdminRejectionReasonInput] = useState("");
   const [processingAction, setProcessingAction] = useState(false);
 
-  // Extract primitive values for stable dependencies
   const branchId = selectedBranch?.id;
   const branchName = selectedBranch?.name;
   const userRole = userData?.role;
 
   const fetchRequests = useCallback(async (currentBranchId: string, currentBranchName: string | undefined) => {
-    // userRole is from the outer scope and is a dependency of the useEffect that calls this.
-    // The useCallback itself will depend on userRole if it's used inside the function body directly.
-    // For simplicity, let's assume userRole is stable enough for this useCallback instance
-    // or handle it directly in the calling useEffect.
-    // The primary trigger for re-fetch here is currentBranchId.
-
     setLoadingRequests(true);
     try {
       console.log(`[DeletionRequestsPage] Fetching requests for branch ID: ${currentBranchId}, Branch Name: ${currentBranchName}`);
@@ -63,7 +56,7 @@ export default function DeletionRequestsPage() {
       console.log('[DeletionRequestsPage] Fetched Deletion Requests from Firestore:', fetchedRequestsData);
       setRequests(fetchedRequestsData);
       
-      if (fetchedRequestsData.length === 0) { // Toast condition simplified
+      if (fetchedRequestsData.length === 0 && !loadingRequests) { // Ensure loading is false before toasting
         toast({ title: "Tidak Ada Permintaan", description: `Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang "${currentBranchName}".`, variant: "default", duration: 5000 });
       }
     } catch (error) {
@@ -72,29 +65,51 @@ export default function DeletionRequestsPage() {
     } finally {
         setLoadingRequests(false);
     }
-  // userRole is used in the useEffect that calls this, not directly inside this useCallback for now.
-  // toast is stable.
-  }, [toast]); // Dependencies for useCallback are things it directly uses that might change *its definition*.
+  }, [toast, loadingRequests]); // Added loadingRequests to prevent premature toast
 
   useEffect(() => {
     if (userRole === 'admin' && branchId) {
       fetchRequests(branchId, branchName);
     } else if (!branchId && userRole === 'admin') {
-      // No branch selected, or selected branch became null
       setRequests([]);
       setLoadingRequests(false);
     }
-  // Dependencies:
-  // - branchId (primitive part of selectedBranch)
-  // - branchName (primitive part of selectedBranch, for toast inside fetchRequests)
-  // - userRole (primitive part of userData)
-  // - fetchRequests (the memoized function reference)
   }, [branchId, branchName, userRole, fetchRequests]);
 
 
-  const formatDate = (timestamp: Timestamp | undefined, withTime = true) => {
-    if (!timestamp) return "N/A";
-    return format(timestamp.toDate(), withTime ? "dd MMM yy, HH:mm" : "dd MMM yy", { locale: localeID });
+  const formatDate = (timestampInput: Timestamp | Date | string | number | undefined, withTime = true): string => {
+    if (!timestampInput) return "N/A";
+
+    let dateToFormat: Date | null = null;
+
+    if (timestampInput instanceof Timestamp) {
+      dateToFormat = timestampInput.toDate();
+    } else if (timestampInput instanceof Date) {
+      dateToFormat = timestampInput;
+    } else if (typeof timestampInput === 'string') {
+      const parsedDate = parseISO(timestampInput); // Attempt to parse ISO string
+      if (isValidDate(parsedDate)) {
+        dateToFormat = parsedDate;
+      } else {
+        // Try parsing as number (milliseconds) if string parsing fails
+        const numericTimestamp = Number(timestampInput);
+        if (!isNaN(numericTimestamp) && numericTimestamp > 0) {
+          dateToFormat = new Date(numericTimestamp);
+        }
+      }
+    } else if (typeof timestampInput === 'number') {
+      // Assuming it's milliseconds
+      if (timestampInput > 0) {
+        dateToFormat = new Date(timestampInput);
+      }
+    }
+
+    if (dateToFormat && isValidDate(dateToFormat)) {
+      return formatDateFn(dateToFormat, withTime ? "dd MMM yy, HH:mm" : "dd MMM yy", { locale: localeID });
+    }
+    
+    console.warn("Invalid or unparseable date received in formatDate:", timestampInput);
+    return "Tanggal Invalid";
   };
   
   const formatCurrency = (amount: number | undefined) => {
@@ -130,7 +145,7 @@ export default function DeletionRequestsPage() {
 
     if (result.success) {
         toast({ title: "Permintaan Disetujui", description: `Transaksi ${requestToProcess.transactionInvoiceNumber} telah dihapus.` });
-        if (branchId) fetchRequests(branchId, branchName); // Re-fetch
+        if (branchId) fetchRequests(branchId, branchName);
     } else {
         toast({ title: "Gagal Menyetujui", description: result.error || "Terjadi kesalahan.", variant: "destructive" });
     }
@@ -149,7 +164,7 @@ export default function DeletionRequestsPage() {
 
     if (result.success) {
         toast({ title: "Permintaan Ditolak", description: `Permintaan hapus untuk ${requestToProcess.transactionInvoiceNumber} telah ditolak.` });
-        if (branchId) fetchRequests(branchId, branchName); // Re-fetch
+        if (branchId) fetchRequests(branchId, branchName);
     } else {
         toast({ title: "Gagal Menolak", description: result.error || "Terjadi kesalahan.", variant: "destructive" });
     }
@@ -318,6 +333,5 @@ export default function DeletionRequestsPage() {
     </ProtectedRoute>
   );
 }
-
 
     
