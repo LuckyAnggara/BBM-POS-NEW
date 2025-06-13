@@ -44,22 +44,27 @@ export default function DeletionRequestsPage() {
   const [adminRejectionReasonInput, setAdminRejectionReasonInput] = useState("");
   const [processingAction, setProcessingAction] = useState(false);
 
+  // Extract primitive values for stable dependencies
+  const branchId = selectedBranch?.id;
+  const branchName = selectedBranch?.name;
+  const userRole = userData?.role;
 
-  const fetchRequests = useCallback(async () => {
-    if (!selectedBranch || userData?.role !== 'admin') {
-      setRequests([]);
-      setLoadingRequests(false);
-      return;
-    }
+  const fetchRequests = useCallback(async (currentBranchId: string, currentBranchName: string | undefined) => {
+    // userRole is from the outer scope and is a dependency of the useEffect that calls this.
+    // The useCallback itself will depend on userRole if it's used inside the function body directly.
+    // For simplicity, let's assume userRole is stable enough for this useCallback instance
+    // or handle it directly in the calling useEffect.
+    // The primary trigger for re-fetch here is currentBranchId.
+
     setLoadingRequests(true);
     try {
-      console.log(`[DeletionRequestsPage] Fetching requests for branch ID: ${selectedBranch.id}, Branch Name: ${selectedBranch.name}`);
-      const fetchedRequests = await getPendingDeletionRequestsByBranch(selectedBranch.id);
-      console.log('[DeletionRequestsPage] Fetched Deletion Requests from Firestore:', fetchedRequests);
-      setRequests(fetchedRequests);
+      console.log(`[DeletionRequestsPage] Fetching requests for branch ID: ${currentBranchId}, Branch Name: ${currentBranchName}`);
+      const fetchedRequestsData = await getPendingDeletionRequestsByBranch(currentBranchId);
+      console.log('[DeletionRequestsPage] Fetched Deletion Requests from Firestore:', fetchedRequestsData);
+      setRequests(fetchedRequestsData);
       
-      if (fetchedRequests.length === 0 && !loadingRequests && selectedBranch && userData?.role === 'admin') {
-        toast({ title: "Tidak Ada Permintaan", description: `Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang "${selectedBranch.name}".`, variant: "default", duration: 5000 });
+      if (fetchedRequestsData.length === 0) { // Toast condition simplified
+        toast({ title: "Tidak Ada Permintaan", description: `Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang "${currentBranchName}".`, variant: "default", duration: 5000 });
       }
     } catch (error) {
         console.error("Error fetching deletion requests", error);
@@ -67,16 +72,24 @@ export default function DeletionRequestsPage() {
     } finally {
         setLoadingRequests(false);
     }
-  }, [selectedBranch, userData?.role, toast, loadingRequests]); // Added loadingRequests to dependencies of useCallback as it's used in the toast condition logic now.
+  // userRole is used in the useEffect that calls this, not directly inside this useCallback for now.
+  // toast is stable.
+  }, [toast]); // Dependencies for useCallback are things it directly uses that might change *its definition*.
 
   useEffect(() => {
-    if (userData?.role === 'admin' && selectedBranch) {
-      fetchRequests();
-    } else if (!selectedBranch && userData?.role === 'admin') {
+    if (userRole === 'admin' && branchId) {
+      fetchRequests(branchId, branchName);
+    } else if (!branchId && userRole === 'admin') {
+      // No branch selected, or selected branch became null
       setRequests([]);
       setLoadingRequests(false);
     }
-  }, [fetchRequests, selectedBranch, userData?.role]);
+  // Dependencies:
+  // - branchId (primitive part of selectedBranch)
+  // - branchName (primitive part of selectedBranch, for toast inside fetchRequests)
+  // - userRole (primitive part of userData)
+  // - fetchRequests (the memoized function reference)
+  }, [branchId, branchName, userRole, fetchRequests]);
 
 
   const formatDate = (timestamp: Timestamp | undefined, withTime = true) => {
@@ -117,7 +130,7 @@ export default function DeletionRequestsPage() {
 
     if (result.success) {
         toast({ title: "Permintaan Disetujui", description: `Transaksi ${requestToProcess.transactionInvoiceNumber} telah dihapus.` });
-        await fetchRequests();
+        if (branchId) fetchRequests(branchId, branchName); // Re-fetch
     } else {
         toast({ title: "Gagal Menyetujui", description: result.error || "Terjadi kesalahan.", variant: "destructive" });
     }
@@ -136,7 +149,7 @@ export default function DeletionRequestsPage() {
 
     if (result.success) {
         toast({ title: "Permintaan Ditolak", description: `Permintaan hapus untuk ${requestToProcess.transactionInvoiceNumber} telah ditolak.` });
-        await fetchRequests();
+        if (branchId) fetchRequests(branchId, branchName); // Re-fetch
     } else {
         toast({ title: "Gagal Menolak", description: result.error || "Terjadi kesalahan.", variant: "destructive" });
     }
@@ -164,7 +177,7 @@ export default function DeletionRequestsPage() {
             <h1 className="text-xl md:text-2xl font-semibold font-headline">
               Permintaan Hapus Transaksi {selectedBranch ? `- ${selectedBranch.name}` : ''}
             </h1>
-            <Button variant="outline" size="sm" className="text-xs h-8" onClick={fetchRequests} disabled={loadingRequests || !selectedBranch}>
+            <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => { if (branchId) fetchRequests(branchId, branchName);}} disabled={loadingRequests || !selectedBranch}>
                 <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loadingRequests ? 'animate-spin' : ''}`}/> Segarkan Daftar
             </Button>
           </div>
@@ -305,3 +318,6 @@ export default function DeletionRequestsPage() {
     </ProtectedRoute>
   );
 }
+
+
+    
