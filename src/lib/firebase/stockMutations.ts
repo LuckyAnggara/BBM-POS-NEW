@@ -9,7 +9,11 @@ import {
   addDoc,
   writeBatch,
   getDoc,
-  runTransaction
+  runTransaction,
+  query,
+  where,
+  getDocs,
+  limit
 } from "firebase/firestore";
 import { db } from "./config";
 
@@ -128,4 +132,26 @@ export function createStockMutationInTransaction(
     createdAt: now,
   };
   transaction.set(mutationRef, mutationToSave);
+}
+
+
+export async function checkIfInitialStockExists(productId: string, branchId: string): Promise<boolean> {
+  if (!productId || !branchId) {
+    console.error("Product ID and Branch ID are required to check for initial stock.");
+    return false; // Atau throw error, tergantung bagaimana Anda ingin menanganinya
+  }
+  try {
+    const q = query(
+      collection(db, "stockMutations"),
+      where("productId", "==", productId),
+      where("branchId", "==", branchId),
+      where("type", "==", "INITIAL_STOCK"),
+      limit(1)
+    );
+    const querySnapshot = await getDocs(q);
+    return !querySnapshot.empty;
+  } catch (error) {
+    console.error("Error checking for initial stock mutation:", error);
+    return false; // Anggap tidak ada jika terjadi error, untuk mencegah re-inisialisasi yang salah
+  }
 }

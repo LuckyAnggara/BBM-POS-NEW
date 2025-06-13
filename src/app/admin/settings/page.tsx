@@ -34,6 +34,9 @@ import {
   type BankAccount,
   type BankAccountInput
 } from "@/lib/firebase/bankAccounts";
+import { getInventoryItems, type InventoryItem } from "@/lib/firebase/inventory";
+import { addStockMutation, checkIfInitialStockExists } from "@/lib/firebase/stockMutations";
+import { Timestamp } from "firebase/firestore";
 import type { UserData } from "@/contexts/auth-context";
 import type { Branch } from "@/contexts/branch-context";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -41,7 +44,7 @@ import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Pencil, Trash2, KeyRound, Banknote, PlusCircle } from "lucide-react";
+import { Pencil, Trash2, KeyRound, Banknote, PlusCircle, DatabaseZap, AlertTriangle } from "lucide-react";
 
 interface BranchFormState {
   name: string;
@@ -80,7 +83,7 @@ const initialBankAccountFormState: BankAccountFormState = {
 };
 
 export default function AdminSettingsPage() {
-  const { userData, loadingAuth } = useAuth();
+  const { currentUser, userData, loadingAuth } = useAuth();
   const { branches, loadingBranches, refreshBranches, selectedBranch: adminSelectedBranch, setSelectedBranch: setAdminSelectedBranch } = useBranch(); 
   const router = useRouter();
   const { toast } = useToast();
@@ -108,6 +111,9 @@ export default function AdminSettingsPage() {
   const [isSubmittingBankAccount, setIsSubmittingBankAccount] = useState(false);
   const [bankAccountToDelete, setBankAccountToDelete] = useState<BankAccount | null>(null);
   const [isDeletingBankAccount, setIsDeletingBankAccount] = useState(false);
+
+  const [isInitializingMutations, setIsInitializingMutations] = useState(false);
+  const [showInitializeConfirm, setShowInitializeConfirm] = useState(false);
 
 
   useEffect(() => {
@@ -347,6 +353,64 @@ export default function AdminSettingsPage() {
     setIsDeletingBankAccount(false);
   };
 
+  const handleInitializeStockMutations = async () => {
+    if (!adminSelectedBranch || !currentUser || !userData) {
+      toast({ title: "Error", description: "Cabang atau data admin tidak valid.", variant: "destructive" });
+      return;
+    }
+    setShowInitializeConfirm(false);
+    setIsInitializingMutations(true);
+    toast({ title: "Memulai Inisialisasi", description: `Memproses produk untuk cabang ${adminSelectedBranch.name}...`, duration: 5000 });
+
+    const inventoryResult = await getInventoryItems(adminSelectedBranch.id);
+    const itemsToProcess = inventoryResult.items;
+
+    let initializedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
+
+    for (const item of itemsToProcess) {
+      try {
+        const alreadyInitialized = await checkIfInitialStockExists(item.id, adminSelectedBranch.id);
+        if (alreadyInitialized) {
+          skippedCount++;
+          continue;
+        }
+
+        const mutationResult = await addStockMutation({
+          branchId: adminSelectedBranch.id,
+          productId: item.id,
+          productName: item.name,
+          sku: item.sku,
+          mutationTime: Timestamp.now(),
+          type: "INITIAL_STOCK",
+          quantityChange: item.quantity,
+          currentProductStock: 0, 
+          notes: "Inisialisasi stok awal sistem",
+          userId: currentUser.uid,
+          userName: userData.name,
+        });
+
+        if ("error" in mutationResult) {
+          console.error(`Gagal inisialisasi ${item.name}: ${mutationResult.error}`);
+          errorCount++;
+        } else {
+          initializedCount++;
+        }
+      } catch (e: any) {
+        console.error(`Error saat memproses ${item.name}: ${e.message}`);
+        errorCount++;
+      }
+    }
+
+    setIsInitializingMutations(false);
+    toast({
+      title: "Inisialisasi Selesai",
+      description: `Total produk: ${itemsToProcess.length}. Diinisialisasi: ${initializedCount}. Dilewati: ${skippedCount}. Gagal: ${errorCount}.`,
+      duration: 10000,
+    });
+  };
+
 
   if (loadingAuth || (userData && userData.role !== "admin")) {
     return <div className="flex h-screen items-center justify-center">Memuat data admin...</div>;
@@ -363,6 +427,7 @@ export default function AdminSettingsPage() {
               <TabsTrigger value="manage-branches" className="text-xs px-3 py-1.5 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Kelola Cabang</TabsTrigger>
               <TabsTrigger value="manage-users" className="text-xs px-3 py-1.5 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Kelola Pengguna</TabsTrigger>
               <TabsTrigger value="manage-bank-accounts" className="text-xs px-3 py-1.5 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Rekening Bank</TabsTrigger>
+              <TabsTrigger value="system-utilities" className="text-xs px-3 py-1.5 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Utilitas Sistem</TabsTrigger>
             </TabsList>
 
             <TabsContent value="manage-branches" className="mt-0">
@@ -487,6 +552,43 @@ export default function AdminSettingsPage() {
                 </Card>
             </TabsContent>
 
+            <TabsContent value="system-utilities" className="mt-0">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base font-semibold">Utilitas Sistem</CardTitle>
+                  <CardDescription className="text-xs">Alat bantu untuk pengelolaan data sistem tingkat lanjut.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="p-4 border rounded-md">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                        <div>
+                            <h3 className="text-sm font-medium">Inisialisasi Mutasi Stok Awal</h3>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                Buat catatan mutasi "Stok Awal" untuk semua produk di cabang terpilih saat ini. <br/>
+                                Ini diperlukan agar laporan mutasi memiliki basis yang benar.
+                            </p>
+                            <p className="text-xs text-destructive mt-1">
+                                <AlertTriangle className="inline-block h-3.5 w-3.5 mr-1"/>Hanya jalankan satu kali per produk per cabang.
+                            </p>
+                        </div>
+                        <Button
+                            size="sm"
+                            className="text-xs h-8 mt-2 sm:mt-0"
+                            variant="outline"
+                            onClick={() => setShowInitializeConfirm(true)}
+                            disabled={!adminSelectedBranch || isInitializingMutations}
+                        >
+                            <DatabaseZap className="mr-1.5 h-3.5 w-3.5"/> 
+                            {isInitializingMutations ? "Memproses..." : "Inisialisasi Stok Cabang Ini"}
+                        </Button>
+                    </div>
+                    {!adminSelectedBranch && (
+                        <p className="text-xs text-amber-600 mt-2">Pilih cabang dari dropdown di sidebar kiri bawah untuk mengaktifkan utilitas ini.</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
 
           </Tabs>
         </div>
@@ -536,9 +638,35 @@ export default function AdminSettingsPage() {
             </DialogContent>
         </Dialog>
 
+        <AlertDialog open={showInitializeConfirm} onOpenChange={setShowInitializeConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Konfirmasi Inisialisasi Mutasi Stok</AlertDialogTitle>
+              <AlertDialogDescription className="text-xs">
+                Anda akan membuat catatan mutasi "Stok Awal" untuk SEMUA produk yang ada di cabang <strong>{adminSelectedBranch?.name || "N/A"}</strong>.
+                Proses ini menggunakan jumlah stok produk saat ini sebagai basis. <br/><br/>
+                <span className="font-semibold text-destructive">PERHATIAN:</span>
+                <ul className="list-disc pl-4 mt-1">
+                    <li>Tindakan ini sebaiknya hanya dijalankan SATU KALI per produk per cabang.</li>
+                    <li>Jika sudah pernah dijalankan, produk yang telah memiliki mutasi "Stok Awal" akan dilewati.</li>
+                    <li>Pastikan data inventaris Anda sudah akurat sebelum melanjutkan.</li>
+                </ul>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="text-xs h-8" onClick={() => setShowInitializeConfirm(false)} disabled={isInitializingMutations}>Batal</AlertDialogCancel>
+              <AlertDialogAction
+                className="text-xs h-8"
+                onClick={handleInitializeStockMutations}
+                disabled={isInitializingMutations}
+              >
+                {isInitializingMutations ? "Memproses..." : "Ya, Lanjutkan Inisialisasi"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
       </MainLayout>
     </ProtectedRoute>
   );
 }
-
-    
