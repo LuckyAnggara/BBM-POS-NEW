@@ -53,19 +53,24 @@ export default function DeletionRequestsPage() {
     }
     setLoadingRequests(true);
     try {
+      console.log(`[DeletionRequestsPage] Fetching requests for branch ID: ${selectedBranch.id}, Branch Name: ${selectedBranch.name}`);
       const fetchedRequests = await getPendingDeletionRequestsByBranch(selectedBranch.id);
-      console.log('Fetched Deletion Requests:', fetchedRequests); // Debugging line
+      console.log('[DeletionRequestsPage] Fetched Deletion Requests from Firestore:', fetchedRequests);
       setRequests(fetchedRequests);
+      
+      if (fetchedRequests.length === 0 && !loadingRequests && selectedBranch && userData?.role === 'admin') {
+        toast({ title: "Tidak Ada Permintaan", description: `Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang "${selectedBranch.name}".`, variant: "default", duration: 5000 });
+      }
     } catch (error) {
         console.error("Error fetching deletion requests", error);
         toast({title: "Gagal Memuat", description: "Tidak dapat memuat daftar permintaan.", variant: "destructive"});
     } finally {
         setLoadingRequests(false);
     }
-  }, [selectedBranch, userData?.role,  loadingRequests]); // Added loadingRequests to dependency
- // Removed loadingRequests from dependency array
+  }, [selectedBranch, userData?.role, toast, loadingRequests]); // Added loadingRequests to dependencies of useCallback as it's used in the toast condition logic now.
+
   useEffect(() => {
-    if (userData?.role === 'admin' && selectedBranch) { // Ensure selectedBranch is also available
+    if (userData?.role === 'admin' && selectedBranch) {
       fetchRequests();
     } else if (!selectedBranch && userData?.role === 'admin') {
       setRequests([]);
@@ -73,12 +78,6 @@ export default function DeletionRequestsPage() {
     }
   }, [fetchRequests, selectedBranch, userData?.role]);
 
-  // Effect to show "No Requests" toast
-  useEffect(() => {
-    if (!loadingRequests && requests.length === 0 && selectedBranch && userData?.role === 'admin') {
-      toast({ title: "Tidak Ada Permintaan", description: "Tidak ada permintaan penghapusan transaksi yang tertunda untuk cabang ini.", variant: "default", duration: 4000 });
-    }
-  }, [fetchRequests, selectedBranch, userData?.role]);
 
   const formatDate = (timestamp: Timestamp | undefined, withTime = true) => {
     if (!timestamp) return "N/A";
