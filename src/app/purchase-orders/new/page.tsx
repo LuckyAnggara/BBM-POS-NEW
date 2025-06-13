@@ -101,10 +101,10 @@ export default function NewPurchaseOrderPage() {
     try {
       const [fetchedSuppliers, fetchedInventoryResult] = await Promise.all([
         getSuppliers(selectedBranch.id),
-        getInventoryItems(selectedBranch.id), // This returns an object { items: [], ... }
+        getInventoryItems(selectedBranch.id), 
       ]);
       setSuppliers(fetchedSuppliers);
-      setInventoryItems(fetchedInventoryResult.items); // Correctly access the .items array
+      setInventoryItems(fetchedInventoryResult.items); 
     } catch (error) {
       console.error("Error fetching initial data for PO:", error);
       toast({ title: "Gagal Memuat Data", description: "Tidak dapat memuat pemasok atau inventaris.", variant: "destructive" });
@@ -121,7 +121,7 @@ export default function NewPurchaseOrderPage() {
   const getFilteredProductsForItem = (index: number) => {
     const searchTerm = productSearchTerms[index] || "";
     if (!searchTerm.trim() && inventoryItems.length > 0) {
-      return inventoryItems.slice(0, 5); // Show first 5 if no search term
+      return inventoryItems.slice(0, 5); 
     }
     const lowerSearch = searchTerm.toLowerCase();
     return inventoryItems
@@ -130,7 +130,7 @@ export default function NewPurchaseOrderPage() {
           product.name.toLowerCase().includes(lowerSearch) ||
           (product.sku && product.sku.toLowerCase().includes(lowerSearch))
       )
-      .slice(0, 5); // Limit to 5 search results
+      .slice(0, 5); 
   };
 
   const handleProductSearchChange = (index: number, value: string) => {
@@ -140,8 +140,7 @@ export default function NewPurchaseOrderPage() {
   const handleProductPopoverOpenChange = (index: number, open: boolean) => {
     setOpenProductPopovers(prev => ({ ...prev, [index]: open }));
     if (!open) {
-      // Optionally clear search term when popover closes if product not selected
-      // For now, let's keep it simple and not clear automatically
+      
     }
   };
 
@@ -413,7 +412,7 @@ export default function NewPurchaseOrderPage() {
                                                                             poForm.setValue(`items.${index}.productName`, selectedProd?.name || "");
                                                                             poForm.setValue(`items.${index}.purchasePrice`, selectedProd?.costPrice || 0);
                                                                             handleProductPopoverOpenChange(index, false);
-                                                                            handleProductSearchChange(index, ""); // Clear search on select
+                                                                            handleProductSearchChange(index, ""); 
                                                                         }}
                                                                         className="text-xs"
                                                                     >
@@ -486,3 +485,4 @@ export default function NewPurchaseOrderPage() {
 }
 
     
+

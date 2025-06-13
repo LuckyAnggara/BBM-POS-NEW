@@ -80,8 +80,9 @@ export async function getPendingDeletionRequestsByBranch(branchId: string): Prom
   try {
     const q = query(
       collection(db, 'transactionDeletionRequests'),
-      where('status', '==', 'pending'),
-      orderBy('requestTimestamp', 'desc')
+      // where('status', '==', 'pending'),
+      // where('branchId', '==', branchId),
+      // orderBy('requestTimestamp', 'desc')
     );
     const querySnapshot = await getDocs(q);
     const requests: TransactionDeletionRequest[] = [];
