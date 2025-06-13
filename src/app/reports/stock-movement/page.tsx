@@ -13,7 +13,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { CalendarIcon, Download, Package, AlertTriangle, Info } from "lucide-react";
-import { format, startOfMonth, endOfMonth, parseISO, startOfWeek, endOfDay, startOfDay } from "date-fns";
+import { format, startOfMonth, endOfMonth, parseISO, startOfWeek, endOfDay, startOfDay, subDays } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
 import {
@@ -21,30 +21,16 @@ import {
   type InventoryItem,
 } from "@/lib/firebase/inventory";
 import {
-  getTransactionsByDateRangeAndBranch,
-  type PosTransaction,
-} from "@/lib/firebase/pos";
-import {
-  getPurchaseOrdersByBranch,
-  type PurchaseOrder,
-  type PurchaseOrderItem
-} from "@/lib/firebase/purchaseOrders";
+  getStockLevelAtDate,
+  getMutationsForProductInRange,
+  type StockMutation
+} from "@/lib/firebase/stockMutations"; // Updated imports
 import { Timestamp } from "firebase/firestore";
-import { Alert, AlertDescription as AlertDescUI, AlertTitle as AlertTitleUI } from "@/components/ui/alert"; // Renamed AlertDescription and AlertTitle
-
-interface StockMovement {
-  date: Timestamp;
-  type: "Stok Awal" | "Penjualan" | "Retur Jual" | "Penerimaan PO" | "Penyesuaian";
-  documentId?: string;
-  notes?: string;
-  quantityChange: number;
-  stockBefore: number;
-  stockAfter: number;
-}
+import { Alert, AlertDescription as AlertDescUI, AlertTitle as AlertTitleUI } from "@/components/ui/alert";
 
 interface StockMovementReportData {
   product: InventoryItem;
-  movements: StockMovement[];
+  movements: StockMutation[]; // Now uses StockMutation directly, plus one initial stock row
   currentStock: number;
 }
 
@@ -99,7 +85,7 @@ export default function StockMovementReportPage() {
     }
     setLoadingInventory(true);
     const fetchedItemsResult = await getInventoryItems(selectedBranch.id);
-    setInventoryItems(fetchedItemsResult.items); // Correctly assign the items array
+    setInventoryItems(fetchedItemsResult.items);
     setLoadingInventory(false);
   }, [selectedBranch]);
 
@@ -137,79 +123,37 @@ export default function StockMovementReportPage() {
       }
 
       const currentStock = product.quantity;
-      let movements: Omit<StockMovement, 'stockBefore' | 'stockAfter'>[] = [];
-
-      const salesTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
-      salesTransactions.forEach(tx => {
-        tx.items.forEach(item => {
-          if (item.productId === selectedProductId) {
-            if (tx.status === 'returned') {
-              movements.push({
-                date: tx.returnedAt || tx.timestamp,
-                type: "Retur Jual",
-                documentId: tx.invoiceNumber,
-                notes: tx.returnReason || undefined,
-                quantityChange: item.quantity,
-              });
-            } else {
-              movements.push({
-                date: tx.timestamp,
-                type: "Penjualan",
-                documentId: tx.invoiceNumber,
-                quantityChange: -item.quantity,
-              });
-            }
-          }
-        });
-      });
-
-      const purchaseOrders = await getPurchaseOrdersByBranch(selectedBranch.id, { startDate, endDate, orderByField: "updatedAt" });
-      purchaseOrders.forEach(po => {
-        if (po.status === 'partially_received' || po.status === 'fully_received') {
-          po.items.forEach(poItem => {
-            if (poItem.productId === selectedProductId && poItem.receivedQuantity > 0) {
-              movements.push({
-                date: po.updatedAt,
-                type: "Penerimaan PO",
-                documentId: po.poNumber,
-                quantityChange: poItem.receivedQuantity,
-              });
-            }
-          });
-        }
-      });
       
-      movements.sort((a, b) => a.date.toMillis() - b.date.toMillis());
+      const dateBeforeStartDate = subDays(startDate, 1);
+      const initialStockLevel = await getStockLevelAtDate(selectedProductId, selectedBranch.id, dateBeforeStartDate);
 
-      let calculatedInitialStock = currentStock;
-      for (let i = movements.length - 1; i >= 0; i--) {
-        calculatedInitialStock -= movements[i].quantityChange;
-      }
-      
-      const processedMovements: StockMovement[] = [];
-      processedMovements.push({
-        date: Timestamp.fromDate(startDate),
-        type: "Stok Awal",
+      const mutationsFromDB = await getMutationsForProductInRange(selectedProductId, selectedBranch.id, startDate, endDate, 'asc');
+
+      const movementsForReport: StockMutation[] = [];
+
+      // Add initial stock row
+      movementsForReport.push({
+        id: 'initial-stock-row', // Dummy ID
+        branchId: selectedBranch.id,
+        productId: selectedProductId,
+        productName: product.name,
+        sku: product.sku,
+        mutationTime: Timestamp.fromDate(startDate), // Start of the period
+        type: "INITIAL_STOCK",
         quantityChange: 0,
-        stockBefore: calculatedInitialStock,
-        stockAfter: calculatedInitialStock,
+        stockBeforeMutation: initialStockLevel,
+        stockAfterMutation: initialStockLevel,
+        createdAt: Timestamp.fromDate(startDate), // Dummy timestamp
+        notes: "Stok Awal Periode"
       });
+      
+      // Add actual mutations from DB
+      movementsForReport.push(...mutationsFromDB);
+      
+      setReportData({ product, movements: movementsForReport, currentStock });
 
-      let runningStock = calculatedInitialStock;
-      movements.forEach(move => {
-        const stockBefore = runningStock;
-        runningStock += move.quantityChange;
-        processedMovements.push({
-          ...move,
-          stockBefore: stockBefore,
-          stockAfter: runningStock,
-        });
-      });
-
-      setReportData({ product, movements: processedMovements, currentStock });
-
-      if (processedMovements.length <= 1 && movements.length === 0) {
-        toast({ title: "Tidak Ada Pergerakan", description: `Tidak ada pergerakan stok untuk ${product.name} pada periode ini.`, variant: "default" });
+      if (mutationsFromDB.length === 0) {
+        toast({ title: "Tidak Ada Pergerakan", description: `Tidak ada pergerakan stok tercatat untuk ${product.name} pada periode ini. Hanya stok awal ditampilkan.`, variant: "default" });
       }
 
     } catch (error) {
@@ -342,7 +286,7 @@ export default function StockMovementReportPage() {
                         <CardDescription className="text-xs mt-0.5">
                             SKU: {reportData.product.sku || "-"} | Kategori: {reportData.product.categoryName || "-"} <br/>
                             Periode: {startDate ? format(startDate, "dd MMM yyyy") : 'N/A'} - {endDate ? format(endDate, "dd MMM yyyy") : 'N/A'} <br/>
-                            Stok Saat Ini (di Inventaris): {reportData.currentStock}
+                            Stok Live Saat Ini (di Inventaris): {reportData.currentStock}
                         </CardDescription>
                     </div>
                     <div className="text-right">
@@ -374,16 +318,16 @@ export default function StockMovementReportPage() {
                         </TableHeader>
                         <TableBody>
                             {reportData.movements.map((move, index) => (
-                                <TableRow key={index}>
-                                    <TableCell className="text-xs py-1.5">{formatMovementDate(move.date)}</TableCell>
-                                    <TableCell className="text-xs py-1.5 font-medium">{move.type}</TableCell>
-                                    <TableCell className="text-xs hidden sm:table-cell py-1.5">{move.documentId || '-'}</TableCell>
+                                <TableRow key={move.id + index}>
+                                    <TableCell className="text-xs py-1.5">{formatMovementDate(move.mutationTime)}</TableCell>
+                                    <TableCell className="text-xs py-1.5 font-medium">{move.type === 'INITIAL_STOCK' ? "Stok Awal Periode" : move.type}</TableCell>
+                                    <TableCell className="text-xs hidden sm:table-cell py-1.5">{move.referenceId || '-'}</TableCell>
                                     <TableCell className="text-xs hidden md:table-cell py-1.5 max-w-[200px] truncate" title={move.notes || ""}>{move.notes || '-'}</TableCell>
                                     <TableCell className={`text-xs text-right py-1.5 font-semibold ${move.quantityChange > 0 ? 'text-green-600' : move.quantityChange < 0 ? 'text-destructive' : ''}`}>
-                                        {move.quantityChange > 0 ? `+${move.quantityChange}` : (move.quantityChange < 0 ? `${move.quantityChange}` : '-')}
+                                        {move.type === 'INITIAL_STOCK' ? '-' : (move.quantityChange > 0 ? `+${move.quantityChange}` : `${move.quantityChange}`)}
                                     </TableCell>
-                                    <TableCell className="text-xs text-right py-1.5">{move.stockBefore}</TableCell>
-                                    <TableCell className="text-xs text-right py-1.5 font-bold">{move.stockAfter}</TableCell>
+                                    <TableCell className="text-xs text-right py-1.5">{move.stockBeforeMutation}</TableCell>
+                                    <TableCell className="text-xs text-right py-1.5 font-bold">{move.stockAfterMutation}</TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>
@@ -393,9 +337,9 @@ export default function StockMovementReportPage() {
                         <AlertTitleUI className="font-semibold text-blue-700 dark:text-blue-200">Catatan Kalkulasi</AlertTitleUI>
                         <AlertDescUI className="text-blue-600 dark:text-blue-400">
                             <ul className="list-disc pl-4">
-                                <li><strong>Stok Awal:</strong> Dihitung mundur dari Stok Saat Ini di inventaris, dengan memperhitungkan semua pergerakan (penjualan, retur, estimasi penerimaan PO) selama periode laporan.</li>
-                                <li><strong>Penerimaan PO:</strong> Estimasi berdasarkan Pesanan Pembelian yang statusnya 'Diterima Sebagian' atau 'Diterima Penuh' dan tanggal <i>update</i> PO-nya masuk dalam periode laporan. Ini menggunakan total kuantitas diterima pada PO tersebut sebagai proxy.</li>
-                                <li><strong>Stok Akhir per Baris:</strong> Adalah stok setelah pergerakan pada baris tersebut. Stok akhir di baris terakhir mungkin berbeda dari 'Stok Saat Ini' jika ada transaksi setelah akhir periode laporan.</li>
+                                <li><strong>Stok Awal Periode:</strong> Stok produk pada akhir hari sebelum Tanggal Mulai periode laporan, dihitung berdasarkan riwayat mutasi.</li>
+                                <li><strong>Pergerakan:</strong> Semua mutasi (Penjualan, Retur, Penerimaan PO, dll.) yang tercatat untuk produk ini dalam periode laporan.</li>
+                                <li><strong>Stok Live Saat Ini:</strong> Stok produk aktual yang tercatat di master data inventaris saat ini (real-time). Mungkin berbeda dengan 'Stok Ssdh' terakhir jika ada transaksi di luar periode laporan atau sebelum laporan dibuat.</li>
                             </ul>
                         </AlertDescUI>
                     </Alert>
@@ -419,3 +363,6 @@ export default function StockMovementReportPage() {
     </ProtectedRoute>
   );
 }
+
+
+    
