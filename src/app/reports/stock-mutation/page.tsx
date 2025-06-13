@@ -13,11 +13,10 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
 import { CalendarIcon, Download } from "lucide-react";
-import { format, startOfMonth, endOfMonth, startOfWeek, endOfDay, startOfDay } from "date-fns";
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfDay, startOfDay, subDays } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getInventoryItems, type InventoryItem } from "@/lib/firebase/inventory";
-import { getTransactionsByDateRangeAndBranch, type PosTransaction } from "@/lib/firebase/pos";
-import { getPurchaseOrdersByBranch, type PurchaseOrder } from "@/lib/firebase/purchaseOrders";
+import { getStockLevelAtDate, getMutationsForProductInRange, type StockMutation } from "@/lib/firebase/stockMutations";
 
 interface StockMutationReportItem {
   productId: string;
@@ -28,7 +27,8 @@ interface StockMutationReportItem {
   stockInFromPO: number;
   stockSold: number;
   stockReturned: number;
-  finalStock: number;
+  finalStockCalculated: number; // Renamed from finalStock
+  currentLiveStock: number; // Stock from inventoryItems
 }
 
 export default function StockMutationReportPage() {
@@ -90,70 +90,66 @@ export default function StockMutationReportPage() {
 
     try {
       const inventoryItemsResult = await getInventoryItems(selectedBranch.id);
-      const itemsArrayForReport = inventoryItemsResult.items; // Correctly access the array
+      const itemsArrayForReport = inventoryItemsResult.items;
 
-      const allTransactions = await getTransactionsByDateRangeAndBranch(selectedBranch.id, startDate, endDate);
-      
-      const purchaseOrdersUpdatedInPeriod = await getPurchaseOrdersByBranch(selectedBranch.id, {
-        startDate,
-        endDate,
-        orderByField: "updatedAt", 
-        orderDirection: "desc",
-      });
+      if (itemsArrayForReport.length === 0) {
+         toast({ title: "Tidak Ada Produk", description: "Tidak ada produk inventaris ditemukan untuk cabang ini.", variant: "default" });
+         setLoadingReport(false);
+         return;
+      }
 
-      const completedTransactions = allTransactions.filter(tx => tx.status === 'completed');
-      const returnedTransactions = allTransactions.filter(tx => tx.status === 'returned');
+      const processedData: StockMutationReportItem[] = [];
 
-      const soldQuantitiesMap = new Map<string, number>();
-      completedTransactions.forEach(tx => {
-        tx.items.forEach(item => {
-          soldQuantitiesMap.set(item.productId, (soldQuantitiesMap.get(item.productId) || 0) + item.quantity);
-        });
-      });
+      for (const item of itemsArrayForReport) {
+        const dateBeforeStartDate = subDays(startDate, 1); // Get stock at end of day before startDate
+        const initialStock = await getStockLevelAtDate(item.id, selectedBranch.id, dateBeforeStartDate);
 
-      const returnedQuantitiesMap = new Map<string, number>();
-      returnedTransactions.forEach(tx => {
-        tx.items.forEach(item => {
-          returnedQuantitiesMap.set(item.productId, (returnedQuantitiesMap.get(item.productId) || 0) + item.quantity);
-        });
-      });
-      
-      const stockInFromPOMap = new Map<string, number>();
-      purchaseOrdersUpdatedInPeriod.forEach(po => {
-        if (po.status === 'partially_received' || po.status === 'fully_received') {
-          po.items.forEach(poItem => {
-            stockInFromPOMap.set(poItem.productId, (stockInFromPOMap.get(poItem.productId) || 0) + poItem.receivedQuantity);
-          });
-        }
-      });
-
-      const processedData: StockMutationReportItem[] = itemsArrayForReport.map(item => { // Use itemsArrayForReport here
-        const stockSold = soldQuantitiesMap.get(item.id) || 0;
-        const stockReturned = returnedQuantitiesMap.get(item.id) || 0;
-        const stockInFromPOForPeriod = stockInFromPOMap.get(item.id) || 0; 
-        const finalStock = item.quantity; 
+        const mutationsInPeriod = await getMutationsForProductInRange(item.id, selectedBranch.id, startDate, endDate);
         
-        const initialStock = finalStock - stockInFromPOForPeriod + stockSold - stockReturned;
+        let stockInFromPO = 0;
+        let stockSold = 0;
+        let stockReturned = 0;
+        // Can add other mutation types here like ADJUSTMENT_IN, ADJUSTMENT_OUT
 
-        return {
+        mutationsInPeriod.forEach(mutation => {
+          switch (mutation.type) {
+            case "PURCHASE_RECEIPT":
+              stockInFromPO += mutation.quantityChange;
+              break;
+            case "SALE":
+              stockSold += Math.abs(mutation.quantityChange); // quantityChange is negative
+              break;
+            case "SALE_RETURN":
+              stockReturned += mutation.quantityChange;
+              break;
+            case "TRANSACTION_DELETED_SALE_RESTOCK":
+              // This is effectively a "return" or "inflow" from a sale perspective
+              stockReturned += mutation.quantityChange; 
+              break;
+            // Add cases for ADJUSTMENT_IN, ADJUSTMENT_OUT etc. if needed
+          }
+        });
+        
+        const finalStockCalculated = initialStock + stockInFromPO - stockSold + stockReturned;
+
+        processedData.push({
           productId: item.id,
           productName: item.name,
           sku: item.sku,
           categoryName: item.categoryName,
           initialStock: initialStock,
-          stockInFromPO: stockInFromPOForPeriod,
+          stockInFromPO: stockInFromPO,
           stockSold: stockSold,
           stockReturned: stockReturned,
-          finalStock: finalStock,
-        };
-      });
+          finalStockCalculated: finalStockCalculated,
+          currentLiveStock: item.quantity, // This is the current live stock from inventoryItems
+        });
+      }
 
       setReportData(processedData);
       
-      if (itemsArrayForReport.length === 0) {
-         toast({ title: "Tidak Ada Produk", description: "Tidak ada produk inventaris ditemukan untuk cabang ini.", variant: "default" });
-      } else if (processedData.length > 0 && processedData.every(p => p.initialStock === p.finalStock && p.stockInFromPO === 0 && p.stockSold === 0 && p.stockReturned === 0)) {
-         toast({ title: "Tidak Ada Mutasi", description: "Tidak ada pergerakan stok (penjualan, retur, atau penerimaan PO) untuk produk pada periode ini.", variant: "default" });
+      if (processedData.length > 0 && processedData.every(p => p.initialStock === p.finalStockCalculated && p.stockInFromPO === 0 && p.stockSold === 0 && p.stockReturned === 0)) {
+         toast({ title: "Tidak Ada Mutasi", description: "Tidak ada pergerakan stok signifikan (penjualan, retur, atau penerimaan PO) untuk produk pada periode ini.", variant: "default" });
       }
 
 
@@ -286,11 +282,12 @@ export default function StockMutationReportPage() {
                                 <TableHead className="text-xs">Produk</TableHead>
                                 <TableHead className="text-xs hidden md:table-cell">SKU</TableHead>
                                 <TableHead className="text-xs hidden lg:table-cell">Kategori</TableHead>
-                                <TableHead className="text-xs text-right">Stok Awal</TableHead>
+                                <TableHead className="text-xs text-right">Stok Awal Periode</TableHead>
                                 <TableHead className="text-xs text-right text-blue-600">Masuk (PO) (+)</TableHead>
                                 <TableHead className="text-xs text-right text-destructive">Terjual (-)</TableHead>
-                                <TableHead className="text-xs text-right text-green-600">Diretur (Jual) (+)</TableHead>
-                                <TableHead className="text-xs text-right">Stok Akhir</TableHead>
+                                <TableHead className="text-xs text-right text-green-600">Retur Jual (+)</TableHead>
+                                <TableHead className="text-xs text-right font-bold">Stok Akhir Periode (Hit.)</TableHead>
+                                <TableHead className="text-xs text-right">Stok Live Saat Ini</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -303,18 +300,20 @@ export default function StockMutationReportPage() {
                                     <TableCell className="text-xs text-right py-1.5 text-blue-600">{item.stockInFromPO > 0 ? `${item.stockInFromPO}` : '-'}</TableCell>
                                     <TableCell className="text-xs text-right py-1.5 text-destructive">{item.stockSold > 0 ? `${item.stockSold}` : '-'}</TableCell>
                                     <TableCell className="text-xs text-right py-1.5 text-green-600">{item.stockReturned > 0 ? `${item.stockReturned}` : '-'}</TableCell>
-                                    <TableCell className="text-xs text-right font-semibold py-1.5">{item.finalStock}</TableCell>
+                                    <TableCell className="text-xs text-right font-bold py-1.5">{item.finalStockCalculated}</TableCell>
+                                    <TableCell className="text-xs text-right py-1.5 text-muted-foreground">{item.currentLiveStock}</TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>
                          <TableCaption className="text-xs py-2 text-left">
                             <strong>Catatan:</strong>
                             <ul className="list-disc pl-4">
-                                <li><strong>Stok Awal:</strong> Stok pada awal periode, dihitung mundur dari Stok Akhir dengan memperhitungkan pergerakan selama periode.</li>
-                                <li><strong>Masuk (PO) (+):</strong> Total kuantitas barang diterima dari Pesanan Pembelian (PO) yang <em>diperbarui (updated)</em> selama periode laporan. Ini adalah estimasi penerimaan dalam periode tersebut.</li>
-                                <li><strong>Terjual (-):</strong> Total kuantitas barang terjual (tidak termasuk yang diretur) selama periode laporan.</li>
-                                <li><strong>Diretur (Jual) (+):</strong> Total kuantitas barang yang dikembalikan oleh pelanggan selama periode laporan.</li>
-                                <li><strong>Stok Akhir:</strong> Kuantitas stok produk aktual saat ini di inventaris.</li>
+                                <li><strong>Stok Awal Periode:</strong> Stok produk pada akhir hari sebelum Tanggal Mulai periode laporan.</li>
+                                <li><strong>Masuk (PO) (+):</strong> Total kuantitas barang diterima dari Pesanan Pembelian selama periode laporan.</li>
+                                <li><strong>Terjual (-):</strong> Total kuantitas barang terjual selama periode laporan.</li>
+                                <li><strong>Retur Jual (+):</strong> Total kuantitas barang yang dikembalikan pelanggan selama periode laporan.</li>
+                                <li><strong>Stok Akhir Periode (Hit.):</strong> Stok yang dihitung berdasarkan Stok Awal dan semua mutasi (Masuk PO, Terjual, Retur Jual) selama periode laporan.</li>
+                                <li><strong>Stok Live Saat Ini:</strong> Kuantitas stok produk aktual di inventaris saat ini (real-time).</li>
                             </ul>
                          </TableCaption>
                     </Table>
@@ -332,7 +331,6 @@ export default function StockMutationReportPage() {
                 </CardContent>
             </Card>
           )}
-
         </div>
       </MainLayout>
     </ProtectedRoute>

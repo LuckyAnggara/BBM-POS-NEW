@@ -13,7 +13,9 @@ import {
   query,
   where,
   getDocs,
-  limit
+  limit,
+  orderBy,
+  limitToLast,
 } from "firebase/firestore";
 import { db } from "./config";
 
@@ -99,18 +101,15 @@ export async function addStockMutation(
   }
 }
 
-// Fungsi helper untuk digunakan dalam transaksi Firestore
-// PENTING: Fungsi ini TIDAK mengupdate stok di inventoryItems, hanya mencatat mutasi.
-// Update stok di inventoryItems harus dilakukan dalam transaksi yang sama oleh pemanggil.
 export async function createStockMutationInTransaction(
   transaction: any, // Firestore Transaction object
   productDocRef: any, // Firestore DocumentReference for the product in inventoryItems
-  mutationInput: Omit<StockMutationInput, 'currentProductStock'>, // currentProductStock will be read within the transaction
-  currentProductStock: number // Stok produk yang dibaca DI DALAM transaksi sebelum update
+  mutationInput: Omit<StockMutationInput, 'currentProductStock'>,
+  currentProductStock: number
 ) {
   const mutationRef = doc(collection(db, "stockMutations"));
-  const now = serverTimestamp() as Timestamp; // Untuk createdAt
-  const clientNow = Timestamp.now(); // Untuk mutationTime jika tidak disediakan
+  const now = serverTimestamp() as Timestamp;
+  const clientNow = Timestamp.now();
 
   const stockBefore = currentProductStock;
   const stockAfter = currentProductStock + mutationInput.quantityChange;
@@ -134,11 +133,10 @@ export async function createStockMutationInTransaction(
   transaction.set(mutationRef, mutationToSave);
 }
 
-
 export async function checkIfInitialStockExists(productId: string, branchId: string): Promise<boolean> {
   if (!productId || !branchId) {
     console.error("Product ID and Branch ID are required to check for initial stock.");
-    return false; // Atau throw error, tergantung bagaimana Anda ingin menanganinya
+    return false;
   }
   try {
     const q = query(
@@ -152,6 +150,90 @@ export async function checkIfInitialStockExists(productId: string, branchId: str
     return !querySnapshot.empty;
   } catch (error) {
     console.error("Error checking for initial stock mutation:", error);
-    return false; // Anggap tidak ada jika terjadi error, untuk mencegah re-inisialisasi yang salah
+    return false;
+  }
+}
+
+export async function getStockLevelAtDate(productId: string, branchId: string, specificDate: Date): Promise<number> {
+  if (!productId || !branchId) return 0;
+  try {
+    const dateTimestamp = Timestamp.fromDate(specificDate);
+    const q = query(
+      collection(db, "stockMutations"),
+      where("branchId", "==", branchId),
+      where("productId", "==", productId),
+      where("mutationTime", "<=", dateTimestamp),
+      orderBy("mutationTime", "desc"),
+      limit(1)
+    );
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      const lastMutation = querySnapshot.docs[0].data() as StockMutation;
+      return lastMutation.stockAfterMutation;
+    }
+    // If no mutation found on or before the date, check for an initial stock entry ANY time before it.
+    // This covers cases where a product was initialized but had no other movements.
+    const initialStockQuery = query(
+        collection(db, "stockMutations"),
+        where("branchId", "==", branchId),
+        where("productId", "==", productId),
+        where("type", "==", "INITIAL_STOCK"),
+        orderBy("mutationTime", "desc"),
+        limit(1)
+    );
+    const initialStockSnapshot = await getDocs(initialStockQuery);
+    if (!initialStockSnapshot.empty) {
+        const initialMutation = initialStockSnapshot.docs[0].data() as StockMutation;
+        // If this initial stock happened *after* the specificDate, then stock at specificDate was 0
+        if (initialMutation.mutationTime.toDate() > specificDate) {
+            return 0;
+        }
+        // Otherwise, the initial stock value is the stock at that time (assuming no other mutations before it)
+        // but the first query should have caught it if it's relevant.
+        // This logic is a bit tricky. The first query is likely sufficient.
+        // If no mutation at all before specificDate, stock is 0.
+        // The only case this second query helps is if the INITIAL_STOCK is the *only* mutation and it's before specificDate.
+        // The first query would already return this.
+        // So, if first query is empty, it means no mutations AT ALL on or before specificDate, so stock is 0.
+    }
+
+    return 0; // Default to 0 if no mutations found
+  } catch (error) {
+    console.error("Error fetching stock level at date:", error);
+    return 0; // Return 0 in case of error or if no data found
+  }
+}
+
+export async function getMutationsForProductInRange(
+  productId: string,
+  branchId: string,
+  startDate: Date,
+  endDate: Date,
+  orderByTime: 'asc' | 'desc' = 'asc'
+): Promise<StockMutation[]> {
+  if (!productId || !branchId || !startDate || !endDate) return [];
+  try {
+    const startTimestamp = Timestamp.fromDate(startDate);
+    const endOfDayEndDate = new Date(endDate);
+    endOfDayEndDate.setHours(23, 59, 59, 999);
+    const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
+
+    const q = query(
+      collection(db, "stockMutations"),
+      where("branchId", "==", branchId),
+      where("productId", "==", productId),
+      where("mutationTime", ">=", startTimestamp),
+      where("mutationTime", "<=", endTimestamp),
+      orderBy("mutationTime", orderByTime)
+    );
+    const querySnapshot = await getDocs(q);
+    const mutations: StockMutation[] = [];
+    querySnapshot.forEach((docSnap) => {
+      mutations.push({ id: docSnap.id, ...docSnap.data() } as StockMutation);
+    });
+    return mutations;
+  } catch (error) {
+    console.error("Error fetching mutations for product in range:", error);
+    return [];
   }
 }
