@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import MainLayout from "@/components/layout/main-layout";
 import { useBranch } from "@/contexts/branch-context";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { DollarSign, TrendingUp, Activity, Layers, AlertTriangle as AlertTriangleIconLucide, Info, Package } from "lucide-react";
+import { DollarSign, TrendingUp, Activity, Layers, AlertTriangle as AlertTriangleIconLucide, Info, Package, Archive as ArchiveIcon } from "lucide-react"; // Added ArchiveIcon
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/contexts/auth-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -21,12 +21,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 
 interface DashboardStats {
+  grossRevenueBeforeReturns: number; // Added for Gross Revenue
   netRevenue: number;
   totalExpenses: number;
   netTransactionCount: number;
-  revenueChangePercentage: string;
-  expenseChangePercentage: string;
-  transactionChangePercentage: string;
+  revenueChangePercentage: string; // Placeholder for now
+  expenseChangePercentage: string; // Placeholder for now
+  transactionChangePercentage: string; // Placeholder for now
 }
 
 interface InventorySummary {
@@ -91,6 +92,21 @@ export default function DashboardPage() {
   const formatCurrency = (amount: number): string => {
     return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
+
+  const formatYAxisTick = (value: number) => {
+    const currency = selectedBranch?.currency || 'Rp';
+    if (Math.abs(value) >= 1000000000) { // Miliar
+      return `${currency}${(value / 1000000000).toFixed(1).replace(/\.0$/, '')} M`;
+    }
+    if (Math.abs(value) >= 1000000) { // Juta
+      return `${currency}${(value / 1000000).toFixed(1).replace(/\.0$/, '')} jt`;
+    }
+    if (Math.abs(value) >= 1000) { // Ribu
+      return `${currency}${(value / 1000).toFixed(0)} rb`;
+    }
+    return `${currency}${value}`;
+  };
+
 
   useEffect(() => {
     const now = new Date();
@@ -163,18 +179,23 @@ export default function DashboardPage() {
         getActiveShift(currentUser.uid, selectedBranch.id) 
       ]);
 
+      let grossRevenueBeforeReturns = 0;
       let netRevenue = 0;
       let netTransactionCount = 0;
+      
       rangeTransactions.forEach(tx => {
         if (tx.status === 'completed') {
+          grossRevenueBeforeReturns += tx.totalAmount;
           netRevenue += tx.totalAmount;
           netTransactionCount++;
         } else if (tx.status === 'returned') {
-          netRevenue -= tx.totalAmount;
+          netRevenue -= tx.totalAmount; 
         }
       });
+
       const totalExpenses = rangeExpenses.reduce((sum, exp) => sum + exp.amount, 0);
       setDashboardStats({
+        grossRevenueBeforeReturns,
         netRevenue,
         totalExpenses,
         netTransactionCount,
@@ -198,6 +219,7 @@ export default function DashboardPage() {
           if (tx.status === 'completed') {
             salesByDay[dateStr].total += tx.totalAmount;
           } else if (tx.status === 'returned') {
+            // For chart, we show net sales for the day
             salesByDay[dateStr].total -= tx.totalAmount;
           }
         }
@@ -209,8 +231,11 @@ export default function DashboardPage() {
             total: value.total,
         }))
         .sort((a,b) => {
-          const dateA = Object.values(salesByDay).find(d => d.dateObj && format(d.dateObj, "d MMM", { locale: localeID }) === a.name)?.dateObj;
-          const dateB = Object.values(salesByDay).find(d => d.dateObj && format(d.dateObj, "d MMM", { locale: localeID }) === b.name)?.dateObj;
+          // Ensure correct date sorting for the chart
+          const dateAEntry = Object.values(salesByDay).find(d => d.dateObj && format(d.dateObj, "d MMM", { locale: localeID }) === a.name);
+          const dateBEntry = Object.values(salesByDay).find(d => d.dateObj && format(d.dateObj, "d MMM", { locale: localeID }) === b.name);
+          const dateA = dateAEntry ? dateAEntry.dateObj : null;
+          const dateB = dateBEntry ? dateBEntry.dateObj : null;
           if (dateA && dateB) return dateA.getTime() - dateB.getTime();
           return 0;
         });
@@ -245,9 +270,9 @@ export default function DashboardPage() {
   }, [selectedBranch, currentUser, currentDisplayRange, loadingInventorySummary, isCashierWithoutBranch]);
 
   useEffect(() => {
-    if (currentDisplayRange && (selectedBranch || isCashierWithoutBranch)) { // Check isCashierWithoutBranch too, so it can clear data if user becomes cashier w/o branch
+    if (currentDisplayRange && (selectedBranch || isCashierWithoutBranch)) { 
         fetchDashboardData();
-    } else if (!selectedBranch && !isCashierWithoutBranch) { // If no branch selected AND user is not a cashier without a branch (e.g. admin with no branch selected yet)
+    } else if (!selectedBranch && !isCashierWithoutBranch) { 
         setDashboardStats(null);
         setInventorySummary(null);
         setActiveShiftSummary(null);
@@ -302,7 +327,18 @@ export default function DashboardPage() {
           
           {!isCashierWithoutBranch && (
             <>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-xs font-medium">Pendapatan Kotor</CardTitle>
+                    <ArchiveIcon className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    {loadingStats ? <Skeleton className="h-7 w-3/4" /> : <div className="text-lg font-bold">{formatCurrency(dashboardStats?.grossRevenueBeforeReturns ?? 0)}</div>}
+                    {/* Placeholder for change percentage */}
+                    {loadingStats ? <Skeleton className="h-4 w-1/2 mt-1" /> : <p className="text-xs text-muted-foreground">Total penjualan sebelum retur</p>}
+                  </CardContent>
+                </Card>
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle className="text-xs font-medium">Pendapatan Bersih</CardTitle>
@@ -367,32 +403,33 @@ export default function DashboardPage() {
                 </Card>
               )}
 
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Card className="lg:col-span-1">
+              <div className="grid gap-4 lg:grid-cols-2"> {/* This will now be the main grid for chart and inventory */}
+                <Card className="lg:col-span-2"> {/* Tren Penjualan takes full width */}
                   <CardHeader>
                     <CardTitle className="text-base font-semibold">Tren Penjualan</CardTitle>
                     <CardDescription className="text-xs">Total penjualan bersih harian untuk periode terpilih.</CardDescription>
                   </CardHeader>
-                  <CardContent className="h-[300px] pl-2 pr-6 pb-6">
+                  <CardContent className="h-[350px] sm:h-[400px] pl-0 pr-4 pb-6"> {/* Adjusted padding */}
                     {loadingChartSales ? (
                       <Skeleton className="h-full w-full" />
                     ) : chartSalesData.length > 0 ? (
                       <ChartContainer config={chartConfig} className="w-full h-full">
-                        <BarChart accessibilityLayer data={chartSalesData} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}>
+                        <BarChart accessibilityLayer data={chartSalesData} margin={{ top: 5, right: 5, left: 15, bottom: 5 }}> {/* Increased left margin */}
                           <CartesianGrid vertical={false} strokeDasharray="3 3" />
                           <XAxis
                             dataKey="name"
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            className="text-xs"
+                            className="text-xs sm:text-sm"
                           />
                           <YAxis
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tickFormatter={(value) => `${selectedBranch?.currency || 'Rp'}${value / 1000}k`}
-                            className="text-xs"
+                            tickFormatter={formatYAxisTick} // Use new formatter
+                            className="text-xs sm:text-sm"
+                            width={70} // Give more space for Y-axis labels
                           />
                           <RechartsTooltip
                             cursor={{ fill: 'hsl(var(--muted))' }}
@@ -416,7 +453,8 @@ export default function DashboardPage() {
                     )}
                   </CardContent>
                 </Card>
-                <Card className="lg:col-span-1">
+                
+                <Card className="lg:col-span-2"> {/* Status Inventaris now also takes full width, below the chart */}
                   <CardHeader>
                     <CardTitle className="text-base font-semibold">Status Inventaris</CardTitle>
                     <CardDescription className="text-xs">Ringkasan level stok terkini (tidak terpengaruh filter tanggal).</CardDescription>
@@ -434,7 +472,7 @@ export default function DashboardPage() {
                               <h3 className="font-medium text-xs">Total Produk Unik</h3>
                               {loadingInventorySummary ? <Skeleton className="h-5 w-24" /> : <p className="text-base font-bold text-primary">{inventorySummary?.totalUniqueProducts ?? 0} produk terdaftar</p>}
                           </div>
-                          <Layers className="h-5 w-5 text-primary" />
+                          <Package className="h-5 w-5 text-primary" /> {/* Changed icon from Layers to Package */}
                       </div>
                   </CardContent>
                 </Card>
