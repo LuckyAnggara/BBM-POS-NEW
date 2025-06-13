@@ -5,7 +5,7 @@ import type { InventoryItem } from "./inventory";
 import type { Branch } from "@/contexts/branch-context";
 import { getBranchById } from "./branches";
 import type { QueryOptions } from "./types";
-import { createStockMutationInTransaction, type StockMutationInput } from "./stockMutations"; // Added import
+import { prepareStockMutationData, type StockMutationInput } from "./stockMutations"; // Updated import
 
 export type ShiftPaymentMethod = 'cash' | 'card' | 'transfer'; // For shift reporting
 export type PaymentTerms = 'cash' | 'card' | 'transfer' | 'credit'; // For transaction recording
@@ -157,7 +157,7 @@ export async function recordTransaction(
 
   const transactionRef = doc(collection(db, "posTransactions"));
   const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
-  const transactionTimestamp = Timestamp.now();
+  const transactionTimestamp = Timestamp.now(); // Use a consistent client-side timestamp for mutations
 
   try {
     await runTransaction(db, async (firestoreTransaction) => {
@@ -174,9 +174,11 @@ export async function recordTransaction(
         const item = transactionInput.items[i];
         if (productSnap.exists()) {
           const productData = productSnap.data() as InventoryItem;
+          if (productData.quantity < item.quantity) {
+            throw new Error(`Stok tidak cukup untuk produk ${productData.name}. Stok tersedia: ${productData.quantity}, diminta: ${item.quantity}.`);
+          }
           productCurrentStates.set(item.productId, { data: productData, currentStock: productData.quantity });
         } else {
-          // Produk tidak ditemukan, transaksi harus gagal
           throw new Error(`Produk dengan ID ${item.productId} (${item.productName}) tidak ditemukan di inventaris.`);
         }
       }
@@ -220,7 +222,7 @@ export async function recordTransaction(
         if (state) {
           const currentStock = state.currentStock;
           const newStock = currentStock - item.quantity;
-          firestoreTransaction.update(productRef, { quantity: newStock < 0 ? 0 : newStock, updatedAt: serverTimestamp() });
+          firestoreTransaction.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
 
           const mutationInput: Omit<StockMutationInput, 'currentProductStock'> = {
             branchId: transactionInput.branchId,
@@ -235,10 +237,9 @@ export async function recordTransaction(
             userId: transactionInput.userId,
             userName: userName,
           };
-          // `createStockMutationInTransaction` expects currentStock *before* this specific mutation
-          await createStockMutationInTransaction(firestoreTransaction, productRef, mutationInput, currentStock);
+          const { mutationRef: stockMutationRef, mutationToSave } = prepareStockMutationData(mutationInput, currentStock);
+          firestoreTransaction.set(stockMutationRef, mutationToSave);
         }
-        // Error jika state tidak ditemukan sudah ditangani di tahap pembacaan
       }
     });
 
@@ -266,7 +267,7 @@ export async function processFullTransactionReturn(
   if (!returnedByUserId) return { error: "ID Pengguna yang memproses retur diperlukan." };
 
   const transactionRef = doc(db, "posTransactions", transactionId);
-  const returnTimestamp = Timestamp.now();
+  const returnTimestamp = Timestamp.now(); // Consistent client-side timestamp
 
   try {
     await runTransaction(db, async (firestoreTransaction) => {
@@ -295,8 +296,6 @@ export async function processFullTransactionReturn(
           productCurrentStates.set(item.productId, { data: productData, currentStock: productData.quantity });
         } else {
           console.warn(`Produk dengan ID ${item.productId} (${item.productName}) tidak ditemukan saat proses retur. Stok tidak akan dikembalikan untuk item ini.`);
-          // Kita tidak melempar error di sini agar retur tetap tercatat, meski stok item ini mungkin tidak konsisten.
-          // Atau, bisa juga dibuat lebih ketat: throw new Error(`Produk ${item.productName} tidak ditemukan.`);
         }
       }
 
@@ -306,15 +305,15 @@ export async function processFullTransactionReturn(
         returnReason: reason,
         returnedAt: serverTimestamp(),
         returnedByUserId: returnedByUserId,
-        outstandingAmount: 0,
-        paymentStatus: 'returned',
+        outstandingAmount: 0, // Clear outstanding if it was credit
+        paymentStatus: 'returned', // Set payment status to returned
       });
 
       for (const item of transactionData.items) {
         const productRef = doc(db, "inventoryItems", item.productId);
         const state = productCurrentStates.get(item.productId);
 
-        if (state) { // Hanya proses jika produk ditemukan
+        if (state) {
           const currentStock = state.currentStock;
           const newStock = currentStock + item.quantity;
           firestoreTransaction.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
@@ -332,7 +331,8 @@ export async function processFullTransactionReturn(
             userId: returnedByUserId,
             userName: returnedByUserName,
           };
-          await createStockMutationInTransaction(firestoreTransaction, productRef, mutationInput, currentStock);
+          const { mutationRef: stockMutationRef, mutationToSave } = prepareStockMutationData(mutationInput, currentStock);
+          firestoreTransaction.set(stockMutationRef, mutationToSave);
         }
       }
     });
@@ -354,16 +354,21 @@ export async function deleteTransaction(
   if (!passwordAttempt) return { error: "Password hapus diperlukan." };
 
   const transactionRef = doc(db, "posTransactions", transactionId);
-  const deletionTimestamp = Timestamp.now();
+  const deletionTimestamp = Timestamp.now(); // Consistent client-side timestamp
 
   try {
     await runTransaction(db, async (firestoreTransaction) => {
       // --- Tahap Pembacaan (Reads First) ---
-      const branchDocSnap = await firestoreTransaction.get(doc(db, "branches", branchId)); // Baca data cabang DULU
-      if (!branchDocSnap.exists()) {
+      const branchDocRef = doc(db, "branches", branchId);
+      const [transactionSnap, branchSnap] = await Promise.all([
+        firestoreTransaction.get(transactionRef),
+        firestoreTransaction.get(branchDocRef)
+      ]);
+
+      if (!branchSnap.exists()) {
         throw new Error("Data cabang tidak ditemukan.");
       }
-      const branchData = branchDocSnap.data() as Branch;
+      const branchData = branchSnap.data() as Branch;
       if (!branchData.transactionDeletionPassword) {
         throw new Error("Password hapus belum diatur untuk cabang ini. Silakan atur di Pengaturan Admin.");
       }
@@ -371,14 +376,13 @@ export async function deleteTransaction(
         throw new Error("Password hapus transaksi salah.");
       }
 
-      const transactionSnap = await firestoreTransaction.get(transactionRef);
       if (!transactionSnap.exists()) {
         throw new Error("Transaksi tidak ditemukan.");
       }
       const transactionData = transactionSnap.data() as PosTransaction;
 
       const productCurrentStates = new Map<string, { data: InventoryItem, currentStock: number }>();
-      if (transactionData.status === 'completed') { // Hanya kembalikan stok jika transaksi belum diretur
+      if (transactionData.status === 'completed') {
         const productReadPromises = transactionData.items.map(item => {
           const productRef = doc(db, "inventoryItems", item.productId);
           return firestoreTransaction.get(productRef);
@@ -403,7 +407,7 @@ export async function deleteTransaction(
           const productRef = doc(db, "inventoryItems", item.productId);
           const state = productCurrentStates.get(item.productId);
 
-          if (state) { // Hanya proses jika produk ditemukan
+          if (state) {
             const currentStock = state.currentStock;
             const newStock = currentStock + item.quantity;
             firestoreTransaction.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
@@ -421,7 +425,8 @@ export async function deleteTransaction(
               userId: deletedByUserId,
               userName: deletedByUserName,
             };
-            await createStockMutationInTransaction(firestoreTransaction, productRef, mutationInput, currentStock);
+            const { mutationRef: stockMutationRef, mutationToSave } = prepareStockMutationData(mutationInput, currentStock);
+            firestoreTransaction.set(stockMutationRef, mutationToSave);
           }
         }
       }
@@ -568,7 +573,7 @@ export async function getTransactionsForShift(shiftId: string): Promise<PosTrans
        } as PosTransaction);
     });
     return transactions;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching transactions for shift:", error);
     return [];
   }
@@ -694,3 +699,5 @@ export async function recordPaymentForCreditSale(
     return { error: error.message || "Gagal merekam pembayaran." };
   }
 }
+
+    

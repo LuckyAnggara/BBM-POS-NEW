@@ -16,6 +16,7 @@ import {
   limit,
   orderBy,
   limitToLast,
+  type DocumentReference, // Added DocumentReference
 } from "firebase/firestore";
 import { db } from "./config";
 
@@ -101,15 +102,16 @@ export async function addStockMutation(
   }
 }
 
-export async function createStockMutationInTransaction(
-  transaction: any, // Firestore Transaction object
-  productDocRef: any, // Firestore DocumentReference for the product in inventoryItems
+// PENTING: Fungsi ini TIDAK mengupdate stok di inventoryItems dan TIDAK melakukan transaction.set().
+// Ia hanya MENYIAPKAN data dan referensi untuk mutasi.
+// Pemanggilan transaction.set() harus dilakukan oleh fungsi pemanggil di dalam callback runTransaction.
+export function prepareStockMutationData( // Renamed and modified
   mutationInput: Omit<StockMutationInput, 'currentProductStock'>,
-  currentProductStock: number
-) {
+  currentProductStock: number // Stok produk yang dibaca DI DALAM transaksi sebelum update
+): { mutationRef: DocumentReference; mutationToSave: Omit<StockMutation, "id"> } {
   const mutationRef = doc(collection(db, "stockMutations"));
-  const now = serverTimestamp() as Timestamp;
-  const clientNow = Timestamp.now();
+  const now = serverTimestamp() as Timestamp; // Untuk createdAt
+  const clientNow = Timestamp.now(); // Untuk mutationTime jika tidak disediakan
 
   const stockBefore = currentProductStock;
   const stockAfter = currentProductStock + mutationInput.quantityChange;
@@ -130,8 +132,9 @@ export async function createStockMutationInTransaction(
     userName: mutationInput.userName,
     createdAt: now,
   };
-  transaction.set(mutationRef, mutationToSave);
+  return { mutationRef, mutationToSave };
 }
+
 
 export async function checkIfInitialStockExists(productId: string, branchId: string): Promise<boolean> {
   if (!productId || !branchId) {
@@ -171,36 +174,35 @@ export async function getStockLevelAtDate(productId: string, branchId: string, s
       const lastMutation = querySnapshot.docs[0].data() as StockMutation;
       return lastMutation.stockAfterMutation;
     }
-    // If no mutation found on or before the date, check for an initial stock entry ANY time before it.
-    // This covers cases where a product was initialized but had no other movements.
+    
     const initialStockQuery = query(
         collection(db, "stockMutations"),
         where("branchId", "==", branchId),
         where("productId", "==", productId),
         where("type", "==", "INITIAL_STOCK"),
-        orderBy("mutationTime", "desc"),
+        orderBy("mutationTime", "desc"), 
         limit(1)
     );
     const initialStockSnapshot = await getDocs(initialStockQuery);
     if (!initialStockSnapshot.empty) {
         const initialMutation = initialStockSnapshot.docs[0].data() as StockMutation;
-        // If this initial stock happened *after* the specificDate, then stock at specificDate was 0
         if (initialMutation.mutationTime.toDate() > specificDate) {
             return 0;
         }
-        // Otherwise, the initial stock value is the stock at that time (assuming no other mutations before it)
-        // but the first query should have caught it if it's relevant.
-        // This logic is a bit tricky. The first query is likely sufficient.
-        // If no mutation at all before specificDate, stock is 0.
-        // The only case this second query helps is if the INITIAL_STOCK is the *only* mutation and it's before specificDate.
-        // The first query would already return this.
-        // So, if first query is empty, it means no mutations AT ALL on or before specificDate, so stock is 0.
+        // If initial stock is found and it's before or on specificDate,
+        // and no other mutations were found by the first query,
+        // this implies the stock was its initial value.
+        // However, the first query should catch this if the mutationTime is <= specificDate.
+        // If the first query is empty, it means no mutation *at or before* specificDate.
+        // This can happen if INITIAL_STOCK is the ONLY mutation and it's *after* specificDate.
+        // Or if there are no mutations at all.
+        // Thus, if the first query is empty, the stock at `specificDate` is 0 (or whatever value it was before any recorded mutations).
     }
 
-    return 0; // Default to 0 if no mutations found
+    return 0; // Default to 0 if no mutations found on or before the specific date
   } catch (error) {
     console.error("Error fetching stock level at date:", error);
-    return 0; // Return 0 in case of error or if no data found
+    return 0;
   }
 }
 
@@ -237,3 +239,5 @@ export async function getMutationsForProductInRange(
     return [];
   }
 }
+
+    
