@@ -1,14 +1,16 @@
 
+'use server';
+
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion, runTransaction } from "firebase/firestore";
 import { db } from "./config";
 import type { InventoryItem } from "./inventory";
 import type { Branch } from "@/contexts/branch-context";
 import { getBranchById } from "./branches";
 import type { QueryOptions } from "./types";
-import { prepareStockMutationData, type StockMutationInput } from "./stockMutations"; // Updated import
+import { prepareStockMutationData, type StockMutationInput } from "./stockMutations";
 
-export type ShiftPaymentMethod = 'cash' | 'card' | 'transfer'; // For shift reporting
-export type PaymentTerms = 'cash' | 'card' | 'transfer' | 'credit'; // For transaction recording
+export type ShiftPaymentMethod = 'cash' | 'card' | 'transfer';
+export type PaymentTerms = 'cash' | 'card' | 'transfer' | 'credit';
 export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid' | 'overdue' | 'returned';
 
 
@@ -97,11 +99,11 @@ export interface TransactionItem {
   productId: string;
   productName: string;
   quantity: number;
-  price: number; // Price per unit after item discount
+  price: number;
   costPrice: number;
-  total: number; // quantity * price
-  originalPrice?: number; // Price before item discount
-  discountAmount?: number; // Amount of discount for this item
+  total: number;
+  originalPrice?: number;
+  discountAmount?: number;
 }
 
 export interface TransactionPayment {
@@ -119,18 +121,18 @@ export interface PosTransaction {
   userId: string;
   timestamp: Timestamp;
   items: TransactionItem[];
-  subtotal: number; // Subtotal after item discounts but before overall voucher/shipping
+  subtotal: number;
   taxAmount: number;
   shippingCost?: number;
-  voucherCode?: string | null; // Allow null
+  voucherCode?: string | null;
   voucherDiscountAmount?: number;
-  totalDiscountAmount?: number; // Sum of all item discounts + voucher discount
-  totalAmount: number; // Final amount after all discounts and shipping
+  totalDiscountAmount?: number;
+  totalAmount: number;
   totalCost: number;
   paymentTerms: PaymentTerms;
   customerId?: string;
-  customerName?: string | null; // Allow null
-  creditDueDate?: Timestamp | null; // Allow null
+  customerName?: string | null;
+  creditDueDate?: Timestamp | null;
   isCreditSale?: boolean;
   outstandingAmount?: number;
   paymentStatus?: PaymentStatus;
@@ -140,10 +142,10 @@ export interface PosTransaction {
   invoiceNumber: string;
   status: 'completed' | 'returned';
   returnedAt?: Timestamp;
-  returnReason?: string | null; // Allow null
+  returnReason?: string | null;
   returnedByUserId?: string;
-  bankName?: string | null; // Allow null
-  bankTransactionRef?: string | null; // Allow null
+  bankName?: string | null;
+  bankTransactionRef?: string | null;
 }
 
 export async function recordTransaction(
@@ -157,11 +159,10 @@ export async function recordTransaction(
 
   const transactionRef = doc(collection(db, "posTransactions"));
   const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
-  const transactionTimestamp = Timestamp.now(); // Use a consistent client-side timestamp for mutations
+  const transactionTimestamp = Timestamp.now();
 
   try {
     await runTransaction(db, async (firestoreTransaction) => {
-      // --- Tahap Pembacaan (Reads First) ---
       const productReadPromises = transactionInput.items.map(item => {
         const productRef = doc(db, "inventoryItems", item.productId);
         return firestoreTransaction.get(productRef);
@@ -183,7 +184,6 @@ export async function recordTransaction(
         }
       }
 
-      // --- Tahap Penulisan (Writes Next) ---
       const dataToSave: Omit<PosTransaction, 'id'> = {
         shiftId: transactionInput.shiftId,
         branchId: transactionInput.branchId,
@@ -217,18 +217,18 @@ export async function recordTransaction(
 
       for (const item of transactionInput.items) {
         const productRef = doc(db, "inventoryItems", item.productId);
-        const state = productCurrentStates.get(item.productId);
+        const productState = productCurrentStates.get(item.productId);
 
-        if (state) {
-          const currentStock = state.currentStock;
+        if (productState) {
+          const currentStock = productState.currentStock;
           const newStock = currentStock - item.quantity;
           firestoreTransaction.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
 
-          const mutationInput: Omit<StockMutationInput, 'currentProductStock'> = {
+          const mutationInputForPrepare: Omit<StockMutationInput, 'currentProductStock'> = {
             branchId: transactionInput.branchId,
             productId: item.productId,
-            productName: state.data.name,
-            sku: state.data.sku,
+            productName: productState.data.name,
+            sku: productState.data.sku,
             mutationTime: transactionTimestamp,
             type: "SALE",
             quantityChange: -item.quantity,
@@ -237,7 +237,8 @@ export async function recordTransaction(
             userId: transactionInput.userId,
             userName: userName,
           };
-          const { mutationRef: stockMutationRef, mutationToSave } = prepareStockMutationData(mutationInput, currentStock);
+          const mutationToSave = await prepareStockMutationData(mutationInputForPrepare, currentStock);
+          const stockMutationRef = doc(collection(db, "stockMutations"));
           firestoreTransaction.set(stockMutationRef, mutationToSave);
         }
       }
@@ -267,11 +268,10 @@ export async function processFullTransactionReturn(
   if (!returnedByUserId) return { error: "ID Pengguna yang memproses retur diperlukan." };
 
   const transactionRef = doc(db, "posTransactions", transactionId);
-  const returnTimestamp = Timestamp.now(); // Consistent client-side timestamp
+  const returnTimestamp = Timestamp.now();
 
   try {
     await runTransaction(db, async (firestoreTransaction) => {
-      // --- Tahap Pembacaan (Reads First) ---
       const transactionSnap = await firestoreTransaction.get(transactionRef);
       if (!transactionSnap.exists()) {
         throw new Error("Transaksi tidak ditemukan.");
@@ -299,30 +299,29 @@ export async function processFullTransactionReturn(
         }
       }
 
-      // --- Tahap Penulisan (Writes Next) ---
       firestoreTransaction.update(transactionRef, {
         status: 'returned',
         returnReason: reason,
         returnedAt: serverTimestamp(),
         returnedByUserId: returnedByUserId,
-        outstandingAmount: 0, // Clear outstanding if it was credit
-        paymentStatus: 'returned', // Set payment status to returned
+        outstandingAmount: 0,
+        paymentStatus: 'returned',
       });
 
       for (const item of transactionData.items) {
         const productRef = doc(db, "inventoryItems", item.productId);
-        const state = productCurrentStates.get(item.productId);
+        const productState = productCurrentStates.get(item.productId);
 
-        if (state) {
-          const currentStock = state.currentStock;
+        if (productState) {
+          const currentStock = productState.currentStock;
           const newStock = currentStock + item.quantity;
           firestoreTransaction.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
 
-          const mutationInput: Omit<StockMutationInput, 'currentProductStock'> = {
+          const mutationInputForPrepare: Omit<StockMutationInput, 'currentProductStock'> = {
             branchId: transactionData.branchId,
             productId: item.productId,
-            productName: state.data.name,
-            sku: state.data.sku,
+            productName: productState.data.name,
+            sku: productState.data.sku,
             mutationTime: returnTimestamp,
             type: "SALE_RETURN",
             quantityChange: item.quantity,
@@ -331,7 +330,8 @@ export async function processFullTransactionReturn(
             userId: returnedByUserId,
             userName: returnedByUserName,
           };
-          const { mutationRef: stockMutationRef, mutationToSave } = prepareStockMutationData(mutationInput, currentStock);
+          const mutationToSave = await prepareStockMutationData(mutationInputForPrepare, currentStock);
+          const stockMutationRef = doc(collection(db, "stockMutations"));
           firestoreTransaction.set(stockMutationRef, mutationToSave);
         }
       }
@@ -354,11 +354,10 @@ export async function deleteTransaction(
   if (!passwordAttempt) return { error: "Password hapus diperlukan." };
 
   const transactionRef = doc(db, "posTransactions", transactionId);
-  const deletionTimestamp = Timestamp.now(); // Consistent client-side timestamp
+  const deletionTimestamp = Timestamp.now();
 
   try {
     await runTransaction(db, async (firestoreTransaction) => {
-      // --- Tahap Pembacaan (Reads First) ---
       const branchDocRef = doc(db, "branches", branchId);
       const [transactionSnap, branchSnap] = await Promise.all([
         firestoreTransaction.get(transactionRef),
@@ -401,22 +400,21 @@ export async function deleteTransaction(
         }
       }
 
-      // --- Tahap Penulisan (Writes Next) ---
       if (transactionData.status === 'completed') {
         for (const item of transactionData.items) {
           const productRef = doc(db, "inventoryItems", item.productId);
-          const state = productCurrentStates.get(item.productId);
+          const productState = productCurrentStates.get(item.productId);
 
-          if (state) {
-            const currentStock = state.currentStock;
+          if (productState) {
+            const currentStock = productState.currentStock;
             const newStock = currentStock + item.quantity;
             firestoreTransaction.update(productRef, { quantity: newStock, updatedAt: serverTimestamp() });
 
-            const mutationInput: Omit<StockMutationInput, 'currentProductStock'> = {
+            const mutationInputForPrepare: Omit<StockMutationInput, 'currentProductStock'> = {
               branchId: transactionData.branchId,
               productId: item.productId,
-              productName: state.data.name,
-              sku: state.data.sku,
+              productName: productState.data.name,
+              sku: productState.data.sku,
               mutationTime: deletionTimestamp,
               type: "TRANSACTION_DELETED_SALE_RESTOCK",
               quantityChange: item.quantity,
@@ -425,7 +423,8 @@ export async function deleteTransaction(
               userId: deletedByUserId,
               userName: deletedByUserName,
             };
-            const { mutationRef: stockMutationRef, mutationToSave } = prepareStockMutationData(mutationInput, currentStock);
+            const mutationToSave = await prepareStockMutationData(mutationInputForPrepare, currentStock);
+            const stockMutationRef = doc(collection(db, "stockMutations"));
             firestoreTransaction.set(stockMutationRef, mutationToSave);
           }
         }
@@ -470,7 +469,7 @@ export async function getTransactionsForUserByBranch(
     let constraints: any[] = [
         where("branchId", "==", branchId)
     ];
-    
+
     if (options.startDate && options.endDate) {
         const startTimestamp = Timestamp.fromDate(options.startDate);
         const endOfDayEndDate = new Date(options.endDate);
@@ -529,7 +528,7 @@ export async function getShiftsForUserByBranch(
             const endOfDayEndDate = new Date(options.endDate);
             endOfDayEndDate.setHours(23, 59, 59, 999);
             const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
-            
+
             constraints.push(where("startTime", ">=", startTimestamp));
             constraints.push(where("startTime", "<=", endTimestamp));
         }
@@ -624,7 +623,7 @@ export async function getOutstandingCreditSalesByBranch(
   const constraints: any[] = [
     where("branchId", "==", branchId),
     where("isCreditSale", "==", true),
-    where("paymentStatus", "in", ["unpaid", "partially_paid"]), 
+    where("paymentStatus", "in", ["unpaid", "partially_paid"]),
   ];
 
   if (options.orderByField) {
@@ -699,5 +698,3 @@ export async function recordPaymentForCreditSale(
     return { error: error.message || "Gagal merekam pembayaran." };
   }
 }
-
-    

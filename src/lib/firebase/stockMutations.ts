@@ -1,5 +1,5 @@
 
-"use server";
+'use server';
 
 import {
   doc,
@@ -16,46 +16,45 @@ import {
   limit,
   orderBy,
   limitToLast,
-  type DocumentReference, 
+  type DocumentReference,
 } from "firebase/firestore";
 import { db } from "./config";
 
 export type StockMutationType =
-  | "INITIAL_STOCK" 
-  | "SALE" 
-  | "PURCHASE_RECEIPT" 
-  | "SALE_RETURN" 
-  | "PURCHASE_RETURN" 
-  | "ADJUSTMENT_IN" 
-  | "ADJUSTMENT_OUT" 
-  | "TRANSACTION_DELETED_SALE_RESTOCK"; 
+  | "INITIAL_STOCK"
+  | "SALE"
+  | "PURCHASE_RECEIPT"
+  | "SALE_RETURN"
+  | "PURCHASE_RETURN"
+  | "ADJUSTMENT_IN"
+  | "ADJUSTMENT_OUT"
+  | "TRANSACTION_DELETED_SALE_RESTOCK";
 
 export interface StockMutation {
   id: string;
   branchId: string;
   productId: string;
-  productName: string; 
-  sku?: string; 
-  mutationTime: Timestamp; 
+  productName: string;
+  sku?: string;
+  mutationTime: Timestamp;
   type: StockMutationType;
-  quantityChange: number; 
+  quantityChange: number;
   stockBeforeMutation: number;
   stockAfterMutation: number;
-  referenceId?: string; 
+  referenceId?: string;
   notes?: string;
-  userId?: string; 
-  userName?: string; 
-  createdAt: Timestamp; 
+  userId?: string;
+  userName?: string;
+  createdAt: Timestamp;
 }
 
 export type StockMutationInput = Omit<
   StockMutation,
   "id" | "createdAt" | "stockBeforeMutation" | "stockAfterMutation"
 > & {
-    currentProductStock: number; 
+    currentProductStock: number;
 };
 
-// Type for data passed to Client Components
 export interface ClientStockMutation extends Omit<StockMutation, 'mutationTime' | 'createdAt'> {
   mutationTime: string; // ISO string
   createdAt: string;    // ISO string
@@ -82,7 +81,7 @@ export async function addStockMutation(
       productId: mutationData.productId,
       productName: mutationData.productName,
       sku: mutationData.sku || undefined,
-      mutationTime: mutationData.mutationTime || clientNow, 
+      mutationTime: mutationData.mutationTime || clientNow,
       type: mutationData.type,
       quantityChange: mutationData.quantityChange,
       stockBeforeMutation: stockBefore,
@@ -100,7 +99,7 @@ export async function addStockMutation(
       id: docRef.id,
       ...dataToSave,
       mutationTime: mutationData.mutationTime || clientNow,
-      createdAt: clientNow, 
+      createdAt: clientNow,
     };
   } catch (error: any) {
     console.error("Error adding stock mutation:", error);
@@ -108,14 +107,14 @@ export async function addStockMutation(
   }
 }
 
-
+// This function prepares the data for a stock mutation to be used within a Firestore transaction.
+// It no longer creates the DocumentReference itself.
 export async function prepareStockMutationData(
   mutationInput: Omit<StockMutationInput, 'currentProductStock'>,
-  currentProductStock: number 
-): Promise<{ mutationRef: DocumentReference; mutationToSave: Omit<StockMutation, "id"> }> {
-  const mutationRef = doc(collection(db, "stockMutations"));
-  const now = serverTimestamp() as Timestamp; 
-  const clientNow = Timestamp.now(); 
+  currentProductStock: number
+): Promise<Omit<StockMutation, "id">> {
+  const now = serverTimestamp() as Timestamp;
+  const clientNow = Timestamp.now();
 
   const stockBefore = currentProductStock;
   const stockAfter = currentProductStock + mutationInput.quantityChange;
@@ -136,7 +135,7 @@ export async function prepareStockMutationData(
     userName: mutationInput.userName,
     createdAt: now,
   };
-  return { mutationRef, mutationToSave };
+  return mutationToSave;
 }
 
 
@@ -178,13 +177,13 @@ export async function getStockLevelAtDate(productId: string, branchId: string, s
       const lastMutation = querySnapshot.docs[0].data() as StockMutation;
       return lastMutation.stockAfterMutation;
     }
-    
+
     const initialStockQuery = query(
         collection(db, "stockMutations"),
         where("branchId", "==", branchId),
         where("productId", "==", productId),
         where("type", "==", "INITIAL_STOCK"),
-        orderBy("mutationTime", "desc"), 
+        orderBy("mutationTime", "desc"),
         limit(1)
     );
     const initialStockSnapshot = await getDocs(initialStockQuery);
@@ -195,7 +194,7 @@ export async function getStockLevelAtDate(productId: string, branchId: string, s
         }
     }
 
-    return 0; 
+    return 0;
   } catch (error) {
     console.error("Error fetching stock level at date:", error);
     return 0;
@@ -244,7 +243,7 @@ export async function getMutationsForProductInRange(
         userId: data.userId,
         userName: data.userName,
         createdAt: (data.createdAt as Timestamp).toDate().toISOString(),
-      } as ClientStockMutation); // Ensure the object matches ClientStockMutation
+      } as ClientStockMutation);
     });
     return mutations;
   } catch (error) {
