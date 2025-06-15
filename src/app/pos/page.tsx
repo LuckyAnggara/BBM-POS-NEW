@@ -1,6 +1,5 @@
 
 "use client";
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import MainLayout from "@/components/layout/main-layout";
 import { useBranch } from "@/contexts/branch-context";

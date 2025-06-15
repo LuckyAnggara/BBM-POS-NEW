@@ -1,6 +1,5 @@
 
 'use server';
-
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion, runTransaction } from "firebase/firestore";
 import { db } from "./config";
 import type { InventoryItem } from "./inventory";
@@ -28,27 +27,53 @@ export interface PosShift {
   totalSalesByPaymentMethod?: Record<ShiftPaymentMethod, number>;
 }
 
-export async function startNewShift(userId: string, branchId: string, initialCash: number): Promise<PosShift | { error: string }> {
+// Client-side version of PosShift with string dates
+export interface ClientPosShift {
+  id: string;
+  userId: string;
+  branchId: string;
+  startTime: string; // ISO string
+  initialCash: number;
+  status: 'active' | 'ended';
+  endTime?: string; // ISO string
+  expectedCashAtEnd?: number;
+  actualCashAtEnd?: number;
+  cashDifference?: number;
+  totalSalesByPaymentMethod?: Record<ShiftPaymentMethod, number>;
+}
+
+export async function startNewShift(userId: string, branchId: string, initialCash: number): Promise<ClientPosShift | { error: string }> {
   if (!userId || !branchId) return { error: "User ID dan Branch ID diperlukan." };
   if (initialCash < 0) return { error: "Modal awal tidak boleh negatif." };
   try {
+    const serverNow = serverTimestamp() as Timestamp;
+    const clientNow = Timestamp.now().toDate().toISOString();
+
     const shiftData: Omit<PosShift, 'id'> = {
       userId,
       branchId,
-      startTime: serverTimestamp() as Timestamp,
+      startTime: serverNow,
       initialCash,
       status: 'active',
       totalSalesByPaymentMethod: { cash: 0, card: 0, transfer: 0},
     };
     const shiftRef = await addDoc(collection(db, "posShifts"), shiftData);
-    return { id: shiftRef.id, ...shiftData, startTime: Timestamp.now() };
+    return {
+      id: shiftRef.id,
+      userId,
+      branchId,
+      startTime: clientNow, // Return ISO string
+      initialCash,
+      status: 'active',
+      totalSalesByPaymentMethod: { cash: 0, card: 0, transfer: 0},
+    };
   } catch (error: any) {
     console.error("Error starting new shift:", error);
     return { error: error.message || "Gagal memulai shift baru." };
   }
 }
 
-export async function getActiveShift(userId: string, branchId: string): Promise<PosShift | null> {
+export async function getActiveShift(userId: string, branchId: string): Promise<ClientPosShift | null> {
   if (!userId || !branchId) return null;
   try {
     const q = query(
@@ -61,8 +86,13 @@ export async function getActiveShift(userId: string, branchId: string): Promise<
     );
     const querySnapshot = await getDocs(q);
     if (!querySnapshot.empty) {
-      const docData = querySnapshot.docs[0].data();
-      return { id: querySnapshot.docs[0].id, ...docData } as PosShift;
+      const docData = querySnapshot.docs[0].data() as PosShift;
+      return {
+        id: querySnapshot.docs[0].id,
+        ...docData,
+        startTime: docData.startTime.toDate().toISOString(),
+        endTime: docData.endTime?.toDate().toISOString(),
+      } as ClientPosShift;
     }
     return null;
   } catch (error: any) {
@@ -108,10 +138,14 @@ export interface TransactionItem {
 
 export interface TransactionPayment {
   paymentDate: Timestamp;
-  amountPaid: number;
-  paymentMethod: 'cash' | 'transfer' | 'card' | 'other';
   notes?: string;
   recordedByUserId: string;
+  amountPaid: number;
+  paymentMethod: 'cash' | 'transfer' | 'card' | 'other';
+}
+
+export interface ClientTransactionPayment extends Omit<TransactionPayment, 'paymentDate'> {
+  paymentDate: string; // ISO string
 }
 
 export interface PosTransaction {
@@ -148,10 +182,59 @@ export interface PosTransaction {
   bankTransactionRef?: string | null;
 }
 
+export interface ClientPosTransaction extends Omit<PosTransaction, 'timestamp' | 'creditDueDate' | 'returnedAt' | 'paymentsMade'> {
+  timestamp: string; // ISO string
+  creditDueDate?: string | null; // ISO string
+  returnedAt?: string; // ISO string
+  paymentsMade?: ClientTransactionPayment[];
+}
+
+
+const mapPosTransactionToClient = (docSnap: firebase.firestore.DocumentSnapshot): ClientPosTransaction => {
+    const data = docSnap.data() as PosTransaction; // Assume data fetched is of PosTransaction type
+    return {
+      id: docSnap.id,
+      shiftId: data.shiftId,
+      branchId: data.branchId,
+      userId: data.userId,
+      timestamp: data.timestamp.toDate().toISOString(),
+      items: data.items,
+      subtotal: data.subtotal,
+      taxAmount: data.taxAmount,
+      shippingCost: data.shippingCost,
+      voucherCode: data.voucherCode,
+      voucherDiscountAmount: data.voucherDiscountAmount,
+      totalDiscountAmount: data.totalDiscountAmount,
+      totalAmount: data.totalAmount,
+      totalCost: data.totalCost,
+      paymentTerms: data.paymentTerms,
+      customerId: data.customerId,
+      customerName: data.customerName,
+      creditDueDate: data.creditDueDate?.toDate().toISOString() || null,
+      isCreditSale: data.isCreditSale,
+      outstandingAmount: data.outstandingAmount,
+      paymentStatus: data.paymentStatus,
+      paymentsMade: data.paymentsMade?.map(pmt => ({
+        ...pmt,
+        paymentDate: pmt.paymentDate.toDate().toISOString(),
+      })),
+      amountPaid: data.amountPaid,
+      changeGiven: data.changeGiven,
+      invoiceNumber: data.invoiceNumber,
+      status: data.status,
+      returnedAt: data.returnedAt?.toDate().toISOString(),
+      returnReason: data.returnReason,
+      returnedByUserId: data.returnedByUserId,
+      bankName: data.bankName,
+      bankTransactionRef: data.bankTransactionRef,
+    };
+};
+
+
 export async function recordTransaction(
   transactionInput: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId' | 'paymentsMade'>,
   userName?: string
-): Promise<PosTransaction | { error: string }> {
+): Promise<ClientPosTransaction | { error: string }> {
   if (!transactionInput.shiftId || !transactionInput.branchId || !transactionInput.userId) {
     return { error: "Shift ID, Branch ID, dan User ID diperlukan untuk transaksi." };
   }
@@ -159,7 +242,7 @@ export async function recordTransaction(
 
   const transactionRef = doc(collection(db, "posTransactions"));
   const invoiceNumber = `INV-${transactionRef.id.substring(0, 8).toUpperCase()}`;
-  const transactionTimestamp = Timestamp.now();
+  const transactionTimestamp = Timestamp.now(); // Firestore Timestamp for saving
 
   try {
     await runTransaction(db, async (firestoreTransaction) => {
@@ -203,9 +286,9 @@ export async function recordTransaction(
         invoiceNumber,
         status: 'completed',
         paymentsMade: [],
-        timestamp: serverTimestamp() as Timestamp,
-        customerId: transactionInput.customerId || null,
-        customerName: transactionInput.customerName?.trim() ? transactionInput.customerName.trim() : null,
+        timestamp: serverTimestamp() as Timestamp, // Use serverTimestamp for consistency
+        customerId: transactionInput.customerId || undefined, // Ensure undefined if null/empty
+        customerName: transactionInput.customerName?.trim() ? transactionInput.customerName.trim() : undefined,
         creditDueDate: transactionInput.creditDueDate || null,
         isCreditSale: transactionInput.isCreditSale ?? false,
         outstandingAmount: transactionInput.outstandingAmount ?? (transactionInput.isCreditSale ? transactionInput.totalAmount : 0),
@@ -229,7 +312,7 @@ export async function recordTransaction(
             productId: item.productId,
             productName: productState.data.name,
             sku: productState.data.sku,
-            mutationTime: transactionTimestamp,
+            mutationTime: transactionTimestamp, // Use the client-generated Timestamp here
             type: "SALE",
             quantityChange: -item.quantity,
             referenceId: transactionRef.id,
@@ -246,7 +329,7 @@ export async function recordTransaction(
 
     const savedDoc = await getDoc(transactionRef);
     if (savedDoc.exists()) {
-      return { id: savedDoc.id, ...savedDoc.data() } as PosTransaction;
+      return mapPosTransactionToClient(savedDoc);
     } else {
       return { error: "Gagal mengambil transaksi yang baru direkam setelah penyimpanan." };
     }
@@ -302,7 +385,7 @@ export async function processFullTransactionReturn(
       firestoreTransaction.update(transactionRef, {
         status: 'returned',
         returnReason: reason,
-        returnedAt: serverTimestamp(),
+        returnedAt: serverTimestamp(), // Use serverTimestamp for actual update
         returnedByUserId: returnedByUserId,
         outstandingAmount: 0,
         paymentStatus: 'returned',
@@ -322,7 +405,7 @@ export async function processFullTransactionReturn(
             productId: item.productId,
             productName: productState.data.name,
             sku: productState.data.sku,
-            mutationTime: returnTimestamp,
+            mutationTime: returnTimestamp, // Use client-generated Timestamp
             type: "SALE_RETURN",
             quantityChange: item.quantity,
             referenceId: transactionData.id,
@@ -415,7 +498,7 @@ export async function deleteTransaction(
               productId: item.productId,
               productName: productState.data.name,
               sku: productState.data.sku,
-              mutationTime: deletionTimestamp,
+              mutationTime: deletionTimestamp, // Use client-generated Timestamp
               type: "TRANSACTION_DELETED_SALE_RESTOCK",
               quantityChange: item.quantity,
               referenceId: transactionData.id,
@@ -440,17 +523,13 @@ export async function deleteTransaction(
 }
 
 
-export async function getTransactionById(transactionId: string): Promise<PosTransaction | null> {
+export async function getTransactionById(transactionId: string): Promise<ClientPosTransaction | null> {
     if (!transactionId) return null;
     try {
         const transactionRef = doc(db, "posTransactions", transactionId);
         const docSnap = await getDoc(transactionRef);
         if (docSnap.exists()) {
-            const data = docSnap.data();
-            return {
-                id: docSnap.id,
-                ...data,
-            } as PosTransaction;
+            return mapPosTransactionToClient(docSnap);
         }
         return null;
     } catch (error) {
@@ -463,7 +542,7 @@ export async function getTransactionsForUserByBranch(
     userId: string,
     branchId: string,
     options: QueryOptions = {}
-): Promise<PosTransaction[]> {
+): Promise<ClientPosTransaction[]> {
     if (!userId || !branchId) return [];
 
     let constraints: any[] = [
@@ -492,15 +571,7 @@ export async function getTransactionsForUserByBranch(
     try {
         const q = query(collection(db, "posTransactions"), ...constraints);
         const querySnapshot = await getDocs(q);
-        const transactions: PosTransaction[] = [];
-        querySnapshot.forEach((docSnap) => {
-            const data = docSnap.data();
-            transactions.push({
-                id: docSnap.id,
-                ...data,
-            } as PosTransaction);
-        });
-        return transactions;
+        return querySnapshot.docs.map(mapPosTransactionToClient);
     } catch (error) {
         console.error("Error fetching transactions for user by branch:", error);
         return [];
@@ -512,7 +583,7 @@ export async function getShiftsForUserByBranch(
     userId: string,
     branchId: string,
     options: QueryOptions = {}
-): Promise<PosShift[]> {
+): Promise<ClientPosShift[]> {
     if (!userId || !branchId) return [];
     try {
         const constraints: any[] = [
@@ -547,9 +618,15 @@ export async function getShiftsForUserByBranch(
 
         const q = query(collection(db, "posShifts"), ...constraints);
         const querySnapshot = await getDocs(q);
-        const shifts: PosShift[] = [];
+        const shifts: ClientPosShift[] = [];
         querySnapshot.forEach((docSnap) => {
-            shifts.push({ id: docSnap.id, ...docSnap.data() } as PosShift);
+            const data = docSnap.data() as PosShift;
+            shifts.push({
+                 id: docSnap.id,
+                ...data,
+                startTime: data.startTime.toDate().toISOString(),
+                endTime: data.endTime?.toDate().toISOString(),
+            } as ClientPosShift);
         });
         return shifts;
     } catch (error) {
@@ -558,20 +635,12 @@ export async function getShiftsForUserByBranch(
     }
 }
 
-export async function getTransactionsForShift(shiftId: string): Promise<PosTransaction[]> {
+export async function getTransactionsForShift(shiftId: string): Promise<ClientPosTransaction[]> {
   if (!shiftId) return [];
   try {
     const q = query(collection(db, "posTransactions"), where("shiftId", "==", shiftId), orderBy("timestamp", "asc"));
     const querySnapshot = await getDocs(q);
-    const transactions: PosTransaction[] = [];
-    querySnapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      transactions.push({
-          id: docSnap.id,
-          ...data,
-       } as PosTransaction);
-    });
-    return transactions;
+    return querySnapshot.docs.map(mapPosTransactionToClient);
   } catch (error: any) {
     console.error("Error fetching transactions for shift:", error);
     return [];
@@ -582,7 +651,7 @@ export async function getTransactionsByDateRangeAndBranch(
   branchId: string,
   startDate: Date,
   endDate: Date
-): Promise<PosTransaction[]> {
+): Promise<ClientPosTransaction[]> {
   if (!branchId || !startDate || !endDate) return [];
   try {
     const startTimestamp = Timestamp.fromDate(startDate);
@@ -598,15 +667,7 @@ export async function getTransactionsByDateRangeAndBranch(
       orderBy("timestamp", "asc")
     );
     const querySnapshot = await getDocs(q);
-    const transactions: PosTransaction[] = [];
-    querySnapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      transactions.push({
-          id: docSnap.id,
-          ...data,
-       } as PosTransaction);
-    });
-    return transactions;
+    return querySnapshot.docs.map(mapPosTransactionToClient);
   } catch (error) {
     console.error("Error fetching transactions by date range and branch:", error);
     return [];
@@ -617,7 +678,7 @@ export async function getTransactionsByDateRangeAndBranch(
 export async function getOutstandingCreditSalesByBranch(
   branchId: string,
   options: QueryOptions = {}
-): Promise<PosTransaction[]> {
+): Promise<ClientPosTransaction[]> {
   if (!branchId) return [];
 
   const constraints: any[] = [
@@ -639,11 +700,7 @@ export async function getOutstandingCreditSalesByBranch(
   try {
     const q = query(collection(db, "posTransactions"), ...constraints);
     const querySnapshot = await getDocs(q);
-    const transactions: PosTransaction[] = [];
-    querySnapshot.forEach((docSnap) => {
-      transactions.push({ id: docSnap.id, ...docSnap.data() } as PosTransaction);
-    });
-    return transactions;
+    return querySnapshot.docs.map(mapPosTransactionToClient);
   } catch (error) {
     console.error("Error fetching outstanding credit sales:", error);
     return [];
@@ -698,3 +755,5 @@ export async function recordPaymentForCreditSale(
     return { error: error.message || "Gagal merekam pembayaran." };
   }
 }
+
+    

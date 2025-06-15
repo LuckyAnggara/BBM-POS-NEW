@@ -123,7 +123,6 @@ export async function prepareStockMutationData(
     branchId: mutationInput.branchId,
     productId: mutationInput.productId,
     productName: mutationInput.productName,
-    sku: mutationInput.sku || undefined,
     mutationTime: mutationInput.mutationTime || clientNow,
     type: mutationInput.type,
     quantityChange: mutationInput.quantityChange,
@@ -132,7 +131,6 @@ export async function prepareStockMutationData(
     referenceId: mutationInput.referenceId,
     notes: mutationInput.notes,
     userId: mutationInput.userId,
-    userName: mutationInput.userName,
     createdAt: now,
   };
   return mutationToSave;

@@ -10,10 +10,10 @@ import ProtectedRoute from "@/components/auth/ProtectedRoute";
 import { useAuth } from "@/contexts/auth-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getTransactionsByDateRangeAndBranch, getActiveShift, getTransactionsForShift, type PosTransaction } from "@/lib/firebase/pos";
+import { getTransactionsByDateRangeAndBranch, getActiveShift, getTransactionsForShift, type ClientPosTransaction, type ClientPosShift } from "@/lib/firebase/pos"; // Updated to Client types
 import { getExpenses, type Expense } from "@/lib/firebase/expenses";
 import { getInventoryItems, type InventoryItem } from "@/lib/firebase/inventory";
-import { startOfMonth, endOfMonth, format, subDays, startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
+import { startOfMonth, endOfMonth, format, subDays, startOfDay, endOfDay, startOfWeek, endOfWeek, parseISO, isValid } from "date-fns"; // Added parseISO, isValid
 import { id as localeID } from 'date-fns/locale';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from 'recharts';
 import { ChartContainer, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
@@ -21,13 +21,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 
 interface DashboardStats {
-  grossRevenueBeforeReturns: number; // Added for Gross Revenue
+  grossRevenueBeforeReturns: number;
   netRevenue: number;
   totalExpenses: number;
   netTransactionCount: number;
-  revenueChangePercentage: string; // Placeholder for now
-  expenseChangePercentage: string; // Placeholder for now
-  transactionChangePercentage: string; // Placeholder for now
+  revenueChangePercentage: string;
+  expenseChangePercentage: string;
+  transactionChangePercentage: string;
 }
 
 interface InventorySummary {
@@ -44,7 +44,7 @@ interface ActiveShiftSummary {
 }
 
 interface ChartDataPoint {
-  name: string; // Day name, date, or hour
+  name: string;
   total: number;
 }
 
@@ -95,13 +95,13 @@ export default function DashboardPage() {
 
   const formatYAxisTick = (value: number) => {
     const currency = selectedBranch?.currency || 'Rp';
-    if (Math.abs(value) >= 1000000000) { // Miliar
+    if (Math.abs(value) >= 1000000000) {
       return `${currency}${(value / 1000000000).toFixed(1).replace(/\.0$/, '')} M`;
     }
-    if (Math.abs(value) >= 1000000) { // Juta
+    if (Math.abs(value) >= 1000000) {
       return `${currency}${(value / 1000000).toFixed(1).replace(/\.0$/, '')} jt`;
     }
-    if (Math.abs(value) >= 1000) { // Ribu
+    if (Math.abs(value) >= 1000) {
       return `${currency}${(value / 1000).toFixed(0)} rb`;
     }
     return `${currency}${value}`;
@@ -119,7 +119,7 @@ export default function DashboardPage() {
         end = endOfDay(now);
         break;
       case "thisWeek":
-        start = startOfWeek(now, { weekStartsOn: 1 }); // Monday
+        start = startOfWeek(now, { weekStartsOn: 1 });
         end = endOfWeek(now, { weekStartsOn: 1 });
         break;
       case "thisMonth":
@@ -170,9 +170,9 @@ export default function DashboardPage() {
 
     try {
       const [
-        rangeTransactions,
+        rangeTransactions, // Now ClientPosTransaction[]
         rangeExpenses,
-        activeShiftData,
+        activeShiftData, // Now ClientPosShift | null
       ] = await Promise.all([
         getTransactionsByDateRangeAndBranch(selectedBranch.id, start, end),
         getExpenses(selectedBranch.id, { startDate: start, endDate: end }),
@@ -214,14 +214,16 @@ export default function DashboardPage() {
       }
 
       rangeTransactions.forEach(tx => {
-        const dateStr = format(tx.timestamp.toDate(), "yyyy-MM-dd");
-        if (salesByDay[dateStr]) {
-          if (tx.status === 'completed') {
-            salesByDay[dateStr].total += tx.totalAmount;
-          } else if (tx.status === 'returned') {
-            // For chart, we show net sales for the day
-            salesByDay[dateStr].total -= tx.totalAmount;
-          }
+        const txDate = parseISO(tx.timestamp); // Parse ISO string to Date
+        if (isValid(txDate)) {
+            const dateStr = format(txDate, "yyyy-MM-dd");
+            if (salesByDay[dateStr]) {
+            if (tx.status === 'completed') {
+                salesByDay[dateStr].total += tx.totalAmount;
+            } else if (tx.status === 'returned') {
+                salesByDay[dateStr].total -= tx.totalAmount;
+            }
+            }
         }
       });
       
@@ -231,7 +233,6 @@ export default function DashboardPage() {
             total: value.total,
         }))
         .sort((a,b) => {
-          // Ensure correct date sorting for the chart
           const dateAEntry = Object.values(salesByDay).find(d => d.dateObj && format(d.dateObj, "d MMM", { locale: localeID }) === a.name);
           const dateBEntry = Object.values(salesByDay).find(d => d.dateObj && format(d.dateObj, "d MMM", { locale: localeID }) === b.name);
           const dateA = dateAEntry ? dateAEntry.dateObj : null;
@@ -245,7 +246,7 @@ export default function DashboardPage() {
       setLoadingChartSales(false);
 
       if (activeShiftData) {
-        const shiftTransactions = await getTransactionsForShift(activeShiftData.id);
+        const shiftTransactions = await getTransactionsForShift(activeShiftData.id); // Returns ClientPosTransaction[]
         const totalCashSalesShift = shiftTransactions.filter(tx => tx.paymentTerms === 'cash' && tx.status === 'completed').reduce((sum, tx) => sum + tx.totalAmount, 0);
         const totalCardSalesShift = shiftTransactions.filter(tx => tx.paymentTerms === 'card' && tx.status === 'completed').reduce((sum, tx) => sum + tx.totalAmount, 0);
         const totalTransferSalesShift = shiftTransactions.filter(tx => tx.paymentTerms === 'transfer' && tx.status === 'completed').reduce((sum, tx) => sum + tx.totalAmount, 0);
@@ -335,7 +336,6 @@ export default function DashboardPage() {
                   </CardHeader>
                   <CardContent>
                     {loadingStats ? <Skeleton className="h-7 w-3/4" /> : <div className="text-lg font-bold">{formatCurrency(dashboardStats?.grossRevenueBeforeReturns ?? 0)}</div>}
-                    {/* Placeholder for change percentage */}
                     {loadingStats ? <Skeleton className="h-4 w-1/2 mt-1" /> : <p className="text-xs text-muted-foreground">Total penjualan sebelum retur</p>}
                   </CardContent>
                 </Card>
@@ -403,18 +403,18 @@ export default function DashboardPage() {
                 </Card>
               )}
 
-              <div className="grid gap-4 lg:grid-cols-2"> {/* This will now be the main grid for chart and inventory */}
-                <Card className="lg:col-span-2"> {/* Tren Penjualan takes full width */}
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Card className="lg:col-span-2">
                   <CardHeader>
                     <CardTitle className="text-base font-semibold">Tren Penjualan</CardTitle>
                     <CardDescription className="text-xs">Total penjualan bersih harian untuk periode terpilih.</CardDescription>
                   </CardHeader>
-                  <CardContent className="h-[350px] sm:h-[400px] pl-0 pr-4 pb-6"> {/* Adjusted padding */}
+                  <CardContent className="h-[350px] sm:h-[400px] pl-0 pr-4 pb-6">
                     {loadingChartSales ? (
                       <Skeleton className="h-full w-full" />
                     ) : chartSalesData.length > 0 ? (
                       <ChartContainer config={chartConfig} className="w-full h-full">
-                        <BarChart accessibilityLayer data={chartSalesData} margin={{ top: 5, right: 5, left: 15, bottom: 5 }}> {/* Increased left margin */}
+                        <BarChart accessibilityLayer data={chartSalesData} margin={{ top: 5, right: 5, left: 15, bottom: 5 }}>
                           <CartesianGrid vertical={false} strokeDasharray="3 3" />
                           <XAxis
                             dataKey="name"
@@ -427,9 +427,9 @@ export default function DashboardPage() {
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tickFormatter={formatYAxisTick} // Use new formatter
+                            tickFormatter={formatYAxisTick}
                             className="text-xs sm:text-sm"
-                            width={70} // Give more space for Y-axis labels
+                            width={70}
                           />
                           <RechartsTooltip
                             cursor={{ fill: 'hsl(var(--muted))' }}
@@ -454,7 +454,7 @@ export default function DashboardPage() {
                   </CardContent>
                 </Card>
                 
-                <Card className="lg:col-span-2"> {/* Status Inventaris now also takes full width, below the chart */}
+                <Card className="lg:col-span-2">
                   <CardHeader>
                     <CardTitle className="text-base font-semibold">Status Inventaris</CardTitle>
                     <CardDescription className="text-xs">Ringkasan level stok terkini (tidak terpengaruh filter tanggal).</CardDescription>
@@ -472,7 +472,7 @@ export default function DashboardPage() {
                               <h3 className="font-medium text-xs">Total Produk Unik</h3>
                               {loadingInventorySummary ? <Skeleton className="h-5 w-24" /> : <p className="text-base font-bold text-primary">{inventorySummary?.totalUniqueProducts ?? 0} produk terdaftar</p>}
                           </div>
-                          <Package className="h-5 w-5 text-primary" /> {/* Changed icon from Layers to Package */}
+                          <Package className="h-5 w-5 text-primary" />
                       </div>
                   </CardContent>
                 </Card>
