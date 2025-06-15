@@ -36,15 +36,15 @@ import {
   recordTransaction,
   getTransactionsForShift,
   getTransactionById,
-  type PosShift,
-  type PosTransaction,
+  type ClientPosShift, // Changed to ClientPosShift
+  type ClientPosTransaction, // Changed to ClientPosTransaction
   type TransactionItem,
   type PaymentTerms,
   type ShiftPaymentMethod
 } from "@/lib/firebase/pos";
 import { Timestamp, type DocumentSnapshot, type DocumentData } from "firebase/firestore";
 import ScanCustomerDialog from "@/components/pos/scan-customer-dialog";
-import { format } from "date-fns";
+import { format, parseISO, isValid } from "date-fns"; // Added parseISO and isValid
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -68,7 +68,7 @@ export default function POSPage() {
 
   const [viewMode, setViewMode] = useState<ViewMode>("card");
 
-  const [activeShift, setActiveShift] = useState<PosShift | null>(null);
+  const [activeShift, setActiveShift] = useState<ClientPosShift | null>(null); // Changed to ClientPosShift
   const [loadingShift, setLoadingShift] = useState(true);
   const [showStartShiftModal, setShowStartShiftModal] = useState(false);
   const [initialCashInput, setInitialCashInput] = useState("");
@@ -122,7 +122,7 @@ export default function POSPage() {
   const [bankRefNumberInput, setBankRefNumberInput] = useState("");
   const [customerNameInputBank, setCustomerNameInputBank] = useState("");
 
-  const [shiftTransactions, setShiftTransactions] = useState<PosTransaction[]>([]);
+  const [shiftTransactions, setShiftTransactions] = useState<ClientPosTransaction[]>([]); // Changed to ClientPosTransaction
   const [loadingShiftTransactions, setLoadingShiftTransactions] = useState(false);
   const [showBankHistoryDialog, setShowBankHistoryDialog] = useState(false);
   const [showShiftCashDetailsDialog, setShowShiftCashDetailsDialog] = useState(false);
@@ -579,7 +579,7 @@ export default function POSPage() {
     const change = amountPaidNum - total;
     setIsProcessingSale(true);
 
-    const transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp'> = {
+    const transactionData: Omit<ClientPosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId' | 'paymentsMade'> = { // Changed PosTransaction to ClientPosTransaction
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
       userId: currentUser.uid,
@@ -596,10 +596,10 @@ export default function POSPage() {
       amountPaid: amountPaidNum,
       changeGiven: change,
       customerName: customerNameInputCash.trim() || undefined,
-      status: 'completed',
+      // status: 'completed', // Handled by server function
     };
 
-    const result = await recordTransaction(transactionData);
+    const result = await recordTransaction(transactionData, userData?.name); // Pass userName
     setIsProcessingSale(false);
     setShowCashPaymentModal(false);
 
@@ -637,7 +637,7 @@ export default function POSPage() {
     }
 
     setIsProcessingSale(true);
-    const transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp'> = {
+    const transactionData: Omit<ClientPosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId' | 'paymentsMade'> = {
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
       userId: currentUser.uid,
@@ -654,12 +654,12 @@ export default function POSPage() {
       amountPaid: total,
       changeGiven: 0,
       customerName: customerNameInputBank.trim() || undefined,
-      status: 'completed',
+      // status: 'completed',
       bankName: selectedBankName,
       bankTransactionRef: bankRefNumberInput.trim(),
     };
 
-    const result = await recordTransaction(transactionData);
+    const result = await recordTransaction(transactionData, userData?.name); // Pass userName
     setIsProcessingSale(false);
     setShowBankPaymentModal(false);
 
@@ -721,7 +721,7 @@ export default function POSPage() {
     }
 
     setIsProcessingSale(true);
-    const transactionData: Omit<PosTransaction, 'id' | 'invoiceNumber' | 'timestamp'> = {
+    const transactionData: Omit<ClientPosTransaction, 'id' | 'invoiceNumber' | 'timestamp' | 'status' | 'returnedAt' | 'returnReason' | 'returnedByUserId' | 'paymentsMade'> = {
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
       userId: currentUser.uid,
@@ -739,14 +739,14 @@ export default function POSPage() {
       changeGiven: 0,
       customerId: selectedPaymentTerms === 'credit' ? selectedCustomerId : undefined,
       customerName: customerNameForTx,
-      creditDueDate: selectedPaymentTerms === 'credit' && creditDueDate ? Timestamp.fromDate(creditDueDate) : undefined,
+      creditDueDate: selectedPaymentTerms === 'credit' && creditDueDate ? creditDueDate.toISOString() : undefined, // Send as ISO string
       isCreditSale: selectedPaymentTerms === 'credit',
       outstandingAmount: selectedPaymentTerms === 'credit' ? total : 0,
       paymentStatus: selectedPaymentTerms === 'credit' ? 'unpaid' : 'paid',
-      status: 'completed',
+      // status: 'completed',
     };
 
-    const result = await recordTransaction(transactionData);
+    const result = await recordTransaction(transactionData, userData?.name); // Pass userName
 
     if ("error" in result || !result.id) {
       toast({ title: "Gagal Merekam Transaksi", description: result.error || "ID transaksi tidak ditemukan.", variant: "destructive" });
@@ -787,13 +787,15 @@ export default function POSPage() {
           setLastTransactionId(null);
           return;
         }
-
+        
+        const transactionDate = parseISO(transactionDetails.timestamp); // Parse ISO string
+        
         const payload = {
           branchName: selectedBranch.invoiceName || selectedBranch.name,
           branchAddress: selectedBranch.address || "",
           branchPhone: selectedBranch.phoneNumber || "",
           invoiceNumber: transactionDetails.invoiceNumber,
-          transactionDate: format(transactionDetails.timestamp.toDate(), "dd MMM yyyy, HH:mm"),
+          transactionDate: format(transactionDate, "dd MMM yyyy, HH:mm"),
           cashierName: userData.name || currentUser.displayName || "Kasir",
           customerName: transactionDetails.customerName || "",
           items: transactionDetails.items.map(item => ({
@@ -892,9 +894,10 @@ export default function POSPage() {
     return shiftTransactions.filter(tx => tx.paymentTerms === 'transfer' && tx.status === 'completed');
   }, [shiftTransactions]);
 
-  const formatDateTimestamp = (timestamp?: Timestamp, includeTime = true) => {
-    if (!timestamp) return "N/A";
-    const date = timestamp.toDate();
+  const formatDateTimestamp = (timestampString?: string, includeTime = true) => {
+    if (!timestampString) return "N/A";
+    const date = parseISO(timestampString); // Parse ISO string to Date
+    if (!isValid(date)) return "Invalid Date";
     return format(date, includeTime ? "dd MMM yy, HH:mm" : "dd MMM yyyy");
   };
 
