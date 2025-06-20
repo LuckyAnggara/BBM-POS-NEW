@@ -164,7 +164,7 @@ export interface PosTransaction {
   totalAmount: number;
   totalCost: number;
   paymentTerms: PaymentTerms;
-  customerId?: string;
+  customerId?: string | null;
   customerName?: string | null;
   creditDueDate?: Timestamp | null;
   isCreditSale?: boolean;
@@ -287,8 +287,8 @@ export async function recordTransaction(
         status: 'completed',
         paymentsMade: [],
         timestamp: serverTimestamp() as Timestamp, // Use serverTimestamp for consistency
-        customerId: transactionInput.customerId || undefined, // Ensure undefined if null/empty
-        customerName: transactionInput.customerName?.trim() ? transactionInput.customerName.trim() : undefined,
+        customerId: transactionInput.customerId || null, // Ensure undefined if null/empty
+        customerName: transactionInput.customerName?.trim() ? transactionInput.customerName.trim() : null,
         creditDueDate: transactionInput.creditDueDate || null,
         isCreditSale: transactionInput.isCreditSale ?? false,
         outstandingAmount: transactionInput.outstandingAmount ?? (transactionInput.isCreditSale ? transactionInput.totalAmount : 0),

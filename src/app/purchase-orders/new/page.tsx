@@ -32,6 +32,7 @@ import { format } from "date-fns";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { Separator } from "@/components/ui/separator";
 
 const poItemSchema = z.object({
   productId: z.string().min(1, { message: "Produk harus dipilih." }),
@@ -49,6 +50,9 @@ const purchaseOrderFormSchema = z.object({
   paymentTermsOnPO: z.enum(['cash', 'credit'], { required_error: "Termin pembayaran harus dipilih."}).default('cash'),
   supplierInvoiceNumber: z.string().optional(),
   paymentDueDateOnPO: z.date().optional(),
+  taxDiscountAmount: z.coerce.number().min(0, { message: "Diskon pajak tidak boleh negatif." }).optional(),
+  shippingCostCharged: z.coerce.number().min(0, { message: "Ongkos kirim tidak boleh negatif." }).optional(),
+  otherCosts: z.coerce.number().min(0, { message: "Biaya lain tidak boleh negatif." }).optional(),
 }).refine(data => {
     if (data.paymentTermsOnPO === 'credit' && !data.paymentDueDateOnPO) {
         return false;
@@ -86,6 +90,9 @@ export default function NewPurchaseOrderPage() {
       notes: "",
       paymentTermsOnPO: "cash",
       supplierInvoiceNumber: "",
+      taxDiscountAmount: 0,
+      shippingCostCharged: 0,
+      otherCosts: 0,
     },
   });
 
@@ -139,9 +146,6 @@ export default function NewPurchaseOrderPage() {
 
   const handleProductPopoverOpenChange = (index: number, open: boolean) => {
     setOpenProductPopovers(prev => ({ ...prev, [index]: open }));
-    if (!open) {
-      
-    }
   };
 
 
@@ -174,11 +178,14 @@ export default function NewPurchaseOrderPage() {
       expectedDeliveryDate: values.expectedDeliveryDate ? Timestamp.fromDate(values.expectedDeliveryDate) : undefined,
       items: poItems,
       notes: values.notes,
-      status: 'draft',
+      status: 'draft', 
       createdById: currentUser.uid,
       paymentTermsOnPO: values.paymentTermsOnPO as PurchaseOrderPaymentTerms,
       supplierInvoiceNumber: values.supplierInvoiceNumber,
       paymentDueDateOnPO: values.paymentTermsOnPO === 'credit' && values.paymentDueDateOnPO ? Timestamp.fromDate(values.paymentDueDateOnPO) : undefined,
+      taxDiscountAmount: values.taxDiscountAmount || 0,
+      shippingCostCharged: values.shippingCostCharged || 0,
+      otherCosts: values.otherCosts || 0,
     };
 
     const result = await addPurchaseOrder(poInputData, selectedSupplier.name);
@@ -193,11 +200,17 @@ export default function NewPurchaseOrderPage() {
 
   const currencySymbol = selectedBranch?.currency || 'Rp';
 
-  const subtotal = poForm.watch('items').reduce((acc, item) => {
+  const itemsSubtotal = poForm.watch('items').reduce((acc, item) => {
     const quantity = Number(item.orderedQuantity) || 0;
     const price = Number(item.purchasePrice) || 0;
     return acc + (quantity * price);
   }, 0);
+  
+  const taxDiscountAmount = poForm.watch("taxDiscountAmount") || 0;
+  const shippingCostCharged = poForm.watch("shippingCostCharged") || 0;
+  const otherCosts = poForm.watch("otherCosts") || 0;
+  
+  const totalAmount = itemsSubtotal - taxDiscountAmount + shippingCostCharged + otherCosts;
 
   const paymentTermsWatch = poForm.watch("paymentTermsOnPO");
 
@@ -343,6 +356,27 @@ export default function NewPurchaseOrderPage() {
                         </>
                     )}
                 </div>
+                
+                <Separator />
+                <p className="text-sm font-medium text-muted-foreground">Biaya & Diskon Tambahan</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <Label htmlFor="shippingCostCharged" className="text-xs">Ongkos Kirim Dibebankan ({currencySymbol})</Label>
+                        <Input id="shippingCostCharged" type="number" {...poForm.register("shippingCostCharged")} className="h-9 text-xs mt-1" placeholder="0"/>
+                        {poForm.formState.errors.shippingCostCharged && <p className="text-xs text-destructive mt-1">{poForm.formState.errors.shippingCostCharged.message}</p>}
+                    </div>
+                    <div>
+                        <Label htmlFor="taxDiscountAmount" className="text-xs">Diskon Pajak ({currencySymbol})</Label>
+                        <Input id="taxDiscountAmount" type="number" {...poForm.register("taxDiscountAmount")} className="h-9 text-xs mt-1" placeholder="0"/>
+                        {poForm.formState.errors.taxDiscountAmount && <p className="text-xs text-destructive mt-1">{poForm.formState.errors.taxDiscountAmount.message}</p>}
+                    </div>
+                    <div>
+                        <Label htmlFor="otherCosts" className="text-xs">Biaya Lainnya ({currencySymbol})</Label>
+                        <Input id="otherCosts" type="number" {...poForm.register("otherCosts")} className="h-9 text-xs mt-1" placeholder="0"/>
+                        {poForm.formState.errors.otherCosts && <p className="text-xs text-destructive mt-1">{poForm.formState.errors.otherCosts.message}</p>}
+                    </div>
+                </div>
+                <Separator />
 
                 <div>
                   <Label htmlFor="notes" className="text-xs">Catatan (Opsional)</Label>
@@ -467,8 +501,18 @@ export default function NewPurchaseOrderPage() {
                     })}
                 </CardContent>
                  <CardFooter className="flex flex-col items-end p-3 border-t space-y-1">
-                    <div className="text-sm">Subtotal: <span className="font-semibold">{currencySymbol}{subtotal.toLocaleString('id-ID')}</span></div>
-                    <div className="text-base font-bold">Total Pesanan: <span className="font-semibold">{currencySymbol}{subtotal.toLocaleString('id-ID')}</span></div>
+                    <div className="text-xs">Subtotal Item: <span className="font-semibold">{currencySymbol}{itemsSubtotal.toLocaleString('id-ID')}</span></div>
+                    {taxDiscountAmount > 0 && (
+                        <div className="text-xs text-green-600">(-) Diskon Pajak: <span className="font-semibold">{currencySymbol}{taxDiscountAmount.toLocaleString('id-ID')}</span></div>
+                    )}
+                    {shippingCostCharged > 0 && (
+                        <div className="text-xs text-destructive">(+) Ongkos Kirim: <span className="font-semibold">{currencySymbol}{shippingCostCharged.toLocaleString('id-ID')}</span></div>
+                    )}
+                    {otherCosts > 0 && (
+                        <div className="text-xs text-destructive">(+) Biaya Lainnya: <span className="font-semibold">{currencySymbol}{otherCosts.toLocaleString('id-ID')}</span></div>
+                    )}
+                    <Separator className="my-1"/>
+                    <div className="text-base font-bold">Total Pesanan: <span className="font-semibold">{currencySymbol}{totalAmount.toLocaleString('id-ID')}</span></div>
                 </CardFooter>
             </Card>
 
@@ -483,6 +527,3 @@ export default function NewPurchaseOrderPage() {
     </ProtectedRoute>
   );
 }
-
-    
-

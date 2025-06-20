@@ -1,9 +1,10 @@
 
+'use server';
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion } from "firebase/firestore";
 import { db } from "./config";
 import type { InventoryItem } from "./inventory";
 import type { QueryOptions } from "./types";
-import { addStockMutation, type StockMutationInput } from "./stockMutations"; // Added import
+import { addStockMutation, type StockMutationInput, prepareStockMutationData } from "./stockMutations";
 
 export type PurchaseOrderStatus = 'draft' | 'ordered' | 'partially_received' | 'fully_received' | 'cancelled';
 export type PurchaseOrderPaymentStatus = 'unpaid' | 'partially_paid' | 'paid' | 'overdue';
@@ -12,7 +13,7 @@ export type PurchaseOrderPaymentTerms = 'cash' | 'credit';
 export interface PaymentToSupplier {
   paymentDate: Timestamp;
   amountPaid: number;
-  paymentMethod: 'cash' | 'transfer' | 'card' | 'other'; // Could be more specific if needed
+  paymentMethod: 'cash' | 'transfer' | 'card' | 'other';
   notes?: string;
   recordedByUserId: string;
 }
@@ -41,6 +42,9 @@ export interface PurchaseOrderInput {
   paymentTermsOnPO?: PurchaseOrderPaymentTerms;
   supplierInvoiceNumber?: string;
   paymentDueDateOnPO?: Timestamp;
+  taxDiscountAmount?: number;
+  shippingCostCharged?: number;
+  otherCosts?: number;
 }
 
 export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
@@ -49,8 +53,9 @@ export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
   supplierName: string;
   items: PurchaseOrderItem[];
   subtotal: number;
-  shippingCost?: number;
-  taxAmount?: number;
+  taxDiscountAmount: number; // ensure it's not optional here for consistency if defaulted
+  shippingCostCharged: number; // ensure it's not optional here
+  otherCosts: number; // ensure it's not optional here
   totalAmount: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -63,7 +68,7 @@ export interface PurchaseOrder extends Omit<PurchaseOrderInput, 'items'> {
 export async function addPurchaseOrder(
   poData: PurchaseOrderInput,
   supplierName: string,
-  userName?: string // Optional: for stock mutation logging
+  userName?: string
 ): Promise<PurchaseOrder | { error: string }> {
   if (!poData.branchId) return { error: "ID Cabang diperlukan." };
   if (!poData.supplierId) return { error: "Pemasok harus dipilih." };
@@ -82,7 +87,12 @@ export async function addPurchaseOrder(
     }));
 
     const subtotal = processedItems.reduce((sum, item) => sum + item.totalPrice, 0);
-    const totalAmount = subtotal;
+    
+    const taxDiscountAmount = poData.taxDiscountAmount || 0;
+    const shippingCostCharged = poData.shippingCostCharged || 0;
+    const otherCosts = poData.otherCosts || 0;
+
+    const totalAmount = subtotal - taxDiscountAmount + shippingCostCharged + otherCosts;
     const poNumber = `PO-${poRef.id.substring(0, 8).toUpperCase()}`;
 
     const dataToSave: Omit<PurchaseOrder, 'id'> = {
@@ -97,15 +107,16 @@ export async function addPurchaseOrder(
       status: poData.status || 'draft',
       createdById: poData.createdById,
       subtotal,
-      shippingCost: 0,
-      taxAmount: 0,
+      taxDiscountAmount,
+      shippingCostCharged,
+      otherCosts,
       totalAmount,
       paymentTermsOnPO: poData.paymentTermsOnPO || 'cash',
       supplierInvoiceNumber: poData.supplierInvoiceNumber || "",
       paymentDueDateOnPO: poData.paymentDueDateOnPO,
       isCreditPurchase: poData.paymentTermsOnPO === 'credit',
       outstandingPOAmount: poData.paymentTermsOnPO === 'credit' ? totalAmount : 0,
-      paymentStatusOnPO: poData.paymentTermsOnPO === 'credit' ? 'unpaid' : 'paid',
+      paymentStatusOnPO: poData.paymentTermsOnPO === 'credit' ? 'unpaid' : (totalAmount > 0 ? 'unpaid' : 'paid'), // Adjusted for cash case with 0 total
       paymentsMadeToSupplier: [],
       createdAt: now,
       updatedAt: now,
@@ -136,10 +147,8 @@ export async function getPurchaseOrdersByBranch(
       where("branchId", "==", branchId)
   ];
 
-  // Date filtering based on orderDate
   if (options.startDate && options.endDate) {
     const startTimestamp = Timestamp.fromDate(options.startDate);
-    // Adjust endDate to include the whole day
     const endOfDayEndDate = new Date(options.endDate);
     endOfDayEndDate.setHours(23, 59, 59, 999);
     const endTimestamp = Timestamp.fromDate(endOfDayEndDate);
@@ -152,13 +161,11 @@ export async function getPurchaseOrdersByBranch(
   if (options.orderByField) {
       constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
   } else {
-      // Default sort by createdAt if no specific order is requested,
-      // or if only date range is provided without explicit orderByField.
       constraints.push(orderBy(options.startDate && options.endDate ? "orderDate" : "createdAt", "desc"));
   }
 
 
-  if (options.limit && !(options.startDate && options.endDate)) { // Apply limit only if not doing a date range for full history
+  if (options.limit && !(options.startDate && options.endDate)) {
       constraints.push(limit(options.limit));
   }
 
@@ -168,7 +175,14 @@ export async function getPurchaseOrdersByBranch(
       const querySnapshot = await getDocs(q);
       const purchaseOrders: PurchaseOrder[] = [];
       querySnapshot.forEach((docSnap) => {
-          purchaseOrders.push({ id: docSnap.id, ...docSnap.data() } as PurchaseOrder);
+          const data = docSnap.data();
+          purchaseOrders.push({ 
+            id: docSnap.id, 
+            ...data,
+            taxDiscountAmount: data.taxDiscountAmount || 0,
+            shippingCostCharged: data.shippingCostCharged || 0,
+            otherCosts: data.otherCosts || 0,
+          } as PurchaseOrder);
       });
       return purchaseOrders;
   } catch (error) {
@@ -183,7 +197,14 @@ export async function getPurchaseOrderById(poId: string): Promise<PurchaseOrder 
         const poRef = doc(db, "purchaseOrders", poId);
         const docSnap = await getDoc(poRef);
         if (docSnap.exists()) {
-            return { id: docSnap.id, ...docSnap.data() } as PurchaseOrder;
+            const data = docSnap.data();
+            return { 
+              id: docSnap.id, 
+              ...data,
+              taxDiscountAmount: data.taxDiscountAmount || 0,
+              shippingCostCharged: data.shippingCostCharged || 0,
+              otherCosts: data.otherCosts || 0,
+            } as PurchaseOrder;
         }
         return null;
     } catch (error) {
@@ -220,107 +241,106 @@ export interface ReceivedItemData {
 export async function receivePurchaseOrderItems(
   poId: string,
   itemsReceived: ReceivedItemData[],
-  receivedByUserId?: string, // Optional: for stock mutation
-  receivedByUserName?: string // Optional: for stock mutation
+  receivedByUserId?: string, 
+  receivedByUserName?: string
 ): Promise<void | { error: string }> {
   if (!poId) return { error: "ID Pesanan Pembelian tidak valid." };
   if (!itemsReceived || itemsReceived.length === 0) {
     return { error: "Tidak ada item yang ditandai diterima." };
   }
 
-  const batch = writeBatch(db);
   const poRef = doc(db, "purchaseOrders", poId);
-  const receiptTimestamp = Timestamp.now(); // Client-side timestamp for mutations
+  const receiptTimestamp = Timestamp.now(); 
 
   try {
-    const poSnap = await getDoc(poRef); // Read PO data outside batch
-    if (!poSnap.exists()) {
-      return { error: "Pesanan Pembelian tidak ditemukan." };
-    }
-    const purchaseOrder = poSnap.data() as PurchaseOrder;
+    await runTransaction(db, async (firestoreTransaction) => {
+        const poSnap = await firestoreTransaction.get(poRef);
+        if (!poSnap.exists()) {
+            throw new Error("Pesanan Pembelian tidak ditemukan.");
+        }
+        const purchaseOrder = poSnap.data() as PurchaseOrder;
 
-    if (purchaseOrder.status === 'fully_received' || purchaseOrder.status === 'cancelled') {
-      return { error: `Tidak dapat menerima item untuk PO yang sudah ${purchaseOrder.status === 'fully_received' ? 'diterima penuh' : 'dibatalkan'}.` };
-    }
+        if (purchaseOrder.status === 'fully_received' || purchaseOrder.status === 'cancelled') {
+            throw new Error(`Tidak dapat menerima item untuk PO yang sudah ${purchaseOrder.status === 'fully_received' ? 'diterima penuh' : 'dibatalkan'}.`);
+        }
 
-    const updatedPoItems = [...purchaseOrder.items];
-    const inventoryUpdates: { ref: any, newStock: number, costPrice: number, productName: string, sku?: string, quantityReceivedNow: number }[] = [];
-
-
-    for (const receivedItem of itemsReceived) {
-      if (receivedItem.quantityReceivedNow <= 0) continue;
-
-      const poItemIndex = updatedPoItems.findIndex(item => item.productId === receivedItem.productId);
-      if (poItemIndex === -1) {
-        console.warn(`Item dengan productId ${receivedItem.productId} tidak ditemukan di PO ${poId}.`);
-        continue;
-      }
-
-      const poItem = updatedPoItems[poItemIndex];
-      const newReceivedQuantity = poItem.receivedQuantity + receivedItem.quantityReceivedNow;
-
-      if (newReceivedQuantity > poItem.orderedQuantity) {
-        return { error: `Jumlah diterima untuk ${poItem.productName} (${newReceivedQuantity}) melebihi jumlah dipesan (${poItem.orderedQuantity}).` };
-      }
-
-      updatedPoItems[poItemIndex] = { ...poItem, receivedQuantity: newReceivedQuantity };
-
-      const inventoryItemRef = doc(db, "inventoryItems", receivedItem.productId);
-      // We need to read the current stock before calculating new stock for the batch update.
-      // Since batch doesn't allow reads, we assume `increment` handles concurrency or this needs a transaction per item.
-      // For simplicity and given previous structure, we'll use increment.
-      // Cost price update is direct.
-      batch.update(inventoryItemRef, {
-        quantity: require("firebase/firestore").increment(receivedItem.quantityReceivedNow),
-        costPrice: poItem.purchasePrice,
-        updatedAt: serverTimestamp(),
-      });
-      // Store info needed for mutation logging after batch commit
-      inventoryUpdates.push({ 
-        ref: inventoryItemRef, 
-        newStock: 0, // Will be read after batch
-        costPrice: poItem.purchasePrice,
-        productName: poItem.productName,
-        sku: (await getDoc(inventoryItemRef)).data()?.sku, // Read SKU now if possible, or from poItem if denormalized
-        quantityReceivedNow: receivedItem.quantityReceivedNow 
-      });
-    }
-    
-    const allItemsFullyReceived = updatedPoItems.every(item => item.receivedQuantity === item.orderedQuantity);
-    const newStatus = allItemsFullyReceived ? 'fully_received' : 'partially_received';
-
-    batch.update(poRef, {
-      items: updatedPoItems,
-      status: newStatus,
-      updatedAt: serverTimestamp(),
-    });
-
-    await batch.commit();
-
-    // After batch commit, log stock mutations
-    for (const update of inventoryUpdates) {
-      const productSnap = await getDoc(update.ref);
-      if (productSnap.exists()) {
-        const updatedProductStock = productSnap.data().quantity;
-        const stockBeforeThisReceipt = updatedProductStock - update.quantityReceivedNow;
+        const updatedPoItems = [...purchaseOrder.items];
         
-        const mutationInput: StockMutationInput = {
-          branchId: purchaseOrder.branchId,
-          productId: update.ref.id,
-          productName: update.productName, 
-          sku: update.sku,
-          mutationTime: receiptTimestamp,
-          type: "PURCHASE_RECEIPT",
-          quantityChange: update.quantityReceivedNow,
-          currentProductStock: stockBeforeThisReceipt, // Stock before this specific receipt
-          referenceId: purchaseOrder.id,
-          notes: `Penerimaan dari PO: ${purchaseOrder.poNumber}`,
-          userId: receivedByUserId,
-          userName: receivedByUserName,
-        };
-        await addStockMutation(mutationInput);
-      }
-    }
+        const productReadPromises = itemsReceived
+            .filter(recItem => recItem.quantityReceivedNow > 0)
+            .map(recItem => {
+                const itemRef = doc(db, "inventoryItems", recItem.productId);
+                return firestoreTransaction.get(itemRef).then(snap => ({ snap, recItem }));
+            });
+        
+        const productSnapshotsWithReceivedData = await Promise.all(productReadPromises);
+        const inventoryUpdatesForMutations: { productId: string, productName: string, sku?: string, currentStock: number, quantityReceivedNow: number }[] = [];
+
+
+        for (const { snap: productSnap, recItem: receivedItem } of productSnapshotsWithReceivedData) {
+            if (!productSnap.exists()) {
+                console.warn(`Produk dengan ID ${receivedItem.productId} tidak ditemukan di inventaris. Penerimaan untuk item ini dilewati.`);
+                continue;
+            }
+            const productData = productSnap.data() as InventoryItem;
+
+            const poItemIndex = updatedPoItems.findIndex(item => item.productId === receivedItem.productId);
+            if (poItemIndex === -1) {
+                console.warn(`Item dengan productId ${receivedItem.productId} tidak ditemukan di PO ${poId}.`);
+                continue;
+            }
+
+            const poItem = updatedPoItems[poItemIndex];
+            const newReceivedQuantity = poItem.receivedQuantity + receivedItem.quantityReceivedNow;
+
+            if (newReceivedQuantity > poItem.orderedQuantity) {
+                throw new Error(`Jumlah diterima untuk ${poItem.productName} (${newReceivedQuantity}) melebihi jumlah dipesan (${poItem.orderedQuantity}).`);
+            }
+            updatedPoItems[poItemIndex] = { ...poItem, receivedQuantity: newReceivedQuantity };
+            
+            const inventoryItemRef = doc(db, "inventoryItems", receivedItem.productId);
+            firestoreTransaction.update(inventoryItemRef, {
+                quantity: require("firebase/firestore").increment(receivedItem.quantityReceivedNow),
+                costPrice: poItem.purchasePrice, // Update cost price based on this PO
+                updatedAt: serverTimestamp(),
+            });
+            inventoryUpdatesForMutations.push({
+                productId: receivedItem.productId,
+                productName: productData.name,
+                sku: productData.sku,
+                currentStock: productData.quantity,
+                quantityReceivedNow: receivedItem.quantityReceivedNow
+            });
+        }
+        
+        const allItemsFullyReceived = updatedPoItems.every(item => item.receivedQuantity === item.orderedQuantity);
+        const newStatus = allItemsFullyReceived ? 'fully_received' : 'partially_received';
+
+        firestoreTransaction.update(poRef, {
+            items: updatedPoItems,
+            status: newStatus,
+            updatedAt: serverTimestamp(),
+        });
+
+        // Stock mutations are now part of the same transaction
+        for (const update of inventoryUpdatesForMutations) {
+            const mutationData = await prepareStockMutationData({
+                branchId: purchaseOrder.branchId,
+                productId: update.productId,
+                productName: update.productName,
+                sku: update.sku,
+                mutationTime: receiptTimestamp,
+                type: "PURCHASE_RECEIPT",
+                quantityChange: update.quantityReceivedNow,
+                referenceId: purchaseOrder.id,
+                notes: `Penerimaan dari PO: ${purchaseOrder.poNumber}`,
+                userId: receivedByUserId,
+                userName: receivedByUserName,
+            }, update.currentStock);
+            const stockMutationRef = doc(collection(db, "stockMutations"));
+            firestoreTransaction.set(stockMutationRef, mutationData);
+        }
+    });
 
   } catch (error: any) {
     console.error("Error receiving purchase order items:", error);
@@ -344,7 +364,7 @@ export async function getOutstandingPurchaseOrdersByBranch(
   if (options.orderByField) {
     constraints.push(orderBy(options.orderByField, options.orderDirection || 'desc'));
   } else {
-    constraints.push(orderBy("paymentDueDateOnPO", "asc")); // Order by due date for payables
+    constraints.push(orderBy("paymentDueDateOnPO", "asc")); 
   }
 
   if (options.limit) {
@@ -356,7 +376,14 @@ export async function getOutstandingPurchaseOrdersByBranch(
     const querySnapshot = await getDocs(q);
     const purchaseOrders: PurchaseOrder[] = [];
     querySnapshot.forEach((docSnap) => {
-      purchaseOrders.push({ id: docSnap.id, ...docSnap.data() } as PurchaseOrder);
+        const data = docSnap.data();
+        purchaseOrders.push({ 
+            id: docSnap.id, 
+            ...data,
+            taxDiscountAmount: data.taxDiscountAmount || 0,
+            shippingCostCharged: data.shippingCostCharged || 0,
+            otherCosts: data.otherCosts || 0,
+        } as PurchaseOrder);
     });
     return purchaseOrders;
   } catch (error) {
@@ -416,4 +443,3 @@ export async function recordPaymentToSupplier(
     return { error: error.message || "Gagal merekam pembayaran ke pemasok." };
   }
 }
-

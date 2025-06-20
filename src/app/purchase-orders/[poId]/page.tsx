@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle as DialogModalTitle, DialogDescription as DialogModalDescription, DialogFooter as DialogModalFooter, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea"; // Added import
+import { Textarea } from "@/components/ui/textarea"; 
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import type { PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus, ReceivedItemData, PurchaseOrderPaymentStatus, PaymentToSupplier } from "@/lib/firebase/purchaseOrders";
@@ -186,7 +186,7 @@ export default function PurchaseOrderDetailPage() {
     }
 
     setIsProcessingReceipt(true);
-    const result = await receivePurchaseOrderItems(purchaseOrder.id, itemsToProcess);
+    const result = await receivePurchaseOrderItems(purchaseOrder.id, itemsToProcess, currentUser?.uid, currentUser?.displayName || undefined);
     setIsProcessingReceipt(false);
 
     if (result && "error" in result) {
@@ -243,7 +243,7 @@ export default function PurchaseOrderDetailPage() {
   };
 
   const formatCurrency = (amount: number | undefined) => {
-    if (amount === undefined) return "N/A";
+    if (amount === undefined || amount === null) return "N/A"; // Handle null and undefined
     return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID')}`;
   };
 
@@ -292,7 +292,7 @@ export default function PurchaseOrderDetailPage() {
       case 'paid': text = "Lunas"; break;
       case 'unpaid': text = "Belum Bayar"; break;
       case 'partially_paid': text = "Bayar Sebagian"; break;
-      case 'overdue': text = "Jatuh Tempo"; break; // This might not be a direct status from DB, but calculated
+      case 'overdue': text = "Jatuh Tempo"; break; 
       default: text = status;
     }
     if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
@@ -378,21 +378,39 @@ export default function PurchaseOrderDetailPage() {
                   </TableBody>
                 </Table>
                  <Separator className="my-3"/>
-                 <div className="flex justify-end items-center text-sm">
-                    <div className="w-full max-w-xs space-y-1">
+                 <div className="flex justify-end items-start text-sm">
+                    <div className="w-full max-w-xs space-y-1 text-xs">
                         <div className="flex justify-between">
-                            <span>Subtotal:</span>
+                            <span>Subtotal Item:</span>
                             <span className="font-medium">{formatCurrency(purchaseOrder.subtotal)}</span>
                         </div>
-                         {/* Add tax and shipping later if needed */}
+                        {(purchaseOrder.taxDiscountAmount || 0) > 0 && (
+                            <div className="flex justify-between text-green-600">
+                                <span>Diskon Pajak (-):</span>
+                                <span className="font-medium">{formatCurrency(purchaseOrder.taxDiscountAmount)}</span>
+                            </div>
+                        )}
+                        {(purchaseOrder.shippingCostCharged || 0) > 0 && (
+                             <div className="flex justify-between text-destructive">
+                                <span>Ongkos Kirim (+):</span>
+                                <span className="font-medium">{formatCurrency(purchaseOrder.shippingCostCharged)}</span>
+                            </div>
+                        )}
+                        {(purchaseOrder.otherCosts || 0) > 0 && (
+                            <div className="flex justify-between text-destructive">
+                                <span>Biaya Lainnya (+):</span>
+                                <span className="font-medium">{formatCurrency(purchaseOrder.otherCosts)}</span>
+                            </div>
+                        )}
+                        <Separator className="my-1.5"/>
                         <div className="flex justify-between font-semibold text-base">
                             <span>Total Pesanan:</span>
                             <span>{formatCurrency(purchaseOrder.totalAmount)}</span>
                         </div>
                         {purchaseOrder.isCreditPurchase && (
-                            <div className="flex justify-between text-destructive">
+                            <div className="flex justify-between text-destructive font-semibold">
                                 <span>Sisa Utang:</span>
-                                <span className="font-semibold">{formatCurrency(purchaseOrder.outstandingPOAmount)}</span>
+                                <span>{formatCurrency(purchaseOrder.outstandingPOAmount)}</span>
                             </div>
                         )}
                     </div>
@@ -622,4 +640,3 @@ export default function PurchaseOrderDetailPage() {
     </ProtectedRoute>
   );
 }
-

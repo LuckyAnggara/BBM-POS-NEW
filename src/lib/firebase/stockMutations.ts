@@ -44,7 +44,7 @@ export interface StockMutation {
   referenceId?: string;
   notes?: string;
   userId?: string;
-  userName?: string;
+  userName?: string | null;
   createdAt: Timestamp;
 }
 
