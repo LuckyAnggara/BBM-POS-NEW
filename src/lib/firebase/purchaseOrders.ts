@@ -1,6 +1,6 @@
 
 'use server';
-import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion, runTransaction } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp, Timestamp, collection, addDoc, getDocs, updateDoc, query, where, deleteDoc, writeBatch, orderBy, limit, arrayUnion, runTransaction, increment } from "firebase/firestore"; // Added increment
 import { db } from "./config";
 import type { InventoryItem } from "./inventory";
 import type { QueryOptions } from "./types";
@@ -266,7 +266,6 @@ export async function receivePurchaseOrderItems(
 
         const updatedPoItems = [...purchaseOrder.items];
         
-        // Read all products first
         const productReadPromises = itemsReceived
             .filter(recItem => recItem.quantityReceivedNow > 0)
             .map(recItem => {
@@ -310,7 +309,7 @@ export async function receivePurchaseOrderItems(
                 productId: receivedItem.productId,
                 productName: productData.name,
                 sku: productData.sku,
-                currentStock: productData.quantity, // Store current stock before any updates
+                currentStock: productData.quantity,
                 quantityReceivedNow: receivedItem.quantityReceivedNow
             });
         }
@@ -318,7 +317,6 @@ export async function receivePurchaseOrderItems(
         const allItemsFullyReceived = updatedPoItems.every(item => item.receivedQuantity === item.orderedQuantity);
         const newStatus = allItemsFullyReceived ? 'fully_received' : 'partially_received';
 
-        // Now, perform all writes
         firestoreTransaction.update(poRef, {
             items: updatedPoItems,
             status: newStatus,
@@ -328,8 +326,8 @@ export async function receivePurchaseOrderItems(
         for (const update of inventoryUpdatesForMutations) {
             const inventoryItemRef = doc(db, "inventoryItems", update.productId);
             firestoreTransaction.update(inventoryItemRef, {
-                quantity: require("firebase/firestore").increment(update.quantityReceivedNow),
-                costPrice: purchaseOrder.items.find(i => i.productId === update.productId)?.purchasePrice, // Update cost price based on this PO
+                quantity: increment(update.quantityReceivedNow),
+                costPrice: purchaseOrder.items.find(i => i.productId === update.productId)?.purchasePrice, 
                 updatedAt: serverTimestamp(),
             });
 
@@ -345,7 +343,7 @@ export async function receivePurchaseOrderItems(
                 notes: `Penerimaan dari PO: ${purchaseOrder.poNumber}`,
                 userId: receivedByUserId,
                 userName: receivedByUserName,
-            }, update.currentStock); // Pass the stock read *before* this transaction's updates
+            }, update.currentStock); 
             
             const stockMutationRef = doc(collection(db, "stockMutations"));
             firestoreTransaction.set(stockMutationRef, mutationData);
