@@ -137,18 +137,46 @@ export default function AccountsPayablePage() {
     }
   };
 
-  const formatDate = (timestamp: Timestamp | undefined, includeTime = false) => {
+  const formatDate = (timestamp: any, includeTime = false) => {
     if (!timestamp) return "N/A";
-    const date = timestamp.toDate();
+  
+    let date: Date;
+  
+    if (timestamp instanceof Timestamp) {
+      date = timestamp.toDate();
+    } else if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (timestamp?.seconds) {
+      // kemungkinan objek dari Firestore yang belum diconvert
+      date = new Timestamp(timestamp.seconds, timestamp.nanoseconds).toDate();
+    } else {
+      // fallback
+      date = new Date(timestamp);
+    }
+  
     return format(date, includeTime ? "dd MMM yyyy, HH:mm" : "dd MMM yyyy");
   };
-
   const formatCurrency = (amount: number | undefined) => {
     if (amount === undefined) return "N/A";
     return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID')}`;
   };
 
-  const getStatusBadge = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
+  // const getStatusBadge = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
+  //   let variant: "default" | "secondary" | "destructive" | "outline" = "secondary";
+  //   let text = status ? status.charAt(0).toUpperCase() + status.slice(1) : "N/A";
+
+  //   if (status === 'paid') { variant = 'default'; text = "Lunas"; }
+  //   else if (status === 'unpaid') { variant = 'destructive'; text = "Belum Bayar"; }
+  //   else if (status === 'partially_paid') { variant = 'outline'; text = "Bayar Sebagian"; }
+
+  //   if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
+  //     variant = 'destructive';
+  //     text = "Jatuh Tempo";
+  //   }
+  //   return <Badge variant={variant} className={cn(variant === 'default' && 'bg-green-600 hover:bg-green-700 text-white', variant === 'outline' && 'border-yellow-500 text-yellow-600')}>{text}</Badge>;
+  // };
+
+  const getStatusBadge = (status: PurchaseOrderPaymentStatus | undefined, dueDateMillis?: number) => {
     let variant: "default" | "secondary" | "destructive" | "outline" = "secondary";
     let text = status ? status.charAt(0).toUpperCase() + status.slice(1) : "N/A";
 
@@ -156,7 +184,10 @@ export default function AccountsPayablePage() {
     else if (status === 'unpaid') { variant = 'destructive'; text = "Belum Bayar"; }
     else if (status === 'partially_paid') { variant = 'outline'; text = "Bayar Sebagian"; }
 
-    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
+    // Convert milliseconds to a Date object before comparison
+    const dueDate = dueDateMillis !== undefined ? new Date(dueDateMillis) : undefined;
+
+    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate, startOfDay(new Date()))) {
       variant = 'destructive';
       text = "Jatuh Tempo";
     }

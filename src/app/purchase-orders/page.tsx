@@ -203,10 +203,24 @@ export default function PurchaseOrdersPage() {
   };
 
 
-  const formatDate = (timestamp: Timestamp | Date | undefined) => {
+  const formatDate = (timestamp: any, includeTime = false) => {
     if (!timestamp) return "N/A";
-    const date = timestamp instanceof Timestamp ? timestamp.toDate() : timestamp;
-    return format(date, "dd MMM yyyy");
+  
+    let date: Date;
+  
+    if (timestamp instanceof Timestamp) {
+      date = timestamp.toDate();
+    } else if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (timestamp?.seconds) {
+      // kemungkinan objek dari Firestore yang belum diconvert
+      date = new Timestamp(timestamp.seconds, timestamp.nanoseconds).toDate();
+    } else {
+      // fallback
+      date = new Date(timestamp);
+    }
+  
+    return format(date, includeTime ? "dd MMM yyyy, HH:mm" : "dd MMM yyyy");
   };
 
   const formatCurrency = (amount: number | undefined) => {
@@ -236,7 +250,8 @@ export default function PurchaseOrdersPage() {
     }
   };
 
-  const getPaymentStatusBadgeVariant = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
+  
+  const getPaymentStatusBadgeVariant = (status: PurchaseOrderPaymentStatus | undefined, dueDateMillis?: number) => {
     let variant: "default" | "secondary" | "destructive" | "outline" = "secondary";
     if (!status) return variant;
 
@@ -244,25 +259,32 @@ export default function PurchaseOrdersPage() {
     else if (status === 'unpaid') { variant = 'destructive'; }
     else if (status === 'partially_paid') { variant = 'outline'; }
 
-    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
+    // Convert milliseconds to a Date object before comparison
+    const dueDate = dueDateMillis !== undefined ? new Date(dueDateMillis) : undefined;
+
+    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate, startOfDay(new Date()))) {
       variant = 'destructive';
     }
     return variant;
   };
 
-  const getPaymentStatusText = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
+  const getPaymentStatusText = (status: PurchaseOrderPaymentStatus | undefined, dueDateMillis?: number) => {
     if (!status) return "N/A";
     let text = "";
      switch (status) {
       case 'paid': text = "Lunas"; break;
       case 'unpaid': text = "Belum Bayar"; break;
       case 'partially_paid': text = "Bayar Sebagian"; break;
-      case 'overdue': text = "Jatuh Tempo"; break;
-      default: text = status.charAt(0).toUpperCase() + status.slice(1);
     }
-    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
-      text = "Jatuh Tempo";
+  
+    // Convert milliseconds to a Date object before comparison
+    const dueDate = dueDateMillis !== undefined ? new Date(dueDateMillis) : undefined;
+  
+    // Now check for overdue status using the Date object
+    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate, startOfDay(new Date()))) {
+      return text + " (Jatuh Tempo)";
     }
+  
     return text;
   };
 

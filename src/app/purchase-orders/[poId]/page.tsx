@@ -231,15 +231,24 @@ export default function PurchaseOrderDetailPage() {
   };
 
 
-  const formatDate = (timestamp: Timestamp | Date | undefined, includeTime = false) => {
+  const formatDate = (timestamp: any, includeTime = false) => {
     if (!timestamp) return "N/A";
-    const date = timestamp instanceof Timestamp ? timestamp.toDate() : timestamp;
-    const options: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', year: 'numeric' };
-    if (includeTime) {
-      options.hour = '2-digit';
-      options.minute = '2-digit';
+  
+    let date: Date;
+  
+    if (timestamp instanceof Timestamp) {
+      date = timestamp.toDate();
+    } else if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (timestamp?.seconds) {
+      // kemungkinan objek dari Firestore yang belum diconvert
+      date = new Timestamp(timestamp.seconds, timestamp.nanoseconds).toDate();
+    } else {
+      // fallback
+      date = new Date(timestamp);
     }
-    return new Intl.DateTimeFormat('id-ID', options).format(date);
+  
+    return format(date, includeTime ? "dd MMM yyyy, HH:mm" : "dd MMM yyyy");
   };
 
   const formatCurrency = (amount: number | undefined) => {
@@ -271,7 +280,7 @@ export default function PurchaseOrderDetailPage() {
     }
   };
 
-  const getPaymentStatusBadgeVariant = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
+  const getPaymentStatusBadgeVariant = (status: PurchaseOrderPaymentStatus | undefined, dueDateMillis?: number) => {
     let variant: "default" | "secondary" | "destructive" | "outline" = "secondary";
     if (!status) return variant;
 
@@ -279,25 +288,32 @@ export default function PurchaseOrderDetailPage() {
     else if (status === 'unpaid') { variant = 'destructive'; }
     else if (status === 'partially_paid') { variant = 'outline'; }
 
-    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
+    // Convert milliseconds to a Date object before comparison
+    const dueDate = dueDateMillis !== undefined ? new Date(dueDateMillis) : undefined;
+
+    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate, startOfDay(new Date()))) {
       variant = 'destructive';
     }
     return variant;
   };
 
-  const getPaymentStatusText = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
+  const getPaymentStatusText = (status: PurchaseOrderPaymentStatus | undefined, dueDateMillis?: number) => {
     if (!status) return "N/A";
     let text = "";
      switch (status) {
       case 'paid': text = "Lunas"; break;
       case 'unpaid': text = "Belum Bayar"; break;
       case 'partially_paid': text = "Bayar Sebagian"; break;
-      case 'overdue': text = "Jatuh Tempo"; break; 
-      default: text = status;
     }
-    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
-      text = "Jatuh Tempo";
+  
+    // Convert milliseconds to a Date object before comparison
+    const dueDate = dueDateMillis !== undefined ? new Date(dueDateMillis) : undefined;
+  
+    // Now check for overdue status using the Date object
+    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate, startOfDay(new Date()))) {
+      return text + " (Jatuh Tempo)";
     }
+  
     return text;
   };
 
@@ -368,7 +384,7 @@ export default function PurchaseOrderDetailPage() {
                   <TableBody>
                     {purchaseOrder.items.map((item, index) => (
                       <TableRow key={item.productId + index}>
-                        <TableCell className="text-xs font-medium py-1.5">{item.productName}</TableCell>
+                        <TableCell className="text-xs font-medium py-1.5">{item.productName} ({item.sku})</TableCell>
                         <TableCell className="text-xs text-center py-1.5">{item.orderedQuantity}</TableCell>
                         <TableCell className="text-xs text-center py-1.5">{item.receivedQuantity}</TableCell>
                         <TableCell className="text-xs text-right py-1.5">{formatCurrency(item.purchasePrice)}</TableCell>
@@ -433,7 +449,7 @@ export default function PurchaseOrderDetailPage() {
                             <p><strong>Jatuh Tempo Pembayaran:</strong> {purchaseOrder.paymentDueDateOnPO ? formatDate(purchaseOrder.paymentDueDateOnPO) : "-"}</p>
                            </>
                         )}
-                        <p><strong>Dibuat Oleh:</strong> {purchaseOrder.createdById.substring(0,8)}...</p>
+                        {/* <p><strong>Dibuat Oleh:</strong> {purchaseOrder.createdById.substring(0,8)}...</p> */}
                         <p><strong>Dibuat Pada:</strong> {formatDate(purchaseOrder.createdAt, true)}</p>
                         <p><strong>Diperbarui Pada:</strong> {formatDate(purchaseOrder.updatedAt, true)}</p>
                         {purchaseOrder.notes && (
