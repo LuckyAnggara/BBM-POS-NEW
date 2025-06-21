@@ -1,120 +1,133 @@
+// src/contexts/branch-context.tsx
 
-"use client";
+'use client'
 
-import type { ReactNode } from 'react';
-import { createContext, useContext, useState, useMemo, useEffect } from 'react';
-import { getBranches as fetchBranchesFromDB } from '@/lib/firebase/branches'; // Updated import
-import { useAuth } from './auth-context'; // Import useAuth
-
-export type ReportPeriodPreset = "thisMonth" | "thisWeek" | "today";
-
-export interface Branch {
-  id: string;
-  name: string;
-  currency?: string;
-  taxRate?: number;
-  invoiceName?: string;
-  address?: string;
-  phoneNumber?: string;
-  transactionDeletionPassword?: string;
-  defaultReportPeriod?: ReportPeriodPreset; // Added field
-}
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+  useCallback,
+} from 'react'
+import { useAuth } from './auth-context'
+// Ganti impor ke fungsi Appwrite yang baru
+import { listBranches, getBranchById } from '@/lib/appwrite/branches'
+// Pastikan path ke tipe data Branch sudah benar
+import type { Branch } from '@/lib/appwrite/types'
 
 interface BranchContextType {
-  branches: Branch[];
-  selectedBranch: Branch | null;
-  setSelectedBranch: (branch: Branch | null) => void;
-  loadingBranches: boolean;
-  refreshBranches: () => Promise<void>;
+  branches: Branch[]
+  selectedBranch: Branch | null
+  setSelectedBranchId: (branchId: string | null) => void
+  loadingBranches: boolean
+  refreshBranches: () => void
 }
 
-const BranchContext = createContext<BranchContextType | undefined>(undefined);
+const BranchContext = createContext<BranchContextType | undefined>(undefined)
 
-export function BranchProvider({ children }: { children: ReactNode }) {
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [selectedBranchState, setSelectedBranchStateInternal] = useState<Branch | null>(null);
-  const [loadingBranches, setLoadingBranches] = useState(true);
-  const { userData, loadingAuth, loadingUserData } = useAuth(); 
+export const BranchProvider = ({ children }: { children: ReactNode }) => {
+  const { userData, loadingAuth: authLoading } = useAuth() // Ambil status loadingBranches dari auth
+  const [branches, setBranches] = useState<Branch[]>([])
+  const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null)
+  const [loadingBranches, setLoadingBranches] = useState(true)
 
-  const fetchBranches = async () => {
-    setLoadingBranches(true);
-    const fetchedBranches = await fetchBranchesFromDB();
-    setBranches(fetchedBranches);
-    setLoadingBranches(false);
-    // Initial selection logic is now primarily handled in the useEffect below
-    // to ensure it runs after userData is also available.
-  };
+  const fetchAndSetBranches = useCallback(async () => {
+    if (!userData) return // Jangan lakukan apa-apa jika tidak ada data user
+
+    setLoadingBranches(true)
+    try {
+      const fetchedBranches = await listBranches() // Panggil fungsi Appwrite
+      setBranches(fetchedBranches)
+
+      if (fetchedBranches.length > 0) {
+        const storedBranchId = localStorage.getItem('selectedBranchId')
+        const userBranchId = userData?.branchId
+
+        let branchIdToSelect: string | null = null
+
+        // Prioritas 1: Branch yang tersimpan di localStorage (jika masih valid)
+        if (
+          storedBranchId &&
+          fetchedBranches.some((b) => b.id === storedBranchId)
+        ) {
+          branchIdToSelect = storedBranchId
+        }
+        // Prioritas 2: Branch bawaan dari data user
+        else if (
+          userBranchId &&
+          fetchedBranches.some((b) => b.id === userBranchId)
+        ) {
+          branchIdToSelect = userBranchId
+        }
+        // Prioritas 3: Branch pertama dari daftar
+        else {
+          branchIdToSelect = fetchedBranches[0].id
+        }
+
+        if (branchIdToSelect) {
+          const branchDetails = await getBranchById(branchIdToSelect)
+          setSelectedBranch(branchDetails)
+          localStorage.setItem('selectedBranchId', branchIdToSelect)
+        }
+      } else {
+        // Jika tidak ada cabang sama sekali
+        setSelectedBranch(null)
+        localStorage.removeItem('selectedBranchId')
+      }
+    } catch (error) {
+      console.error('Failed to fetch branches:', error)
+      setBranches([]) // Kosongkan jika ada error
+    } finally {
+      setLoadingBranches(false)
+    }
+  }, [userData]) // useCallback bergantung pada userData
 
   useEffect(() => {
-    fetchBranches();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
-
-  useEffect(() => {
-    if (loadingBranches || loadingAuth || loadingUserData) {
-      return; 
+    // Hanya fetch jika proses auth selesai dan ada data user
+    if (!authLoading && userData) {
+      fetchAndSetBranches()
+    } else if (!authLoading && !userData) {
+      // Jika proses auth selesai tapi tidak ada user, hentikan loadingBranches
+      setLoadingBranches(false)
     }
+  }, [userData, authLoading, fetchAndSetBranches])
 
-    let newSelectedBranch: Branch | null = null;
-
-    if (userData?.role === 'cashier' && userData.branchId) {
-      const assignedBranch = branches.find(b => b.id === userData.branchId);
-      if (assignedBranch) {
-        newSelectedBranch = assignedBranch;
-      } else {
-        console.error(
-          `Cashier ${userData.uid} is assigned to branch ${userData.branchId}, but this branch was not found. Setting selected branch to null.`
-        );
-        newSelectedBranch = null;
+  const setSelectedBranchId = (branchId: string | null) => {
+    if (branchId) {
+      const branch = branches.find((b) => b.id === branchId)
+      if (branch) {
+        console.log('Selected branch:', branch)
+        localStorage.setItem('selectedBranchId', branch.id)
       }
-    } else if (userData?.role === 'admin') {
-      // If admin and a branch is currently selected, try to keep it if it's still valid
-      const currentSelectedIsValid = selectedBranchState && branches.find(b => b.id === selectedBranchState.id);
-      if (currentSelectedIsValid) {
-        newSelectedBranch = selectedBranchState; // Keep current selection
-      } else if (branches.length > 0) {
-        newSelectedBranch = branches[0]; // Default to first branch if current is invalid or none selected
-      } else {
-        newSelectedBranch = null; // No branches available
-      }
-    } else { // No user, or unassigned role
-      newSelectedBranch = null;
+    } else {
+      setSelectedBranch(null)
+      localStorage.removeItem('selectedBranchId')
     }
+  }
 
-    // Only update if the determined newSelectedBranch is different from the current selectedBranchState
-    if (selectedBranchState?.id !== newSelectedBranch?.id) {
-      setSelectedBranchStateInternal(newSelectedBranch);
-    }
-    
-  // Removed `selectedBranchState` from dependencies to prevent loops.
-  // This effect determines the selected branch based on other states.
-  }, [branches, userData, loadingBranches, loadingAuth, loadingUserData]);
+  const refreshBranches = () => {
+    fetchAndSetBranches()
+  }
 
-
-  const setSelectedBranch = (branch: Branch | null) => {
-    // This function is for manual selection by admin, allow it to override
-    setSelectedBranchStateInternal(branch);
-  };
-
-  const value = useMemo(() => ({
+  const value = {
     branches,
-    selectedBranch: selectedBranchState,
+    selectedBranch,
     setSelectedBranch,
+    setSelectedBranchId,
     loadingBranches,
-    refreshBranches: fetchBranches,
-  }), [branches, selectedBranchState, loadingBranches]); // fetchBranches is stable
+    refreshBranches,
+  }
 
   return (
-    <BranchContext.Provider value={value}>
-      {children}
-    </BranchContext.Provider>
-  );
+    <BranchContext.Provider value={value}>{children}</BranchContext.Provider>
+  )
 }
 
-export function useBranch(): BranchContextType {
-  const context = useContext(BranchContext);
+export const useBranch = () => {
+  const context = useContext(BranchContext)
   if (context === undefined) {
-    throw new Error('useBranch must be used within a BranchProvider');
+    throw new Error('useBranch must be used within a BranchProvider')
   }
-  return context;
+  return context
 }

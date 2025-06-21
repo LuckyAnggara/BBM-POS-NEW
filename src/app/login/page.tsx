@@ -1,123 +1,125 @@
+// src/app/login/page.tsx
 
-"use client";
+'use client'
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { useForm, type SubmitHandler } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAuth } from "@/contexts/auth-context";
-import { signInWithEmail } from "@/lib/firebase/auth";
-import { useToast } from "@/hooks/use-toast";
-import Link from "next/link";
-import { Building } from "lucide-react";
-
-const loginSchema = z.object({
-  email: z.string().email({ message: "Format email tidak valid." }),
-  password: z.string().min(6, { message: "Password minimal 6 karakter." }),
-});
-
-type LoginFormInputs = z.infer<typeof loginSchema>;
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/contexts/auth-context'
+import { AppwriteException } from 'appwrite' // <-- Impor tipe error Appwrite
+import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import Link from 'next/link'
 
 export default function LoginPage() {
-  const router = useRouter();
-  const { currentUser, loadingAuth } = useAuth();
-  const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter()
+  const { login, loadingAuth: loading } = useAuth()
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<LoginFormInputs>({
-    resolver: zodResolver(loginSchema),
-  });
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  // Kita tidak lagi memerlukan state [error, setError]
 
-  const onSubmit: SubmitHandler<LoginFormInputs> = async (data) => {
-    setIsLoading(true);
-    const result = await signInWithEmail(data.email, data.password);
-    if ("error" in result && result.error) {
-      let description = "Login gagal. Silakan coba lagi.";
-      if (result.errorCode === "auth/invalid-credential" || 
-          result.errorCode === "auth/user-not-found" || 
-          result.errorCode === "auth/wrong-password") {
-        description = "Email atau password salah. Silakan periksa kembali.";
-      } else if (result.errorCode === "auth/invalid-email") {
-        description = "Format email tidak valid.";
-      } else if (result.errorCode === "auth/user-disabled") {
-        description = "Akun ini telah dinonaktifkan.";
-      } else {
-        description = `Terjadi kesalahan: ${result.error}. Cek konsol untuk detail.`;
+  // 3. Fungsi untuk menangani error secara spesifik
+  const handleLoginError = (error: unknown) => {
+    let title = 'Login Gagal'
+    let description =
+      'Terjadi kesalahan yang tidak diketahui. Silakan coba lagi.'
+
+    if (error instanceof AppwriteException) {
+      switch (error.code) {
+        case 401: // user_unauthorized / general_unauthorized
+          description =
+            'Kombinasi email dan password salah. Mohon periksa kembali.'
+          break
+        case 429: // rate_limit_exceeded
+          description =
+            'Terlalu banyak percobaan login. Silakan tunggu beberapa saat.'
+          break
+        default:
+          description = error.message // Gunakan pesan default dari Appwrite jika ada
+          break
       }
-      toast({
-        title: "Login Gagal",
-        description: description,
-        variant: "destructive",
-      });
-    } else {
-      toast({
-        title: "Login Berhasil",
-        description: "Anda akan diarahkan ke dashboard.",
-      });
-      // AuthContext will handle redirect via useEffect
     }
-    setIsLoading(false);
-  };
 
-  if (loadingAuth) {
-    return <div className="flex h-screen items-center justify-center">Memuat...</div>;
+    // Tampilkan notifikasi toast error
+    toast.error(title, {
+      description: description,
+    })
   }
 
-  if (currentUser) {
-    // This should ideally be handled by AuthContext's effect,
-    // but as a fallback or if AuthContext hasn't redirected yet.
-    // router.push('/dashboard');
-    return <div className="flex h-screen items-center justify-center">Mengarahkan ke dashboard...</div>;
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+
+    try {
+      await login(email, password)
+
+      // 4. Tampilkan notifikasi toast sukses
+      toast.success('Login Berhasil!', {
+        description: 'Anda akan diarahkan ke dashboard.',
+      })
+
+      router.push('/dashboard')
+    } catch (err) {
+      console.error('Login Error:', err)
+      handleLoginError(err) // Panggil fungsi error handler kita
+    }
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
-       <div className="absolute top-8 left-8 flex items-center gap-2">
-         <Building className="h-7 w-7 text-primary" />
-         <span className="text-xl font-semibold font-headline text-foreground">Berkah Baja Makmur</span>
-       </div>
-      <Card className="w-full max-w-md shadow-xl">
+    <div className='flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-950'>
+      <Card className='mx-auto max-w-sm'>
         <CardHeader>
-          <CardTitle className="text-2xl font-bold text-center">Selamat Datang Kembali!</CardTitle>
-          <CardDescription className="text-center text-sm">
-            Silakan masuk ke akun Anda.
+          <CardTitle className='text-2xl'>Login</CardTitle>
+          <CardDescription>
+            Masukkan email Anda di bawah untuk login ke akun Anda
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" placeholder="contoh@email.com" {...register("email")} className="text-xs" />
-              {errors.email && <p className="text-xs text-destructive">{errors.email.message}</p>}
+          {/* Form tidak berubah, hanya saja tidak ada lagi <p> untuk error */}
+          <form onSubmit={handleSubmit} className='grid gap-4'>
+            <div className='grid gap-2'>
+              <Label htmlFor='email'>Email</Label>
+              <Input
+                id='email'
+                type='email'
+                placeholder='m@example.com'
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+              />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" placeholder="********" {...register("password")} className="text-xs" />
-              {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
+            <div className='grid gap-2'>
+              <Label htmlFor='password'>Password</Label>
+              <Input
+                id='password'
+                type='password'
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+              />
             </div>
-            <Button type="submit" className="w-full text-sm" disabled={isLoading}>
-              {isLoading ? "Memproses..." : "Masuk"}
+            <Button type='submit' className='w-full' disabled={loading}>
+              {loading ? 'Memproses...' : 'Login'}
             </Button>
           </form>
-        </CardContent>
-        <CardFooter className="flex-col items-center text-xs">
-          <p>
-            Belum punya akun?{" "}
-            <Link href="/register" className="font-medium text-primary hover:underline">
-              Daftar di sini
+          <div className='mt-4 text-center text-sm'>
+            Belum punya akun?{' '}
+            <Link href='/register' className='underline'>
+              Daftar
             </Link>
-          </p>
-        </CardFooter>
+          </div>
+        </CardContent>
       </Card>
     </div>
-  );
+  )
 }
