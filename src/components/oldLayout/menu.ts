@@ -22,7 +22,7 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 
-export const navMain = (unreadCount: number) => [
+export const navItemsConfig = (unreadCount: number) => [
   {
     href: '/dashboard',
     label: 'Dashboard',
@@ -134,9 +134,6 @@ export const navMain = (unreadCount: number) => [
     icon: Settings,
     adminOnly: false,
   },
-]
-
-export const navAdmin = () => [
   {
     label: 'Administrasi',
     icon: Settings,

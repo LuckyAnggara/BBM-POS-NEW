@@ -100,14 +100,15 @@ export default function ManageBankAccounts({
 
   const fetchBankAccounts = useCallback(async () => {
     setLoadingBankAccounts(true)
-    const fetchedBankAccounts = await getBankAccounts() // No filter needed here, or pass specific filters if required
+    const fetchedBankAccounts = await getBankAccounts()
+    console.log(fetchedBankAccounts) // No filter needed here, or pass specific filters if required
     setBankAccounts(fetchedBankAccounts)
     setLoadingBankAccounts(false)
   }, [])
 
   useEffect(() => {
     fetchBankAccounts()
-  }, [fetchBankAccounts])
+  }, [])
 
   const handleBankAccountFormChange = (
     e: React.ChangeEvent<HTMLInputElement>
@@ -155,6 +156,7 @@ export default function ManageBankAccounts({
       if (editingBankAccount) {
         await updateBankAccount(editingBankAccount.id, dataInput)
       } else {
+        console.log('addBank')
         await addBankAccount(dataInput)
       }
       toast.success(

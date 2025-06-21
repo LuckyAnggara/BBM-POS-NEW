@@ -1,15 +1,22 @@
 
 "use client";
 
-import type { ReactNode } from "react";
+import {  type ReactNode } from "react";
+
+// import AppHeader from "@/components/layout/app-header";
+// import AppSidebarNav from "@/components/layout/app-sidebar-nav";
+// import Breadcrumbs from "./breadcrumbs";
+
+import { AppSidebar } from "@/components/layout/app-sidebar"
+import { ChartAreaInteractive } from "@/components/layout/chart-area-interactive"
+import { DataTable } from "@/components/layout/data-table"
+import { SectionCards } from "@/components/layout/section-cards"
+import { SiteHeader } from "@/components/layout/site-header"
 import {
+  SidebarInset,
   SidebarProvider,
-  Sidebar,
-  
-} from "@/components/ui/sidebar";
-import AppHeader from "@/components/layout/app-header";
-import AppSidebarNav from "@/components/layout/app-sidebar-nav";
-import Breadcrumbs from "./breadcrumbs";
+} from "@/components/ui/sidebar"
+
 
 export default function MainLayout({ 
   children,
@@ -23,7 +30,7 @@ export default function MainLayout({
       <div className="min-h-screen bg-background w-full"> {/* Added w-full */}
         {/* SidebarProvider is still needed for potential nested components that might use useSidebar, even if sidebar is not visible */}
         <SidebarProvider defaultOpen={false}> 
-          <main className="w-full h-screen overflow-y-auto">
+          <main className="flex flex-1 flex-col">
             {children}
           </main>
         </SidebarProvider>
@@ -32,24 +39,20 @@ export default function MainLayout({
   }
 
   return (
-    <SidebarProvider defaultOpen>
-      <div className="min-h-screen w-full"> {/* Added w-full */}
-        {/* <AppHeader /> */}
-        <div className="flex h-screen w-full"> {/* Added w-full */}
-          <Sidebar className="bg-card border-r hidden md:flex bg-sidebar-accent">
-            <AppSidebarNav /> 
-          </Sidebar>
-          {/* 
-            SidebarInset is removed and main content takes full width after sidebar.
-            The main content padding and Breadcrumbs are now part of the page itself if needed.
-          */}
-          <main className="flex-1 w-full h-full overflow-y-auto p-4 sm:p-6 lg:p-8">
-         <Breadcrumbs />
+     <SidebarProvider
+
+    >
+      <AppSidebar variant="inset" />
+      <SidebarInset>
+        <SiteHeader title="Props" />
+        
+         <main className="flex-1 w-full h-full p-4 sm:p-6 lg:p-8">
+         {/* <Breadcrumbs /> */}
             {children}
           </main>
-        </div>
-      </div>
+         </SidebarInset>
     </SidebarProvider>
+   
   );
 }
 

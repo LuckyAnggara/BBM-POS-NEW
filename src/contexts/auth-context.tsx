@@ -147,6 +147,8 @@ import {
 import { UserData } from '@/lib/appwrite/types'
 
 interface AuthContextType {
+  titlePage:String | null,
+  setTitlePage: React.Dispatch<React.SetStateAction<string>>,
   currentUser: Models.User<Models.Preferences> | null
   userData: UserData | null
   loadingAuth: boolean
@@ -164,6 +166,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [userData, setUserData] = useState<UserData | null>(null)
   const [loadingAuth, setLoadingAuth] = useState(true)
   const [loadingUserData, setLoadingUserData] = useState(true)
+  const [titlePage, setTitlePage] = useState('')
 
   useEffect(() => {
     const checkUserStatus = async () => {
@@ -260,6 +263,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // --- AKHIR BAGIAN YANG BERUBAH ---
 
   const value = {
+    titlePage,
+    setTitlePage,
     currentUser,
     userData,
     loadingAuth,

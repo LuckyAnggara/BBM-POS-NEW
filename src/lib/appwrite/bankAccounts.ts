@@ -83,7 +83,7 @@ export async function getBankAccounts(
       DATABASE_ID,
       BANK_ACCOUNTS_COLLECTION_ID,
       [
-        Query.equal('branchId', branchId),
+        // Query.equal('branchId', branchId),
         Query.orderDesc('isDefault'), // Tampilkan yang default di atas
         Query.orderAsc('bankName'),
       ]
