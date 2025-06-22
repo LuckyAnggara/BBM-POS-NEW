@@ -90,7 +90,7 @@ import Image from 'next/image'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { cn } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Select,
@@ -99,31 +99,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { InventoryItem } from '@/lib/firebase/inventory'
-import type { Customer } from '@/lib/firebase/customers'
-import type { BankAccount } from '@/lib/firebase/bankAccounts'
-import { getInventoryItems } from '@/lib/firebase/inventory'
-import { getCustomers } from '@/lib/firebase/customers'
-import { getBankAccounts } from '@/lib/firebase/bankAccounts'
+import type { InventoryItem } from '@/lib/appwrite/inventory'
+import type { Customer } from '@/lib/appwrite/customers'
+import type { BankAccount } from '@/lib/appwrite/bankAccounts'
+import { getInventoryItems } from '@/lib/appwrite/inventory'
+import { getCustomers } from '@/lib/appwrite/customers'
+import { getBankAccounts } from '@/lib/appwrite/bankAccounts'
 import {
-  startNewShift,
+  startShift as startNewShift,
   getActiveShift,
   endShift,
-  recordTransaction,
-  getTransactionsForShift,
+  createPOSTransaction as recordTransaction,
+  getTransactions as getTransactionsForShift,
   getTransactionById,
-  type ClientPosShift, // Changed to ClientPosShift
-  type ClientPosTransaction, // Changed to ClientPosTransaction
+  type POSShift, // Changed to POSShift
+  type POSTransaction, // Changed to POSTransaction
   type TransactionItem,
-  type PaymentTerms,
-  type ShiftPaymentMethod,
-} from '@/lib/firebase/pos'
-import {
-  Timestamp,
-  type DocumentSnapshot,
-  type DocumentData,
-} from 'firebase/firestore'
-import ScanCustomerDialog from '@/components/pos/scan-customer-dialog'
+  type PaymentMethod,
+} from '@/lib/appwrite/pos'
+
+import { ScanCustomerDialog } from '@/components/pos/scan-customer-dialog'
 import { format, parseISO, isValid } from 'date-fns' // Added parseISO and isValid
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -151,11 +146,10 @@ export default function POSPage() {
   const { selectedBranch } = useBranch()
   const { userData, currentUser } = useAuth()
   const router = useRouter()
-  const { toast } = useToast()
 
   const [viewMode, setViewMode] = useState<ViewMode>('card')
 
-  const [activeShift, setActiveShift] = useState<ClientPosShift | null>(null) // Changed to ClientPosShift
+  const [activeShift, setActiveShift] = useState<POSShift | null>(null) // Changed to POSShift
   const [loadingShift, setLoadingShift] = useState(true)
   const [showStartShiftModal, setShowStartShiftModal] = useState(false)
   const [initialCashInput, setInitialCashInput] = useState('')
@@ -164,7 +158,7 @@ export default function POSPage() {
   const [actualCashAtEndInput, setActualCashAtEndInput] = useState('')
   const [endShiftCalculations, setEndShiftCalculations] = useState<{
     expectedCash: number
-    totalSalesByPaymentMethod: Record<ShiftPaymentMethod, number>
+    totalSalesByPaymentMethod: Record<PaymentMethod, number>
   } | null>(null)
   const [isEndingShift, setIsEndingShift] = useState(false)
 
@@ -184,7 +178,7 @@ export default function POSPage() {
 
   const [cartItems, setCartItems] = useState<CartItem[]>([])
   const [selectedPaymentTerms, setSelectedPaymentTerms] =
-    useState<PaymentTerms>('cash')
+    useState<PaymentMethod>('cash')
   const [isProcessingSale, setIsProcessingSale] = useState(false)
 
   const [posModeActive, setPosModeActive] = useState(false)
@@ -221,9 +215,9 @@ export default function POSPage() {
   const [bankRefNumberInput, setBankRefNumberInput] = useState('')
   const [customerNameInputBank, setCustomerNameInputBank] = useState('')
 
-  const [shiftTransactions, setShiftTransactions] = useState<
-    ClientPosTransaction[]
-  >([]) // Changed to ClientPosTransaction
+  const [shiftTransactions, setShiftTransactions] = useState<POSTransaction[]>(
+    []
+  ) // Changed to POSTransaction
   const [loadingShiftTransactions, setLoadingShiftTransactions] =
     useState(false)
   const [showBankHistoryDialog, setShowBankHistoryDialog] = useState(false)
@@ -306,10 +300,8 @@ export default function POSPage() {
         setIsLastPagePOS(!hasMore)
       } catch (error) {
         console.error('Error fetching products for POS:', error)
-        toast({
-          title: 'Gagal Memuat Produk',
+        toast.error('Gagal Memuat Produk', {
           description: 'Tidak dapat memuat daftar produk.',
-          variant: 'destructive',
         })
         setProducts([])
       } finally {
@@ -349,17 +341,15 @@ export default function POSPage() {
     try {
       const [fetchedCustomers, fetchedBankAccounts] = await Promise.all([
         getCustomers(selectedBranch.id),
-        getBankAccounts({ branchId: selectedBranch.id, isActive: true }),
+        getBankAccounts(selectedBranch.id),
       ])
-      setAllCustomers(fetchedCustomers)
-      setFilteredCustomers(fetchedCustomers.slice(0, 5))
+      // setAllCustomers(fetchedCustomers)
+      // setFilteredCustomers(fetchedCustomers.slice(0, 5))
       setAvailableBankAccounts(fetchedBankAccounts)
     } catch (error) {
       console.error('Error fetching customers/banks for POS:', error)
-      toast({
-        title: 'Gagal Memuat Data',
+      toast.error('Gagal Memuat Data', {
         description: 'Tidak dapat memuat pelanggan atau rekening bank.',
-        variant: 'destructive',
       })
     } finally {
       setLoadingCustomers(false)
@@ -391,15 +381,18 @@ export default function POSPage() {
   }, [customerSearchTerm, allCustomers])
 
   const fetchShiftTransactions = useCallback(async () => {
-    if (activeShift) {
+    if (activeShift && selectedBranch) {
       setLoadingShiftTransactions(true)
-      const transactions = await getTransactionsForShift(activeShift.id)
+      const transactions = await getTransactionsForShift(
+        selectedBranch.id,
+        activeShift.id
+      )
       setShiftTransactions(transactions)
       setLoadingShiftTransactions(false)
     } else {
       setShiftTransactions([])
     }
-  }, [activeShift])
+  }, [activeShift, selectedBranch])
 
   useEffect(() => {
     fetchShiftTransactions()
@@ -412,10 +405,10 @@ export default function POSPage() {
       return
     }
     setLoadingShift(true)
-    const shift = await getActiveShift(currentUser.uid, selectedBranch.id)
+    const shift = await getActiveShift(currentUser.$id, selectedBranch.id)
     setActiveShift(shift)
     if (shift) {
-      setInitialCashInput(shift.initialCash.toString())
+      setInitialCashInput(shift.startingBalance.toString())
     } else {
       setInitialCashInput('')
     }
@@ -428,34 +421,27 @@ export default function POSPage() {
 
   const handleStartShift = async () => {
     if (!currentUser || !selectedBranch) {
-      toast({
-        title: 'Kesalahan',
+      toast.error('Kesalahan', {
         description: 'Pengguna atau cabang tidak valid.',
-        variant: 'destructive',
       })
       return
     }
     const cash = parseFloat(initialCashInput)
     if (isNaN(cash) || cash < 0) {
-      toast({
-        title: 'Input Tidak Valid',
+      toast.error('Input Tidak Valid', {
         description: 'Modal awal kas tidak valid.',
-        variant: 'destructive',
       })
       return
     }
-    const result = await startNewShift(currentUser.uid, selectedBranch.id, cash)
+    const result = await startNewShift(currentUser.$id, selectedBranch.id, cash)
     if ('error' in result) {
-      toast({
-        title: 'Gagal Memulai Shift',
+      toast.error('Gagal Memulai Shift', {
         description: result.error,
-        variant: 'destructive',
       })
     } else {
       setActiveShift(result)
       setShowStartShiftModal(false)
-      toast({
-        title: 'Shift Dimulai',
+      toast.success('Shift Dimulai', {
         description: `Shift dimulai dengan modal awal ${currencySymbol}${cash.toLocaleString()}`,
       })
     }
@@ -467,10 +453,11 @@ export default function POSPage() {
     await fetchShiftTransactions()
     const currentShiftTransactions = shiftTransactions
 
-    const salesByPayment: Record<ShiftPaymentMethod, number> = {
+    const salesByPayment: Record<PaymentMethod, number> = {
       cash: 0,
       card: 0,
       transfer: 0,
+      qris: 0,
     }
 
     currentShiftTransactions.forEach((tx) => {
@@ -480,7 +467,7 @@ export default function POSPage() {
         tx.paymentTerms === 'transfer'
       ) {
         if (tx.status === 'completed') {
-          const paymentMethodForShift = tx.paymentTerms as ShiftPaymentMethod
+          const paymentMethodForShift = tx.paymentTerms as PaymentMethod
           salesByPayment[paymentMethodForShift] =
             (salesByPayment[paymentMethodForShift] || 0) + tx.totalAmount
         }
@@ -501,10 +488,8 @@ export default function POSPage() {
 
     const actualCash = parseFloat(actualCashAtEndInput)
     if (isNaN(actualCash) || actualCash < 0) {
-      toast({
-        title: 'Input Tidak Valid',
+      toast.error('Input Tidak Valid', {
         description: 'Kas aktual di laci tidak valid.',
-        variant: 'destructive',
       })
       return
     }
@@ -512,23 +497,12 @@ export default function POSPage() {
 
     const cashDifference = actualCash - endShiftCalculations.expectedCash
 
-    const result = await endShift(
-      activeShift.id,
-      actualCash,
-      endShiftCalculations.expectedCash,
-      cashDifference,
-      endShiftCalculations.totalSalesByPaymentMethod
-    )
+    const result = await endShift(activeShift.id)
 
     if (result && 'error' in result) {
-      toast({
-        title: 'Gagal Mengakhiri Shift',
-        description: result.error,
-        variant: 'destructive',
-      })
+      toast.error('Gagal Mengakhiri Shift', { description: result.error })
     } else {
-      toast({
-        title: 'Shift Diakhiri',
+      toast.success('Shift Diakhiri', {
         description: 'Data shift telah disimpan.',
       })
       setActiveShift(null)
@@ -544,18 +518,14 @@ export default function POSPage() {
 
   const handleAddToCart = (product: InventoryItem) => {
     if (!activeShift) {
-      toast({
-        title: 'Shift Belum Dimulai',
+      toast.error('Shift Belum Dimulai', {
         description: 'Silakan mulai shift untuk menambah item.',
-        variant: 'destructive',
       })
       return
     }
     if (product.quantity <= 0) {
-      toast({
-        title: 'Stok Habis',
+      toast.error('Stok Habis', {
         description: `${product.name} tidak tersedia.`,
-        variant: 'destructive',
       })
       return
     }
@@ -575,10 +545,8 @@ export default function POSPage() {
               : item
           )
         } else {
-          toast({
-            title: 'Stok Tidak Cukup',
+          toast.info('Stok Tidak Cukup', {
             description: `Stok maksimal untuk ${product.name} telah ditambahkan.`,
-            variant: 'default',
           })
           return prevItems
         }
@@ -689,8 +657,7 @@ export default function POSPage() {
     setIsItemDiscountDialogOpen(false)
     setSelectedItemForDiscount(null)
     setCurrentDiscountValue('')
-    toast({
-      title: 'Diskon Dihapus',
+    toast.success('Diskon Dihapus', {
       description: `Diskon untuk ${selectedItemForDiscount.productName} telah dihapus.`,
     })
   }
@@ -704,10 +671,8 @@ export default function POSPage() {
       return
     }
     if (newQuantity > productInStock.quantity) {
-      toast({
-        title: 'Stok Tidak Cukup',
+      toast.warning('Stok Tidak Cukup', {
         description: `Stok maksimal untuk produk ini adalah ${productInStock.quantity}.`,
-        variant: 'default',
       })
       setCartItems((prevItems) =>
         prevItems.map((item) =>
@@ -797,19 +762,15 @@ export default function POSPage() {
 
   const handleConfirmCashPayment = async () => {
     if (!activeShift || !selectedBranch || !currentUser) {
-      toast({
-        title: 'Kesalahan',
+      toast.error('Kesalahan', {
         description: 'Shift, cabang, atau pengguna tidak aktif.',
-        variant: 'destructive',
       })
       return
     }
     const amountPaidNum = parseFloat(cashAmountPaidInput)
     if (isNaN(amountPaidNum) || amountPaidNum < total) {
-      toast({
-        title: 'Pembayaran Tidak Cukup',
+      toast.error('Pembayaran Tidak Cukup', {
         description: 'Jumlah yang dibayar kurang dari total belanja.',
-        variant: 'destructive',
       })
       return
     }
@@ -818,7 +779,7 @@ export default function POSPage() {
     setIsProcessingSale(true)
 
     const transactionData: Omit<
-      ClientPosTransaction,
+      POSTransaction,
       | 'id'
       | 'invoiceNumber'
       | 'timestamp'
@@ -828,10 +789,10 @@ export default function POSPage() {
       | 'returnedByUserId'
       | 'paymentsMade'
     > = {
-      // Changed PosTransaction to ClientPosTransaction
+      // Changed PosTransaction to POSTransaction
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
-      userId: currentUser.uid,
+      userId: currentUser.$id,
       items: cartItems,
       subtotal: subtotalAfterItemDiscounts,
       taxAmount: tax,
@@ -853,15 +814,12 @@ export default function POSPage() {
     setShowCashPaymentModal(false)
 
     if ('error' in result || !result.id) {
-      toast({
-        title: 'Gagal Merekam Transaksi',
+      toast.error('Gagal Merekam Transaksi', {
         description: result.error || 'ID transaksi tidak ditemukan.',
-        variant: 'destructive',
       })
       setLastTransactionId(null)
     } else {
-      toast({
-        title: 'Transaksi Berhasil',
+      toast.success('Transaksi Berhasil', {
         description: 'Penjualan telah direkam.',
       })
       setLastTransactionId(result.id)
@@ -880,33 +838,27 @@ export default function POSPage() {
 
   const handleConfirmBankPayment = async () => {
     if (!activeShift || !selectedBranch || !currentUser) {
-      toast({
-        title: 'Kesalahan',
+      toast.error('Kesalahan', {
         description: 'Shift, cabang, atau pengguna tidak aktif.',
-        variant: 'destructive',
       })
       return
     }
     if (!selectedBankName) {
-      toast({
-        title: 'Bank Diperlukan',
+      toast.error('Bank Diperlukan', {
         description: 'Pilih nama bank.',
-        variant: 'destructive',
       })
       return
     }
     if (!bankRefNumberInput.trim()) {
-      toast({
-        title: 'No. Referensi Diperlukan',
+      toast.error('No. Referensi Diperlukan', {
         description: 'Masukkan nomor referensi transaksi bank.',
-        variant: 'destructive',
       })
       return
     }
 
     setIsProcessingSale(true)
     const transactionData: Omit<
-      ClientPosTransaction,
+      POSTransaction,
       | 'id'
       | 'invoiceNumber'
       | 'timestamp'
@@ -918,7 +870,7 @@ export default function POSPage() {
     > = {
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
-      userId: currentUser.uid,
+      userId: currentUser.$id,
       items: cartItems,
       subtotal: subtotalAfterItemDiscounts,
       taxAmount: tax,
@@ -942,15 +894,12 @@ export default function POSPage() {
     setShowBankPaymentModal(false)
 
     if ('error' in result || !result.id) {
-      toast({
-        title: 'Gagal Merekam Transaksi',
+      toast.error('Gagal Merekam Transaksi', {
         description: result.error || 'ID transaksi tidak ditemukan.',
-        variant: 'destructive',
       })
       setLastTransactionId(null)
     } else {
-      toast({
-        title: 'Transaksi Berhasil',
+      toast.success('Transaksi Berhasil', {
         description: 'Penjualan transfer telah direkam.',
       })
       setLastTransactionId(result.id)
@@ -969,18 +918,14 @@ export default function POSPage() {
 
   const handleCompleteSale = async () => {
     if (!activeShift || !selectedBranch || !currentUser) {
-      toast({
-        title: 'Kesalahan',
+      toast.error('Kesalahan', {
         description: 'Shift, cabang, atau pengguna tidak aktif.',
-        variant: 'destructive',
       })
       return
     }
     if (cartItems.length === 0) {
-      toast({
-        title: 'Keranjang Kosong',
+      toast.error('Keranjang Kosong', {
         description: 'Tidak ada item di keranjang.',
-        variant: 'destructive',
       })
       return
     }
@@ -1000,18 +945,14 @@ export default function POSPage() {
     let customerNameForTx: string | undefined = undefined
     if (selectedPaymentTerms === 'credit') {
       if (!selectedCustomerId) {
-        toast({
-          title: 'Pelanggan Diperlukan',
+        toast.error('Pelanggan Diperlukan', {
           description: 'Pilih pelanggan untuk penjualan kredit.',
-          variant: 'destructive',
         })
         return
       }
       if (!creditDueDate) {
-        toast({
-          title: 'Tanggal Jatuh Tempo Diperlukan',
+        toast.error('Tanggal Jatuh Tempo Diperlukan', {
           description: 'Pilih tanggal jatuh tempo untuk penjualan kredit.',
-          variant: 'destructive',
         })
         return
       }
@@ -1021,7 +962,7 @@ export default function POSPage() {
 
     setIsProcessingSale(true)
     const transactionData: Omit<
-      ClientPosTransaction,
+      POSTransaction,
       | 'id'
       | 'invoiceNumber'
       | 'timestamp'
@@ -1033,7 +974,7 @@ export default function POSPage() {
     > = {
       shiftId: activeShift.id,
       branchId: selectedBranch.id,
-      userId: currentUser.uid,
+      userId: currentUser.$id,
       items: cartItems,
       subtotal: subtotalAfterItemDiscounts,
       taxAmount: tax,
@@ -1062,15 +1003,12 @@ export default function POSPage() {
     const result = await recordTransaction(transactionData, userData?.name) // Pass userName
 
     if ('error' in result || !result.id) {
-      toast({
-        title: 'Gagal Merekam Transaksi',
+      toast.error('Gagal Merekam Transaksi', {
         description: result.error || 'ID transaksi tidak ditemukan.',
-        variant: 'destructive',
       })
       setLastTransactionId(null)
     } else {
-      toast({
-        title: 'Transaksi Berhasil',
+      toast.success('Transaksi Berhasil', {
         description: 'Penjualan telah direkam.',
       })
       setLastTransactionId(result.id)
@@ -1092,10 +1030,8 @@ export default function POSPage() {
     const targetTransactionId = transactionIdToPrint || lastTransactionId
 
     if (!targetTransactionId || !selectedBranch || !currentUser || !userData) {
-      toast({
-        title: 'Data Tidak Lengkap',
+      toast.error('Data Tidak Lengkap', {
         description: 'Tidak dapat mencetak invoice, data kurang.',
-        variant: 'destructive',
       })
       setShowPrintInvoiceDialog(false) // Close if it was open from a new sale
       setLastTransactionId(null) // Always reset if we were relying on this state
@@ -1106,10 +1042,8 @@ export default function POSPage() {
       try {
         const transactionDetails = await getTransactionById(targetTransactionId)
         if (!transactionDetails) {
-          toast({
-            title: 'Gagal Cetak',
+          toast.error('Gagal Cetak', {
             description: 'Detail transaksi tidak ditemukan.',
-            variant: 'destructive',
           })
           setShowPrintInvoiceDialog(false)
           setLastTransactionId(null)
@@ -1159,38 +1093,31 @@ export default function POSPage() {
         })
 
         if (response.ok) {
-          toast({
-            title: 'Terkirim ke Printer',
+          toast.success('Terkirim ke Printer', {
             description: 'Data invoice berhasil dikirim ke printer lokal.',
           })
         } else {
           const errorData = await response.text()
-          toast({
-            title: 'Gagal Kirim ke Printer',
+          toast.error('Gagal Kirim ke Printer', {
             description: `Printer lokal merespons dengan kesalahan: ${
               response.status
             } - ${errorData || response.statusText}`,
-            variant: 'destructive',
             duration: 7000,
           })
           window.open(`/invoice/${targetTransactionId}/view`, '_blank')
         }
       } catch (error: any) {
         console.error('Error sending to local printer:', error)
-        toast({
-          title: 'Error Printer Lokal',
+        toast.error('Error Printer Lokal', {
           description: `Tidak dapat terhubung ke printer lokal: ${error.message}. Invoice web akan dibuka.`,
-          variant: 'destructive',
           duration: 7000,
         })
         window.open(`/invoice/${targetTransactionId}/view`, '_blank')
       }
     } else {
-      toast({
-        title: 'Printer Lokal Belum Diatur',
+      toast.info('Printer Lokal Belum Diatur', {
         description:
           'URL printer lokal belum diatur di Pengaturan Akun. Membuka invoice web.',
-        variant: 'default',
         duration: 7000,
       })
       window.open(`/invoice/${targetTransactionId}/view`, '_blank')
@@ -1212,15 +1139,12 @@ export default function POSPage() {
       setSelectedCustomerId(foundCustomer.id)
       setCustomerSearchTerm(foundCustomer.name)
       setSelectedPaymentTerms('credit')
-      toast({
-        title: 'Pelanggan Ditemukan',
+      toast.success('Pelanggan Ditemukan', {
         description: `Pelanggan "${foundCustomer.name}" dipilih.`,
       })
     } else {
-      toast({
-        title: 'Pelanggan Tidak Ditemukan',
+      toast.error('Pelanggan Tidak Ditemukan', {
         description: 'ID pelanggan dari QR code tidak terdaftar.',
-        variant: 'destructive',
       })
     }
     setShowScanCustomerDialog(false)
@@ -1875,7 +1799,7 @@ export default function POSPage() {
                   <Select
                     value={selectedPaymentTerms}
                     onValueChange={(value) => {
-                      setSelectedPaymentTerms(value as PaymentTerms)
+                      setSelectedPaymentTerms(value as PaymentMethod)
                       if (value !== 'credit') {
                         setSelectedCustomerId(undefined)
                         setCreditDueDate(undefined)

@@ -40,7 +40,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Pencil, Trash2, KeyRound } from 'lucide-react'
+import { Pencil, Trash2, KeyRound, PlusCircle } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   createBranch,
@@ -51,6 +51,7 @@ import {
 import { Branch } from '@/lib/appwrite/types' // Pastikan path ini benar
 import { toast } from 'sonner'
 import { useBranch } from '@/contexts/branch-context'
+import { set } from 'date-fns'
 
 interface BranchFormState {
   name: string
@@ -97,6 +98,7 @@ export default function ManageBranches({
   const [editBranchForm, setEditBranchForm] = useState<BranchFormState>(
     initialBranchFormState
   )
+  const [isNewBranchModalOpen, setIsNewBranchModalOpen] = useState(false)
   const [isUpdatingBranch, setIsUpdatingBranch] = useState(false)
   const [isEditBranchModalOpen, setIsEditBranchModalOpen] = useState(false)
   const [branchToDelete, setBranchToDelete] = useState<Branch | null>(null)
@@ -141,6 +143,7 @@ export default function ManageBranches({
       })
     } finally {
       setIsSubmittingBranch(false)
+      setIsNewBranchModalOpen(false)
     }
   }
 
@@ -216,137 +219,32 @@ export default function ManageBranches({
     }
   }
 
+  const handleOpenNewBranchModal = () => {
+    setIsNewBranchModalOpen(true)
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className='text-base font-semibold'>Kelola Cabang</CardTitle>
-        <CardDescription className='text-xs'>
-          Buat, edit, hapus, dan lihat daftar cabang beserta detailnya.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className='space-y-4'>
-        <form
-          onSubmit={handleCreateBranch}
-          className='space-y-3 border p-4 rounded-md'
-        >
-          <h3 className='text-sm font-medium mb-1'>Tambah Cabang Baru</h3>
-          <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
-            <div>
-              <Label htmlFor='branchName' className='text-xs'>
-                Nama Cabang Utama*
-              </Label>
-              <Input
-                id='branchName'
-                name='name'
-                value={branchForm.name}
-                onChange={(e) => handleBranchFormChange(e, setBranchForm)}
-                placeholder='Contoh: Cabang Pusat'
-                className='h-9 text-xs'
-                disabled={isSubmittingBranch}
-              />
-            </div>
-            <div>
-              <Label htmlFor='invoiceName' className='text-xs'>
-                Nama di Invoice (Opsional)
-              </Label>
-              <Input
-                id='invoiceName'
-                name='invoiceName'
-                value={branchForm.invoiceName}
-                onChange={(e) => handleBranchFormChange(e, setBranchForm)}
-                placeholder='Sama seperti nama cabang jika kosong'
-                className='h-9 text-xs'
-                disabled={isSubmittingBranch}
-              />
-            </div>
-            <div>
-              <Label htmlFor='currency' className='text-xs'>
-                Mata Uang
-              </Label>
-              <Input
-                id='currency'
-                name='currency'
-                value={branchForm.currency}
-                onChange={(e) => handleBranchFormChange(e, setBranchForm)}
-                placeholder='IDR'
-                className='h-9 text-xs'
-                disabled={isSubmittingBranch}
-              />
-            </div>
-            <div>
-              <Label htmlFor='taxRate' className='text-xs'>
-                Tarif Pajak (%)
-              </Label>
-              <Input
-                id='taxRate'
-                name='taxRate'
-                type='number'
-                value={branchForm.taxRate}
-                onChange={(e) => handleBranchFormChange(e, setBranchForm)}
-                placeholder='0'
-                className='h-9 text-xs'
-                disabled={isSubmittingBranch}
-              />
-            </div>
-          </div>
+        <div className='flex justify-between items-center'>
           <div>
-            <Label htmlFor='address' className='text-xs'>
-              Alamat
-            </Label>
-            <Textarea
-              id='address'
-              name='address'
-              value={branchForm.address}
-              onChange={(e) => handleBranchFormChange(e, setBranchForm)}
-              placeholder='Alamat lengkap cabang'
-              className='text-xs min-h-[60px]'
-              disabled={isSubmittingBranch}
-            />
-          </div>
-          <div>
-            <Label htmlFor='phoneNumber' className='text-xs'>
-              Nomor Telepon
-            </Label>
-            <Input
-              id='phoneNumber'
-              name='phoneNumber'
-              value={branchForm.phoneNumber}
-              onChange={(e) => handleBranchFormChange(e, setBranchForm)}
-              placeholder='08xxxxxxxxxx'
-              className='h-9 text-xs'
-              disabled={isSubmittingBranch}
-            />
-          </div>
-          <div>
-            <Label
-              htmlFor='transactionDeletionPasswordCreate'
-              className='text-xs'
-            >
-              Password Hapus Transaksi (Opsional)
-            </Label>
-            <div className='relative'>
-              <KeyRound className='absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground' />
-              <Input
-                id='transactionDeletionPasswordCreate'
-                name='transactionDeletionPassword'
-                type='password'
-                value={branchForm.transactionDeletionPassword}
-                onChange={(e) => handleBranchFormChange(e, setBranchForm)}
-                placeholder='Kosongkan jika tidak diset'
-                className='h-9 text-xs pl-8'
-                disabled={isSubmittingBranch}
-              />
-            </div>
+            <CardTitle className='text-base font-semibold'>
+              Kelola Cabang
+            </CardTitle>
+            <CardDescription className='text-xs'>
+              Buat, edit, hapus, dan lihat daftar cabang beserta detailnya.
+            </CardDescription>
           </div>
           <Button
-            type='submit'
             size='sm'
-            className='h-9 text-xs'
-            disabled={isSubmittingBranch}
+            className='text-xs h-8'
+            onClick={() => handleOpenNewBranchModal()}
           >
-            {isSubmittingBranch ? 'Membuat...' : 'Buat Cabang'}
+            <PlusCircle className='mr-1.5 h-3.5 w-3.5' /> Tambah Rekening
           </Button>
-        </form>
+        </div>
+      </CardHeader>
+      <CardContent className='space-y-4'>
         <div>
           <h3 className='text-sm font-medium mb-1.5 mt-4'>
             Daftar Cabang Saat Ini
@@ -463,6 +361,138 @@ export default function ManageBranches({
           )}
         </div>
       </CardContent>
+      <Dialog
+        open={isNewBranchModalOpen}
+        onOpenChange={setIsNewBranchModalOpen}
+      >
+        <DialogContent className='max-w-3xl'>
+          <DialogHeader>
+            <DialogTitle>Tambah Cabang Baru</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={handleCreateBranch}
+            className='space-y-3 border p-4 rounded-md'
+          >
+            <h3 className='text-sm font-medium mb-1'>Tambah Cabang Baru</h3>
+            <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
+              <div>
+                <Label htmlFor='branchName' className='text-xs'>
+                  Nama Cabang Utama*
+                </Label>
+                <Input
+                  id='branchName'
+                  name='name'
+                  value={branchForm.name}
+                  onChange={(e) => handleBranchFormChange(e, setBranchForm)}
+                  placeholder='Contoh: Cabang Pusat'
+                  className='h-9 text-xs'
+                  disabled={isSubmittingBranch}
+                />
+              </div>
+              <div>
+                <Label htmlFor='invoiceName' className='text-xs'>
+                  Nama di Invoice (Opsional)
+                </Label>
+                <Input
+                  id='invoiceName'
+                  name='invoiceName'
+                  value={branchForm.invoiceName}
+                  onChange={(e) => handleBranchFormChange(e, setBranchForm)}
+                  placeholder='Sama seperti nama cabang jika kosong'
+                  className='h-9 text-xs'
+                  disabled={isSubmittingBranch}
+                />
+              </div>
+              <div>
+                <Label htmlFor='currency' className='text-xs'>
+                  Mata Uang
+                </Label>
+                <Input
+                  id='currency'
+                  name='currency'
+                  value={branchForm.currency}
+                  onChange={(e) => handleBranchFormChange(e, setBranchForm)}
+                  placeholder='IDR'
+                  className='h-9 text-xs'
+                  disabled={isSubmittingBranch}
+                />
+              </div>
+              <div>
+                <Label htmlFor='taxRate' className='text-xs'>
+                  Tarif Pajak (%)
+                </Label>
+                <Input
+                  id='taxRate'
+                  name='taxRate'
+                  type='number'
+                  value={branchForm.taxRate}
+                  onChange={(e) => handleBranchFormChange(e, setBranchForm)}
+                  placeholder='0'
+                  className='h-9 text-xs'
+                  disabled={isSubmittingBranch}
+                />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor='address' className='text-xs'>
+                Alamat
+              </Label>
+              <Textarea
+                id='address'
+                name='address'
+                value={branchForm.address}
+                onChange={(e) => handleBranchFormChange(e, setBranchForm)}
+                placeholder='Alamat lengkap cabang'
+                className='text-xs min-h-[60px]'
+                disabled={isSubmittingBranch}
+              />
+            </div>
+            <div>
+              <Label htmlFor='phoneNumber' className='text-xs'>
+                Nomor Telepon
+              </Label>
+              <Input
+                id='phoneNumber'
+                name='phoneNumber'
+                value={branchForm.phoneNumber}
+                onChange={(e) => handleBranchFormChange(e, setBranchForm)}
+                placeholder='08xxxxxxxxxx'
+                className='h-9 text-xs'
+                disabled={isSubmittingBranch}
+              />
+            </div>
+            <div>
+              <Label
+                htmlFor='transactionDeletionPasswordCreate'
+                className='text-xs'
+              >
+                Password Hapus Transaksi (Opsional)
+              </Label>
+              <div className='relative'>
+                <KeyRound className='absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground' />
+                <Input
+                  id='transactionDeletionPasswordCreate'
+                  name='transactionDeletionPassword'
+                  type='password'
+                  value={branchForm.transactionDeletionPassword}
+                  onChange={(e) => handleBranchFormChange(e, setBranchForm)}
+                  placeholder='Kosongkan jika tidak diset'
+                  className='h-9 text-xs pl-8'
+                  disabled={isSubmittingBranch}
+                />
+              </div>
+            </div>
+            <Button
+              type='submit'
+              size='sm'
+              className='h-9 text-xs'
+              disabled={isSubmittingBranch}
+            >
+              {isSubmittingBranch ? 'Membuat...' : 'Buat Cabang'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={isEditBranchModalOpen}
         onOpenChange={setIsEditBranchModalOpen}

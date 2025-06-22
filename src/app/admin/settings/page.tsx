@@ -58,7 +58,7 @@ export default function AdminSettingsPage() {
               <TabsList className='inline-flex items-center justify-start rounded-md bg-muted p-1 text-muted-foreground'>
                 <TabsTrigger
                   value='manage-branches'
-                  className='tab-trigger-style'
+                  className='text-xs px-3 py-1.5 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm'
                 >
                   Kelola Cabang
                 </TabsTrigger>

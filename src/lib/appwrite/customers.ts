@@ -19,22 +19,13 @@ export interface Customer {
   phone?: string
   email?: string
   address?: string
+  notes?: string
   branchId: string
-  totalTransactions: number
-  totalSpent: number
-  lastTransactionDate?: string // ISO String
   createdAt: string // ISO String, dari $createdAt
 }
 
 // Tipe ini digunakan saat membuat pelanggan baru.
-export type CustomerInput = Omit<
-  Customer,
-  | 'id'
-  | 'createdAt'
-  | 'totalTransactions'
-  | 'totalSpent'
-  | 'lastTransactionDate'
->
+export type CustomerInput = Omit<Customer, 'id' | 'createdAt'>
 
 // --- Fungsi untuk Manajemen Pelanggan ---
 
@@ -49,8 +40,6 @@ export async function addCustomer(
     // Menambahkan nilai default untuk field yang baru dibuat
     const dataToSave = {
       ...customerData,
-      totalTransactions: 0,
-      totalSpent: 0,
     }
 
     const document = await databases.createDocument(
@@ -67,9 +56,6 @@ export async function addCustomer(
       email: document.email,
       address: document.address,
       branchId: document.branchId,
-      totalTransactions: document.totalTransactions,
-      totalSpent: document.totalSpent,
-      lastTransactionDate: document.lastTransactionDate,
       createdAt: document.$createdAt,
     }
   } catch (error: any) {
@@ -134,9 +120,6 @@ export async function getCustomers(
       email: doc.email,
       address: doc.address,
       branchId: doc.branchId,
-      totalTransactions: doc.totalTransactions,
-      totalSpent: doc.totalSpent,
-      lastTransactionDate: doc.lastTransactionDate,
     }))
 
     const lastDocId =
@@ -167,9 +150,6 @@ export async function getCustomerById(
       email: document.email,
       address: document.address,
       branchId: document.branchId,
-      totalTransactions: document.totalTransactions,
-      totalSpent: document.totalSpent,
-      lastTransactionDate: document.lastTransactionDate,
     }
   } catch (error: any) {
     // Appwrite melempar error 404 jika tidak ditemukan

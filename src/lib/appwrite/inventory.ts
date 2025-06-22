@@ -177,39 +177,39 @@ export async function getInventoryItems(
   options: {
     limit?: number
     searchTerm?: string
-    cursorAfter?: string // Appwrite uses string ID for cursor
-    cursorBefore?: string // Appwrite uses string ID for cursor
+    page?: number // Menggantikan cursor, default ke halaman 1
   } = {}
 ): Promise<{
   items: InventoryItem[]
-  lastDocId?: string
-  firstDocId?: string
-  hasMore: boolean
+  total: number // Menggantikan docId dan hasMore
 }> {
-  if (!branchId) return { items: [], hasMore: false }
+  if (!branchId) return { items: [], total: 0 }
+
+  // Set nilai default jika tidak disediakan
+  const limit = options.limit || 25
+  const page = options.page || 1
 
   try {
     let queries: string[] = [Query.equal('branchId', branchId)]
 
+    // Logika pencarian tetap sama
     if (options.searchTerm) {
-      // Pastikan Anda membuat index untuk 'name' di Appwrite Console
       queries.push(Query.search('name', options.searchTerm))
     } else {
-      // Urutkan berdasarkan nama jika tidak ada pencarian
-      queries.push(
-        options.cursorBefore ? Query.orderDesc('name') : Query.orderAsc('name')
-      )
+      // Urutkan berdasarkan nama secara konsisten
+      queries.push(Query.orderAsc('name'))
     }
 
-    if (options.limit && options.limit > 0) {
-      queries.push(Query.limit(options.limit + 1)) // Ambil satu ekstra untuk cek `hasMore`
+    // [DIUBAH] Menggunakan limit langsung, tanpa +1
+    queries.push(Query.limit(limit))
+
+    // [DIUBAH] Menambahkan offset berdasarkan halaman
+    if (page > 1) {
+      const offset = (page - 1) * limit
+      queries.push(Query.offset(offset))
     }
-    if (options.cursorAfter) {
-      queries.push(Query.cursorAfter(options.cursorAfter))
-    }
-    if (options.cursorBefore) {
-      queries.push(Query.cursorBefore(options.cursorBefore))
-    }
+
+    // [DIHAPUS] Semua logika cursorBefore dan cursorAfter dihapus
 
     const response = await databases.listDocuments(
       DATABASE_ID,
@@ -217,19 +217,9 @@ export async function getInventoryItems(
       queries
     )
 
-    let documents = response.documents
-    let hasMore = false
+    // [DIHAPUS] Logika untuk hasMore dan reverse dokumen tidak diperlukan lagi
 
-    if (options.limit && documents.length > options.limit) {
-      hasMore = true
-      documents.pop() // Hapus item ekstra
-    }
-
-    if (options.cursorBefore) {
-      documents.reverse() // Balikkan urutan jika menggunakan cursorBefore
-    }
-
-    const items: InventoryItem[] = documents.map((doc) => ({
+    const items: InventoryItem[] = response.documents.map((doc) => ({
       id: doc.$id,
       createdAt: doc.$createdAt,
       updatedAt: doc.$updatedAt,
@@ -245,16 +235,13 @@ export async function getInventoryItems(
       imageHint: doc.imageHint,
     }))
 
-    const firstDocId = items.length > 0 ? items[0].id : undefined
-    const lastDocId = items.length > 0 ? items[items.length - 1].id : undefined
-
-    return { items, firstDocId, lastDocId, hasMore }
+    // [DIUBAH] Mengembalikan items dan total dari response Appwrite
+    return { items, total: response.total }
   } catch (error: any) {
     console.error('Error fetching inventory items:', error)
-    return { items: [], hasMore: false }
+    return { items: [], total: 0 }
   }
 }
-
 export async function updateInventoryItem(
   itemId: string,
   updates: Partial<Omit<InventoryItemInput, 'branchId'>>,

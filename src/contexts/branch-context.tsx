@@ -99,6 +99,7 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
       if (branch) {
         console.log('Selected branch:', branch)
         localStorage.setItem('selectedBranchId', branch.id)
+        setSelectedBranch(branch)
       }
     } else {
       setSelectedBranch(null)

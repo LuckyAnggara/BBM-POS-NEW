@@ -50,7 +50,7 @@ export const navMain = (unreadCount: number) => [
       { href: '/suppliers', label: 'Pemasok', icon: Truck },
       {
         href: '/inventory',
-        label: 'Inventaris',
+        label: 'Persediaan',
         icon: Archive,
         adminOnly: false,
       },
@@ -130,7 +130,7 @@ export const navMain = (unreadCount: number) => [
   },
   {
     href: '/branch-settings',
-    label: 'Pengaturan Cabang',
+    label: 'Pengaturan Toko',
     icon: Settings,
     adminOnly: false,
   },
@@ -138,30 +138,27 @@ export const navMain = (unreadCount: number) => [
 
 export const navAdmin = () => [
   {
-    label: 'Administrasi',
+    href: '/admin/send-notification',
+    label: 'Kirim Notifikasi',
+    icon: Send,
+    adminOnly: true,
+  },
+  {
+    href: '/admin/notification-history',
+    label: 'Riwayat Notifikasi',
+    icon: HistoryIconLucide,
+    adminOnly: true,
+  },
+  {
+    href: '/admin/deletion-requests',
+    label: 'Permintaan Transaksi',
+    icon: ShieldAlert,
+    adminOnly: true,
+  },
+  {
+    href: '/admin/settings',
+    label: 'Pengaturan Admin',
     icon: Settings,
-    adminOnly: true, // This group is admin only
-    subItems: [
-      {
-        href: '/admin/send-notification',
-        label: 'Kirim Notifikasi',
-        icon: Send,
-      },
-      {
-        href: '/admin/notification-history',
-        label: 'Riwayat Notifikasi',
-        icon: HistoryIconLucide,
-      },
-      {
-        href: '/admin/deletion-requests',
-        label: 'Permintaan Hapus Trx',
-        icon: ShieldAlert,
-      },
-      {
-        href: '/admin/settings',
-        label: 'Pengaturan Umum Admin',
-        icon: Settings,
-      },
-    ],
+    adminOnly: true,
   },
 ]

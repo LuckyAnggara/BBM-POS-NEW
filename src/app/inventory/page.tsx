@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
@@ -59,12 +60,15 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertTriangle,
+  MoreVertical,
+  Copy,
+  ArrowLeft, // Import Copy icon
 } from 'lucide-react'
-import Image from 'next/image'
+import { useDebounce } from '@uidotdev/usehooks'
 import { useForm, Controller, type SubmitHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
 import type {
   InventoryItem,
@@ -75,60 +79,45 @@ import type {
 import {
   addInventoryItem,
   getInventoryItems,
-  updateInventoryItem,
   deleteInventoryItem,
   addInventoryCategory,
   getInventoryCategories,
   deleteInventoryCategory,
 } from '@/lib/appwrite/inventory'
 
-import { db } from '@/lib/firebase/config' // Added db
-import { format } from 'date-fns'
+import {
+  exportInventoryToCSV,
+  downloadInventoryTemplateCSV,
+  parseInventoryCSV,
+  batchImportInventory,
+  type ParsedCsvItem,
+} from '@/lib/inventorycsv'
+import Image from 'next/image'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription as AlertDescUI } from '@/components/ui/alert'
 import { cn } from '@/lib/utils'
-import { ID } from 'appwrite'
-
-const itemFormSchema = z.object({
-  name: z.string().min(3, { message: 'Nama produk minimal 3 karakter.' }),
-  sku: z.string().optional(),
-  categoryId: z.string().min(1, { message: 'Kategori harus dipilih.' }),
-  quantity: z.coerce.number().min(0, { message: 'Stok tidak boleh negatif.' }),
-  price: z.coerce
-    .number()
-    .min(0, { message: 'Harga jual tidak boleh negatif.' }),
-  costPrice: z.coerce
-    .number()
-    .min(0, { message: 'Harga pokok tidak boleh negatif.' }),
-  imageUrl: z
-    .string()
-    .url({ message: 'URL gambar tidak valid.' })
-    .optional()
-    .or(z.literal('')),
-  imageHint: z.string().optional(),
-})
-type ItemFormValues = z.infer<typeof itemFormSchema>
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu'
 
 const categoryFormSchema = z.object({
   name: z.string().min(2, { message: 'Nama kategori minimal 2 karakter.' }),
 })
 type CategoryFormValues = z.infer<typeof categoryFormSchema>
 
-interface ParsedCsvItem extends InventoryItemInput {
-  isDuplicateSku?: boolean
-  categoryNameForPreview?: string
-  isCategoryInvalid?: boolean
-}
-
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
 
 export default function InventoryPage() {
+  const router = useRouter()
   const { userData } = useAuth()
   const { selectedBranch, loadingBranches } = useBranch()
-  const { toast } = useToast()
 
   const [items, setItems] = useState<InventoryItem[]>([])
+  const [totalItems, setTotalItems] = useState(0)
   const [categories, setCategories] = useState<InventoryCategory[]>([])
   const [loadingItems, setLoadingItems] = useState(true)
   const [loadingCategories, setLoadingCategories] = useState(true)
@@ -136,17 +125,12 @@ export default function InventoryPage() {
   const [itemsPerPage, setItemsPerPage] = useState<number>(
     ITEMS_PER_PAGE_OPTIONS[0]
   )
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
 
-  const [currentPageInv, setCurrentPageInv] = useState(1)
-  const [firstVisibleProductInv, setFirstVisibleProductInv] =
-    useState<DocumentSnapshot<DocumentData> | null>(null)
-  const [lastVisibleProductInv, setLastVisibleProductInv] =
-    useState<DocumentSnapshot<DocumentData> | null>(null)
-  const [hasNextPageInv, setHasNextPageInv] = useState(false)
-  const [hasPreviousPageInv, setHasPreviousPageInv] = useState(false)
+  const debouncedSearchTerm = useDebounce(searchTerm, 500)
 
-  const [isItemDialogOpen, setIsItemDialogOpen] = useState(false)
-  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [hasNextPage, setHasNextPage] = useState(false)
 
   const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false)
 
@@ -161,20 +145,6 @@ export default function InventoryPage() {
     total: number
     invalidCategories: number
   }>({ total: 0, invalidCategories: 0 })
-
-  const itemForm = useForm<ItemFormValues>({
-    resolver: zodResolver(itemFormSchema),
-    defaultValues: {
-      name: '',
-      sku: '',
-      categoryId: '',
-      quantity: 0,
-      price: 0,
-      costPrice: 0,
-      imageUrl: '',
-      imageHint: '',
-    },
-  })
 
   const categoryForm = useForm<CategoryFormValues>({
     resolver: zodResolver(categoryFormSchema),
@@ -199,201 +169,128 @@ export default function InventoryPage() {
   }, [selectedBranch])
 
   const fetchData = useCallback(
-    async (action: 'next' | 'prev' | 'reset' = 'reset') => {
+    async (page: number, currentSearchTerm: string) => {
       if (!selectedBranch) {
         setItems([])
         setLoadingItems(false)
-        setCurrentPageInv(1)
-        setHasNextPageInv(false)
-        setHasPreviousPageInv(false)
-        setFirstVisibleProductInv(null)
-        setLastVisibleProductInv(null)
+        setTotalItems(0)
         return
       }
       setLoadingItems(true)
 
-      let queryStartAfter = null
-      let queryEndBefore = null
-
-      if (action === 'reset') {
-        setCurrentPageInv(1)
-      } else if (action === 'next') {
-        queryStartAfter = lastVisibleProductInv
-      } else if (action === 'prev') {
-        queryEndBefore = firstVisibleProductInv
-      }
-
-      const queryOptions: any = {
+      const options = {
         limit: itemsPerPage,
+        searchTerm: currentSearchTerm || undefined,
+        page: page, // Kirim nomor halaman
       }
 
-      if (queryStartAfter) {
-        queryOptions.startAfterDoc = queryStartAfter
-      } else if (queryEndBefore) {
-        queryOptions.endBeforeDoc = queryEndBefore
-      }
+      // Panggil fungsi API yang baru
+      const result = await getInventoryItems(selectedBranch.id, options)
 
-      const {
-        items: fetchedItemsArray,
-        lastDoc,
-        firstDoc,
-        hasMore,
-      } = await getInventoryItems(selectedBranch.id, queryOptions)
-
-      setItems(fetchedItemsArray)
-      setLastVisibleProductInv(lastDoc || null)
-      setFirstVisibleProductInv(firstDoc || null)
-
-      if (action === 'next') {
-        setHasNextPageInv(hasMore)
-        setHasPreviousPageInv(true)
-      } else if (action === 'prev') {
-        setHasPreviousPageInv(hasMore && fetchedItemsArray.length > 0)
-        setHasNextPageInv(true)
-      } else {
-        // reset
-        setHasNextPageInv(hasMore)
-        setHasPreviousPageInv(false)
-      }
-
+      setItems(result.items)
+      setTotalItems(result.total) // Simpan total item
       setLoadingItems(false)
     },
-    [
-      selectedBranch,
-      itemsPerPage,
-      lastVisibleProductInv,
-      firstVisibleProductInv,
-    ]
+    [selectedBranch, itemsPerPage] // Dependensi lebih sederhana
   )
 
   useEffect(() => {
-    if (selectedBranch) {
-      fetchData('reset')
-    } else {
+    setCurrentPage(1)
+  }, [selectedBranch, itemsPerPage, debouncedSearchTerm])
+
+  useEffect(() => {
+    // Jika tidak ada cabang yang dipilih, bersihkan state dan jangan lakukan apa-apa lagi.
+    if (!selectedBranch) {
       setItems([])
-      // Categories are handled by their own useEffect
-      setCurrentPageInv(1)
-      setHasNextPageInv(false)
-      setHasPreviousPageInv(false)
-      setFirstVisibleProductInv(null)
-      setLastVisibleProductInv(null)
       setLoadingItems(false)
+      // Untuk mode cursor pagination, Anda akan menggunakan setHasNextPage(false)
+      // Untuk mode offset pagination, Anda akan menggunakan setTotalItems(0)
+      setHasNextPage(false) // Sesuaikan dengan mode paginasi Anda
+      return // Hentikan eksekusi lebih lanjut
     }
-  }, [selectedBranch, itemsPerPage])
 
-  const handlePageChangeInv = (direction: 'next' | 'prev') => {
-    if (direction === 'next' && hasNextPageInv) {
-      setCurrentPageInv((prev) => prev + 1)
-      fetchData('next')
-    } else if (direction === 'prev' && hasPreviousPageInv) {
-      setCurrentPageInv((prev) => prev - 1)
-      fetchData('prev')
-    }
-  }
+    // Jika ada cabang, panggil fetchData.
+    // Efek ini akan otomatis berjalan ketika `currentPage` berubah (dari efek reset di atas)
+    // atau ketika `fetchData` itu sendiri berubah (jika dependensinya berubah).
+    fetchData(currentPage, debouncedSearchTerm)
+  }, [currentPage, debouncedSearchTerm, selectedBranch, fetchData]) // Sertakan semua dependensi relevan
 
-  const handleOpenItemDialog = (item: InventoryItem | null = null) => {
-    setEditingItem(item)
-    if (item) {
-      itemForm.reset({
-        name: item.name,
-        sku: item.sku || '',
-        categoryId: item.categoryId,
-        quantity: item.quantity,
-        price: item.price,
-        costPrice: item.costPrice || 0,
-        imageUrl: item.imageUrl || '',
-        imageHint: item.imageHint || '',
-      })
-    } else {
-      itemForm.reset({
-        name: '',
-        sku: '',
-        categoryId: '',
-        quantity: 0,
-        price: 0,
-        costPrice: 0,
-        imageUrl: '',
-        imageHint: '',
-      })
-    }
-    setIsItemDialogOpen(true)
-  }
-
-  const onItemSubmit: SubmitHandler<ItemFormValues> = async (values) => {
-    if (!selectedBranch) return
-
-    const selectedCategory = categories.find((c) => c.id === values.categoryId)
-    if (!selectedCategory) {
-      toast({
-        title: 'Kategori Tidak Valid',
-        description: 'Kategori yang dipilih tidak ditemukan.',
-        variant: 'destructive',
-      })
+  // --- New function for duplicating an item ---
+  const handleDuplicateItem = async (item: InventoryItem) => {
+    if (!selectedBranch) {
+      toast.error('Error', { description: 'Cabang tidak valid.' })
       return
     }
 
-    let skuToSave = values.sku?.trim()
-    if (!skuToSave) {
-      skuToSave = `AUTOSKU-${ID.unique().substring(0, 8).toUpperCase()}`
+    // Find the category name from the fetched categories
+    const category = categories.find((cat) => cat.id === item.categoryId)
+    if (!category) {
+      toast.error('Error', { description: 'Kategori produk tidak ditemukan.' })
+      return
     }
 
-    const itemData: InventoryItemInput = {
-      name: values.name,
-      sku: skuToSave,
-      categoryId: values.categoryId,
+    const duplicatedItemData: InventoryItemInput = {
+      name: `${item.name} (Copy)`,
+      sku: '', // Let Appwrite generate a new SKU
+      categoryId: item.categoryId,
       branchId: selectedBranch.id,
-      quantity: Number(values.quantity),
-      price: Number(values.price),
-      costPrice: Number(values.costPrice),
-      imageUrl: values.imageUrl || `https://placehold.co/64x64.png`,
-      imageHint:
-        values.imageHint ||
-        values.name.split(' ').slice(0, 2).join(' ').toLowerCase(),
+      quantity: item.quantity, // Copy current quantity
+      price: item.price,
+      costPrice: item.costPrice || 0,
+      imageUrl: item.imageUrl || '',
+      imageHint: item.imageHint || '',
     }
 
-    let result
-    if (editingItem) {
-      result = await updateInventoryItem(
-        editingItem.id,
-        itemData,
-        selectedCategory.name
-      )
-    } else {
-      result = await addInventoryItem(itemData, selectedCategory.name)
-    }
+    try {
+      const result = await addInventoryItem(duplicatedItemData, category.name)
 
-    if (result && 'error' in result) {
-      toast({
-        title: editingItem ? 'Gagal Memperbarui' : 'Gagal Menambah',
-        description: result.error,
-        variant: 'destructive',
+      if (result && 'error' in result) {
+        toast.error('Gagal Duplikasi Produk', {
+          description: result.error,
+        })
+      } else {
+        toast.success('Produk Berhasil Diduplikasi', {
+          description: `${item.name} telah diduplikasi menjadi ${duplicatedItemData.name}.`,
+        })
+        // Refresh the current page to show the new item
+        await fetchData(currentPage, debouncedSearchTerm)
+      }
+    } catch (error: any) {
+      toast.error('Terjadi Kesalahan', {
+        description: error.message || 'Gagal menduplikasi produk.',
       })
-    } else {
-      toast({
-        title: editingItem ? 'Produk Diperbarui' : 'Produk Ditambahkan',
-        description: `${values.name} telah ${
-          editingItem ? 'diperbarui' : 'ditambahkan'
-        } ke inventaris.`,
-      })
-      setIsItemDialogOpen(false)
-      await fetchData('reset')
     }
   }
+
+  useEffect(() => {
+    if (selectedBranch) {
+      fetchData(currentPage, debouncedSearchTerm)
+    }
+  }, [currentPage, selectedBranch, fetchData])
+
+  useEffect(() => {
+    if (selectedBranch) {
+    } else {
+      setItems([])
+      // Categories are handled by their own useEffect
+      setCurrentPage(1)
+      setHasNextPage(false)
+      setLoadingItems(false)
+    }
+  }, [selectedBranch])
 
   const handleDeleteItem = async (itemId: string, itemName: string) => {
     const result = await deleteInventoryItem(itemId)
     if (result && 'error' in result) {
-      toast({
-        title: 'Gagal Menghapus',
+      toast.error('Gagal Menghapus', {
         description: result.error,
-        variant: 'destructive',
       })
     } else {
-      toast({
-        title: 'Produk Dihapus',
+      toast.success('Produk Dihapus', {
         description: `${itemName} telah dihapus dari inventaris.`,
       })
-      await fetchData('reset')
+
+      await fetchData(1)
     }
   }
 
@@ -407,19 +304,29 @@ export default function InventoryPage() {
     }
     const result = await addInventoryCategory(categoryData)
     if (result && 'error' in result) {
-      toast({
-        title: 'Gagal Menambah Kategori',
+      toast.error('Gagal Menambah Kategori', {
         description: result.error,
-        variant: 'destructive',
       })
     } else {
-      toast({
-        title: 'Kategori Ditambahkan',
+      toast.success('Kategori Ditambahkan', {
         description: `Kategori "${values.name}" telah ditambahkan.`,
       })
       categoryForm.reset()
       const fetchedCategories = await getInventoryCategories(selectedBranch.id)
       setCategories(fetchedCategories)
+    }
+  }
+
+  const handleNextPage = () => {
+    // Cek jika halaman saat ini belum mencapai halaman terakhir
+    if (currentPage < totalPages) {
+      setCurrentPage((prevPage) => prevPage + 1)
+    }
+  }
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage((prevPage) => prevPage - 1)
     }
   }
 
@@ -430,14 +337,11 @@ export default function InventoryPage() {
     if (!selectedBranch) return
     const result = await deleteInventoryCategory(categoryId)
     if (result && 'error' in result) {
-      toast({
-        title: 'Gagal Hapus Kategori',
+      toast.error('Gagal Hapus Kategori', {
         description: result.error,
-        variant: 'destructive',
       })
     } else {
-      toast({
-        title: 'Kategori Dihapus',
+      toast.success('Kategori Dihapus', {
         description: `Kategori "${categoryName}" telah dihapus.`,
       })
       const fetchedCategories = await getInventoryCategories(selectedBranch.id)
@@ -446,139 +350,11 @@ export default function InventoryPage() {
   }
 
   const handleExportCSV = () => {
-    if (!items || items.length === 0) {
-      toast({
-        title: 'Tidak Ada Data',
-        description: 'Tidak ada data inventaris untuk diekspor.',
-        variant: 'default',
-      })
-      return
-    }
-
-    const headers = [
-      'id',
-      'name',
-      'sku',
-      'categoryId',
-      'categoryName',
-      'quantity',
-      'price',
-      'costPrice',
-      'imageUrl',
-      'imageHint',
-    ]
-    const csvRows = [headers.join(',')]
-
-    const escapeCSVField = (field: any): string => {
-      if (field === null || field === undefined) return ''
-      const stringField = String(field)
-      if (
-        stringField.includes(',') ||
-        stringField.includes('"') ||
-        stringField.includes('\n')
-      ) {
-        return `"${stringField.replace(/"/g, '""')}"`
-      }
-      return stringField
-    }
-
-    items.forEach((item) => {
-      const row = headers.map((header) => escapeCSVField((item as any)[header]))
-      csvRows.push(row.join(','))
-    })
-
-    const csvString = csvRows.join('\n')
-    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    const url = URL.createObjectURL(blob)
-    link.setAttribute('href', url)
-    const branchNamePart =
-      selectedBranch?.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'cabang'
-    const datePart = format(new Date(), 'yyyyMMdd')
-    link.setAttribute(
-      'download',
-      `inventaris_${branchNamePart}_${datePart}.csv`
-    )
-    link.style.visibility = 'hidden'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    toast({
-      title: 'Ekspor Berhasil',
-      description: 'Data inventaris telah diekspor ke CSV.',
-    })
+    exportInventoryToCSV(items, selectedBranch)
   }
 
   const handleDownloadTemplateCSV = () => {
-    if (!selectedBranch) {
-      toast({
-        title: 'Pilih Cabang',
-        description: 'Pilih cabang untuk mengunduh template yang relevan.',
-        variant: 'destructive',
-      })
-      return
-    }
-    const headers = [
-      'name',
-      'sku',
-      'categoryId',
-      'quantity',
-      'price',
-      'costPrice',
-      'imageUrl',
-      'imageHint',
-    ]
-    let csvString = ''
-
-    csvString +=
-      '# INSTRUKSI PENGISIAN DATA INVENTARIS (Hapus baris ini dan di bawahnya sebelum impor):\n'
-    csvString += "# 1. 'name': Nama Produk (Wajib diisi).\n"
-    csvString +=
-      "# 2. 'sku': Stock Keeping Unit (Opsional, akan dibuat otomatis jika kosong).\n"
-    csvString +=
-      "# 3. 'categoryId': ID Kategori dari daftar di bawah (Wajib diisi).\n"
-    csvString += "# 4. 'quantity': Jumlah stok awal (Wajib, angka >= 0).\n"
-    csvString += "# 5. 'price': Harga Jual Satuan (Wajib, angka >= 0).\n"
-    csvString +=
-      "# 6. 'costPrice': Harga Pokok Satuan (Opsional, angka >= 0, default 0).\n"
-    csvString +=
-      "# 7. 'imageUrl': URL Gambar Produk (Opsional, harus URL valid).\n"
-    csvString +=
-      "# 8. 'imageHint': Petunjuk untuk placeholder gambar (Opsional, 1-2 kata, contoh: 'biji kopi').\n"
-    csvString +=
-      '#--------------------------------------------------------------------------------------\n'
-    csvString +=
-      "# DAFTAR ID KATEGORI YANG TERSEDIA UNTUK CABANG INI (Gunakan 'categoryId' dari sini):\n"
-    if (categories.length > 0) {
-      categories.forEach((cat) => {
-        csvString += `# categoryId: ${cat.id}, Nama Kategori: ${cat.name}\n`
-      })
-    } else {
-      csvString +=
-        "# Belum ada kategori. Silakan buat kategori terlebih dahulu melalui menu 'Kelola Kategori'.\n"
-    }
-    csvString +=
-      '#--------------------------------------------------------------------------------------\n'
-    csvString += headers.join(',') + '\n'
-    csvString +=
-      'Contoh Produk,SKU-CONTOH,ID_KATEGORI_DARI_DAFTAR_DI_ATAS,10,15000,10000,https://placehold.co/64x64.png,contoh produk\n'
-
-    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    const url = URL.createObjectURL(blob)
-    link.setAttribute('href', url)
-    const branchNamePart = selectedBranch.name
-      .replace(/[^a-z0-9]/gi, '_')
-      .toLowerCase()
-    link.setAttribute('download', `template_inventaris_${branchNamePart}.csv`)
-    link.style.visibility = 'hidden'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    toast({
-      title: 'Template Diunduh',
-      description: 'Template CSV berhasil diunduh.',
-    })
+    downloadInventoryTemplateCSV(categories, selectedBranch)
   }
 
   const handleImportButtonClick = () => {
@@ -588,11 +364,28 @@ export default function InventoryPage() {
   const handleFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file && selectedBranch) {
-      setCsvImportFileName(file.name)
       const reader = new FileReader()
       reader.onload = (e) => {
         const text = e.target?.result as string
-        processCsvData(text, file.name)
+        const { data, invalidCategoryCount, error } = parseInventoryCSV(
+          text,
+          items,
+          categories,
+          selectedBranch.id
+        )
+
+        if (error) {
+          toast.error(error.split(':')[0], { description: error.split(':')[1] })
+          return
+        }
+
+        setCsvImportSummary({
+          total: data.length,
+          invalidCategories: invalidCategoryCount,
+        })
+        setParsedCsvData(data)
+        setCsvImportFileName(file.name)
+        setIsImportDialogOpen(true)
       }
       reader.readAsText(file)
     }
@@ -601,189 +394,16 @@ export default function InventoryPage() {
     }
   }
 
-  const processCsvData = (csvContent: string, fileName: string) => {
-    const lines = csvContent
-      .split(/\r\n|\n/)
-      .filter((line) => !line.trim().startsWith('#') && line.trim() !== '')
-
-    if (lines.length < 2) {
-      toast({
-        title: 'File CSV Kosong atau Invalid',
-        description:
-          'File tidak berisi data atau header (setelah menghapus komentar).',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    const headersLine = lines[0].toLowerCase()
-    const headers = headersLine.split(',').map((h) => h.trim())
-    const requiredHeaders = ['name', 'categoryid', 'quantity', 'price']
-    const missingHeaders = requiredHeaders.filter((rh) => !headers.includes(rh))
-
-    if (missingHeaders.length > 0) {
-      toast({
-        title: 'Header CSV Tidak Lengkap',
-        description: `Kolom berikut wajib ada: ${missingHeaders.join(
-          ', '
-        )}. Perhatikan penulisan (case-insensitive).`,
-        variant: 'destructive',
-      })
-      return
-    }
-
-    const nameIndex = headers.indexOf('name')
-    const categoryIdIndex = headers.indexOf('categoryid')
-    const quantityIndex = headers.indexOf('quantity')
-    const priceIndex = headers.indexOf('price')
-    const skuIndex = headers.indexOf('sku')
-    const costPriceIndex = headers.indexOf('costprice')
-    const imageUrlIndex = headers.indexOf('imageurl')
-    const imageHintIndex = headers.indexOf('imagehint')
-
-    const data: ParsedCsvItem[] = []
-    let invalidCategoryCount = 0
-
-    for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue
-      const currentline = lines[i].split(',')
-
-      const name = currentline[nameIndex]?.trim()
-      const categoryId = currentline[categoryIdIndex]?.trim()
-      const quantityStr = currentline[quantityIndex]?.trim()
-      const priceStr = currentline[priceIndex]?.trim()
-
-      if (!name || !categoryId || !quantityStr || !priceStr) {
-        console.warn(
-          `Skipping line ${
-            i + 1
-          } due to missing required fields in file ${fileName}`
-        )
-        continue
-      }
-
-      const quantity = parseFloat(quantityStr)
-      const price = parseFloat(priceStr)
-
-      if (isNaN(quantity) || isNaN(price) || quantity < 0 || price < 0) {
-        console.warn(
-          `Skipping line ${
-            i + 1
-          } due to invalid numeric values for quantity/price in file ${fileName}`
-        )
-        continue
-      }
-
-      const sku = skuIndex > -1 ? currentline[skuIndex]?.trim() : ''
-      const isDuplicateSku =
-        !!sku &&
-        sku.trim() !== '' &&
-        items.some((existingItem) => existingItem.sku === sku)
-
-      const category = categories.find((cat) => cat.id === categoryId)
-      let isCategoryInvalid = !category
-      let categoryNameForPreview = category
-        ? category.name
-        : `ID: ${categoryId} (Tidak Valid)`
-      if (isCategoryInvalid) {
-        invalidCategoryCount++
-      }
-
-      data.push({
-        branchId: selectedBranch!.id,
-        name,
-        sku,
-        categoryId,
-        quantity,
-        price,
-        costPrice:
-          costPriceIndex > -1 && currentline[costPriceIndex]?.trim()
-            ? parseFloat(currentline[costPriceIndex].trim())
-            : 0,
-        imageUrl:
-          imageUrlIndex > -1 ? currentline[imageUrlIndex]?.trim() : undefined,
-        imageHint:
-          imageHintIndex > -1 ? currentline[imageHintIndex]?.trim() : undefined,
-        isDuplicateSku,
-        categoryNameForPreview,
-        isCategoryInvalid,
-      })
-    }
-
-    if (data.length === 0) {
-      toast({
-        title: 'Tidak Ada Data Valid',
-        description: 'Tidak ada data produk yang valid ditemukan di file CSV.',
-        variant: 'destructive',
-      })
-      return
-    }
-    setCsvImportSummary({
-      total: data.length,
-      invalidCategories: invalidCategoryCount,
-    })
-    setParsedCsvData(data)
-    setIsImportDialogOpen(true)
-  }
-
   const handleConfirmImport = async () => {
     if (!parsedCsvData || parsedCsvData.length === 0 || !selectedBranch) return
 
     setIsProcessingImport(true)
-    let successCount = 0
-    let errorCount = 0
-    let skippedInvalidCategoryCount = 0
-    const errorMessages: string[] = []
-
-    const results = await Promise.allSettled(
-      parsedCsvData.map(async (itemData) => {
-        if (itemData.isCategoryInvalid) {
-          skippedInvalidCategoryCount++
-          throw new Error(
-            `Kategori ID '${itemData.categoryId}' tidak valid untuk produk '${itemData.name}'. Item dilewati.`
-          )
-        }
-        const selectedCategory = categories.find(
-          (c) => c.id === itemData.categoryId
-        )
-        if (!selectedCategory) {
-          skippedInvalidCategoryCount++
-          throw new Error(
-            `Kategori dengan ID '${itemData.categoryId}' untuk produk '${itemData.name}' tidak ditemukan. Item dilewati.`
-          )
-        }
-        const {
-          isDuplicateSku,
-          categoryNameForPreview,
-          isCategoryInvalid,
-          ...actualItemData
-        } = itemData
-
-        return addInventoryItem(actualItemData, selectedCategory.name)
-      })
-    )
-
-    results.forEach((result, index) => {
-      const itemName =
-        parsedCsvData[index]?.name || `Item di baris ${index + 2}`
-      if (
-        result.status === 'fulfilled' &&
-        result.value &&
-        !('error' in result.value)
-      ) {
-        successCount++
-      } else {
-        errorCount++
-        const errorMessage =
-          result.status === 'rejected'
-            ? result.reason?.message
-            : (result.value as { error: string })?.error
-        errorMessages.push(
-          `${itemName}: ${errorMessage || 'Error tidak diketahui'}`
-        )
-        console.error(`Error importing ${itemName}:`, errorMessage)
-      }
-    })
+    const {
+      successCount,
+      errorCount,
+      skippedInvalidCategoryCount,
+      errorMessages,
+    } = await batchImportInventory(parsedCsvData, categories)
 
     let toastMessage = ''
     if (successCount > 0) {
@@ -799,22 +419,18 @@ export default function InventoryPage() {
     }
 
     if (toastMessage.trim() === '') {
-      toast({
-        title: 'Tidak Ada Perubahan',
+      toast.info('Tidak Ada Perubahan', {
         description: 'Tidak ada produk yang diimpor atau dilewati.',
-        variant: 'default',
       })
     } else {
-      toast({ title: 'Impor Selesai', description: toastMessage.trim() })
+      toast.success('Impor Selesai', { description: toastMessage.trim() })
     }
 
     if (errorMessages.length > 0 && errorCount > 0) {
-      toast({
-        title: `Detail Kegagalan Impor (${errorCount} item)`,
+      toast.error(`Detail Kegagalan Impor (${errorCount} item)`, {
         description:
           errorMessages.slice(0, 3).join('; ') +
           (errorMessages.length > 3 ? '; ...' : ''),
-        variant: 'destructive',
         duration: 10000,
       })
     }
@@ -823,7 +439,7 @@ export default function InventoryPage() {
     setIsImportDialogOpen(false)
     setParsedCsvData([])
     setCsvImportFileName(null)
-    await fetchData('reset')
+    await fetchData(currentPage, debouncedSearchTerm)
   }
 
   const displayedItems = useMemo(() => {
@@ -876,7 +492,7 @@ export default function InventoryPage() {
         <div className='space-y-4'>
           <div className='flex flex-col sm:flex-row justify-between items-center gap-3'>
             <h1 className='text-xl md:text-2xl font-semibold font-headline'>
-              Inventaris {selectedBranch ? `- ${selectedBranch.name}` : ''}
+              Produk Cabang {selectedBranch ? `- ${selectedBranch.name}` : ''}
             </h1>
             <div className='flex flex-wrap gap-2 w-full sm:w-auto justify-start sm:justify-end'>
               <div className='relative flex-grow sm:flex-grow-0'>
@@ -884,7 +500,7 @@ export default function InventoryPage() {
                 <Input
                   type='search'
                   placeholder='Cari produk...'
-                  className='pl-8 w-full sm:w-40 rounded-md h-9 text-xs'
+                  className='pl-8 w-full sm:w-80 rounded-md h-9 text-xs'
                   value={searchTerm}
                   onChange={(e) => {
                     setSearchTerm(e.target.value)
@@ -957,7 +573,7 @@ export default function InventoryPage() {
               <Button
                 size='sm'
                 className='rounded-md text-xs h-9'
-                onClick={() => handleOpenItemDialog()}
+                onClick={() => router.push('/inventory/new')}
                 disabled={
                   !selectedBranch ||
                   loadingCategories ||
@@ -969,7 +585,7 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          <AlertDescUI
+          <Alert
             variant='default'
             className='bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/50 dark:text-blue-300 text-xs'
           >
@@ -979,7 +595,7 @@ export default function InventoryPage() {
               saat ini. Untuk pencarian menyeluruh di semua data, hapus filter
               pencarian atau navigasi ke semua halaman jika perlu.
             </AlertDescUI>
-          </AlertDescUI>
+          </Alert>
 
           {loadingItems || loadingCategories ? (
             <div className='space-y-2 border rounded-lg shadow-sm p-4'>
@@ -1002,7 +618,7 @@ export default function InventoryPage() {
               <Button
                 size='sm'
                 className='mt-4 text-xs'
-                onClick={() => handleOpenItemDialog()}
+                onClick={() => router.push('/inventory/new')}
                 disabled={categories.length === 0}
               >
                 <PackagePlus className='mr-1.5 h-3.5 w-3.5' /> Tambah Produk
@@ -1020,10 +636,7 @@ export default function InventoryPage() {
               <div className='border rounded-lg shadow-sm overflow-hidden'>
                 <Table>
                   <TableCaption className='text-xs'>
-                    Menampilkan {displayedItems.length} dari {items.length}{' '}
-                    produk yang dimuat untuk{' '}
-                    {selectedBranch?.name || 'cabang terpilih'}. Halaman{' '}
-                    {currentPageInv}.
+                    Menampilkan {displayedItems.length} dari {totalItems}
                   </TableCaption>
                   <TableHeader>
                     <TableRow>
@@ -1092,57 +705,82 @@ export default function InventoryPage() {
                           {product.quantity}
                         </TableCell>
                         <TableCell className='text-right hidden sm:table-cell py-1.5 px-2 text-xs'>
-                          Rp {product.price.toLocaleString('id-ID')}
+                          {selectedBranch?.currency}{' '}
+                          {product.price.toLocaleString('id-ID')}
                         </TableCell>
                         <TableCell className='text-right hidden sm:table-cell py-1.5 px-2 text-xs'>
-                          Rp {(product.costPrice || 0).toLocaleString('id-ID')}
+                          {selectedBranch?.currency}{' '}
+                          {(product.costPrice || 0).toLocaleString('id-ID')}
                         </TableCell>
                         <TableCell className='text-right py-1.5 px-2'>
-                          <Button
-                            variant='ghost'
-                            size='icon'
-                            className='h-7 w-7'
-                            onClick={() => handleOpenItemDialog(product)}
-                          >
-                            <FilePenLine className='h-3.5 w-3.5' />
-                            <span className='sr-only'>Edit</span>
-                          </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
                               <Button
                                 variant='ghost'
                                 size='icon'
-                                className='h-7 w-7 text-destructive hover:text-destructive/80'
+                                className='h-7 w-7'
                               >
-                                <Trash2 className='h-3.5 w-3.5' />
-                                <span className='sr-only'>Hapus</span>
+                                <MoreVertical className='h-3.5 w-3.5' />
+                                <span className='sr-only'>Aksi</span>
                               </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>
-                                  Apakah Anda yakin?
-                                </AlertDialogTitle>
-                                <AlertDialogDescription className='text-xs'>
-                                  Tindakan ini akan menghapus produk "
-                                  {product.name}" secara permanen.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel className='text-xs h-8'>
-                                  Batal
-                                </AlertDialogCancel>
-                                <AlertDialogAction
-                                  className='text-xs h-8 bg-destructive hover:bg-destructive/90'
-                                  onClick={() =>
-                                    handleDeleteItem(product.id, product.name)
-                                  }
-                                >
-                                  Ya, Hapus
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align='end'>
+                              <DropdownMenuItem
+                                className='text-xs cursor-pointer'
+                                onClick={() =>
+                                  router.push(`/inventory/${product.id}/edit`)
+                                }
+                              >
+                                <FilePenLine className='mr-2 h-3.5 w-3.5' />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className='text-xs cursor-pointer'
+                                onClick={() => handleDuplicateItem(product)}
+                              >
+                                <Copy className='mr-2 h-3.5 w-3.5' />
+                                Duplikasi
+                              </DropdownMenuItem>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <DropdownMenuItem
+                                    className='text-xs cursor-pointer text-destructive'
+                                    onSelect={(e) => e.preventDefault()} // Prevent dropdown from closing immediately
+                                  >
+                                    <Trash2 className='mr-2 h-3.5 w-3.5' />
+                                    Hapus
+                                  </DropdownMenuItem>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      Apakah Anda yakin?
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription className='text-xs'>
+                                      Tindakan ini akan menghapus produk "
+                                      {product.name}" secara permanen.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className='text-xs h-8'>
+                                      Batal
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      className='text-xs h-8 bg-destructive hover:bg-destructive/90'
+                                      onClick={() =>
+                                        handleDeleteItem(
+                                          product.id,
+                                          product.name
+                                        )
+                                      }
+                                    >
+                                      Ya, Hapus
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1154,20 +792,20 @@ export default function InventoryPage() {
                   variant='outline'
                   size='sm'
                   className='text-xs h-8'
-                  onClick={() => handlePageChangeInv('prev')}
-                  disabled={!hasPreviousPageInv || loadingItems}
+                  onClick={handlePrevPage}
+                  disabled={currentPage <= 1 || loadingItems}
                 >
                   <ChevronLeft className='mr-1 h-4 w-4' /> Sebelumnya
                 </Button>
                 <span className='text-xs text-muted-foreground'>
-                  Halaman {currentPageInv}
+                  Halaman {currentPage} dari {totalPages}
                 </span>
                 <Button
                   variant='outline'
                   size='sm'
                   className='text-xs h-8'
-                  onClick={() => handlePageChangeInv('next')}
-                  disabled={!hasNextPageInv || loadingItems}
+                  onClick={handleNextPage}
+                  disabled={currentPage >= totalPages || loadingItems}
                 >
                   Berikutnya <ChevronRight className='ml-1 h-4 w-4' />
                 </Button>
@@ -1175,199 +813,6 @@ export default function InventoryPage() {
             </>
           )}
         </div>
-
-        <Dialog open={isItemDialogOpen} onOpenChange={setIsItemDialogOpen}>
-          <DialogContent className='max-w-2xl'>
-            <DialogHeader>
-              <DialogTitle className='text-base'>
-                {editingItem ? 'Edit Produk' : 'Tambah Produk Baru'}
-              </DialogTitle>
-            </DialogHeader>
-            <form
-              onSubmit={itemForm.handleSubmit(onItemSubmit)}
-              className='space-y-3 p-3 max-h-[70vh] overflow-y-auto pr-2'
-            >
-              <div>
-                <Label htmlFor='itemName' className='text-xs'>
-                  Nama Produk*
-                </Label>
-                <Input
-                  id='itemName'
-                  {...itemForm.register('name')}
-                  className='h-9 text-xs'
-                />
-                {itemForm.formState.errors.name && (
-                  <p className='text-xs text-destructive mt-1'>
-                    {itemForm.formState.errors.name.message}
-                  </p>
-                )}
-              </div>
-              <div>
-                <Label htmlFor='itemSku' className='text-xs'>
-                  SKU (Opsional, otomatis jika kosong)
-                </Label>
-                <Input
-                  id='itemSku'
-                  {...itemForm.register('sku')}
-                  className='h-9 text-xs'
-                />
-              </div>
-              <div>
-                <Label htmlFor='itemCategory' className='text-xs'>
-                  Kategori*
-                </Label>
-                <Controller
-                  name='categoryId'
-                  control={itemForm.control}
-                  render={({ field }) => (
-                    <Select
-                      onValueChange={field.onChange}
-                      value={field.value}
-                      disabled={loadingCategories}
-                    >
-                      <SelectTrigger className='h-9 text-xs'>
-                        <SelectValue
-                          placeholder={
-                            loadingCategories
-                              ? 'Memuat kategori...'
-                              : categories.length === 0
-                              ? 'Tidak ada kategori'
-                              : 'Pilih kategori'
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {categories.length === 0 && !loadingCategories ? (
-                          <div className='p-2 text-xs text-muted-foreground'>
-                            Belum ada kategori. Tambah dulu via 'Kelola
-                            Kategori'.
-                          </div>
-                        ) : (
-                          categories.map((cat) => (
-                            <SelectItem
-                              key={cat.id}
-                              value={cat.id}
-                              className='text-xs'
-                            >
-                              {cat.name}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-                {itemForm.formState.errors.categoryId && (
-                  <p className='text-xs text-destructive mt-1'>
-                    {itemForm.formState.errors.categoryId.message}
-                  </p>
-                )}
-              </div>
-              <div className='grid grid-cols-1 md:grid-cols-3 gap-3'>
-                <div>
-                  <Label htmlFor='itemQuantity' className='text-xs'>
-                    Stok*
-                  </Label>
-                  <Input
-                    id='itemQuantity'
-                    type='number'
-                    {...itemForm.register('quantity')}
-                    className='h-9 text-xs'
-                  />
-                  {itemForm.formState.errors.quantity && (
-                    <p className='text-xs text-destructive mt-1'>
-                      {itemForm.formState.errors.quantity.message}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <Label htmlFor='itemPrice' className='text-xs'>
-                    Harga Jual (Rp)*
-                  </Label>
-                  <Input
-                    id='itemPrice'
-                    type='number'
-                    {...itemForm.register('price')}
-                    className='h-9 text-xs'
-                  />
-                  {itemForm.formState.errors.price && (
-                    <p className='text-xs text-destructive mt-1'>
-                      {itemForm.formState.errors.price.message}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <Label htmlFor='itemCostPrice' className='text-xs'>
-                    Harga Pokok (Rp)
-                  </Label>
-                  <Input
-                    id='itemCostPrice'
-                    type='number'
-                    {...itemForm.register('costPrice')}
-                    className='h-9 text-xs'
-                    placeholder='0'
-                  />
-                  {itemForm.formState.errors.costPrice && (
-                    <p className='text-xs text-destructive mt-1'>
-                      {itemForm.formState.errors.costPrice.message}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div>
-                <Label htmlFor='itemImageUrl' className='text-xs'>
-                  URL Gambar (Opsional)
-                </Label>
-                <Input
-                  id='itemImageUrl'
-                  {...itemForm.register('imageUrl')}
-                  placeholder='https://...'
-                  className='h-9 text-xs'
-                />
-                {itemForm.formState.errors.imageUrl && (
-                  <p className='text-xs text-destructive mt-1'>
-                    {itemForm.formState.errors.imageUrl.message}
-                  </p>
-                )}
-              </div>
-              <div>
-                <Label htmlFor='itemImageHint' className='text-xs'>
-                  Petunjuk Gambar (Opsional, maks 2 kata untuk placeholder)
-                </Label>
-                <Input
-                  id='itemImageHint'
-                  {...itemForm.register('imageHint')}
-                  placeholder='Contoh: coffee beans'
-                  className='h-9 text-xs'
-                />
-              </div>
-              <DialogFooter className='pt-3'>
-                <DialogClose asChild>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    className='text-xs h-8'
-                  >
-                    Batal
-                  </Button>
-                </DialogClose>
-                <Button
-                  type='submit'
-                  className='text-xs h-8'
-                  disabled={
-                    itemForm.formState.isSubmitting || categories.length === 0
-                  }
-                >
-                  {itemForm.formState.isSubmitting
-                    ? 'Menyimpan...'
-                    : editingItem
-                    ? 'Simpan Perubahan'
-                    : 'Tambah Produk'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
 
         <Dialog
           open={isCategoryManagerOpen}
@@ -1526,7 +971,7 @@ export default function InventoryPage() {
                     )}
                   </p>
                   {csvImportSummary.invalidCategories > 0 && (
-                    <AlertDescUI variant='destructive' className='mb-3 text-xs'>
+                    <Alert variant='destructive' className='mb-3 text-xs'>
                       <AlertTriangle className='h-4 w-4' />
                       <AlertDescUI>
                         <strong>Peringatan Kategori Tidak Valid:</strong>{' '}
@@ -1536,7 +981,7 @@ export default function InventoryPage() {
                         yang diperlukan melalui tombol 'Kategori' di halaman
                         inventaris, lalu coba impor ulang file ini.
                       </AlertDescUI>
-                    </AlertDescUI>
+                    </Alert>
                   )}
 
                   <p className='text-sm mb-1'>

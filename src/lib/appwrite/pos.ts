@@ -39,23 +39,34 @@ export type TransactionItem = {
   total: number
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'transfer' | 'qris'
+export type PaymentMethod = 'cash' | 'card' | 'transfer' | 'qris' | 'credit'
 
 export interface POSTransaction {
   id: string // dari $id
+  status: 'processing' | 'completed' | 'failed'
   transactionNumber: string
   branchId: string
   shiftId: string
   userId: string
   userName: string
+  taxAmount: number // Jika ada pajak, bisa ditambahkan
+  discountAmount: number // Jika ada diskon, bisa ditambahkan
   items: TransactionItem[] // Disimpan sebagai JSON string
   subtotal: number
   discount: number
-  total: number
+  totalAmount: number
+  totalCost: number // Total biaya sebelum pajak
+  shippingCost: number // Jika ada biaya pengiriman
   paymentMethod: PaymentMethod
+  voucherCode?: string // Jika ada kode voucher
+  voucherDiscountAmount?: number // Jika ada diskon dari voucher
+  totalDiscountAmount?: number // Total diskon (diskon + voucher)
   amountPaid: number
-  change: number
+  changeGiven?: number // Jumlah kembalian yang diberikan
+  paymentTerms?: string // Jika ada syarat pembayaran khusus
   customerId?: string
+  bankTransactionRef?: string // Jika pembayaran melalui transfer bank
+  bankName?: string // Jika pembayaran melalui transfer bank
   customerName?: string
   createdAt: string // dari $createdAt
 }
@@ -121,7 +132,6 @@ export async function getActiveShift(
 export async function startShift(
   branchId: string,
   userId: string,
-  userName: string,
   startingBalance: number
 ): Promise<POSShift | { error: string }> {
   try {
@@ -133,12 +143,14 @@ export async function startShift(
     const dataToSave = {
       branchId,
       userId,
-      userName,
       startingBalance,
       startShift: new Date().toISOString(),
       totalSales: 0,
       totalCashPayments: 0,
       totalOtherPayments: 0,
+      totalBankPayments: 0,
+      TotalCardPayments: 0,
+      TotalQrisPayments: 0,
       status: 'active' as const,
     }
 
@@ -342,25 +354,15 @@ export async function endShift(
 
 export async function getTransactions(
   branchId: string,
-  filters: {
-    startDate: Date
-    endDate: Date
-    shiftId?: string
-  }
+  shiftId?: string
 ): Promise<POSTransaction[]> {
   try {
     const queries = [Query.equal('branchId', branchId)]
 
-    if (filters.shiftId) {
-      queries.push(Query.equal('shiftId', filters.shiftId))
+    if (shiftId) {
+      queries.push(Query.equal('shiftId', shiftId))
     }
 
-    queries.push(
-      Query.greaterThanEqual('$createdAt', filters.startDate.toISOString())
-    )
-    queries.push(
-      Query.lessThanEqual('$createdAt', filters.endDate.toISOString())
-    )
     queries.push(Query.orderDesc('$createdAt'))
 
     const response = await databases.listDocuments(

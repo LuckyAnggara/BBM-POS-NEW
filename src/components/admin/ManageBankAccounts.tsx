@@ -153,12 +153,24 @@ export default function ManageBankAccounts({
       branchId: bankAccountForm.branchId || null, // Ensure branchId is null if not selected
     }
     try {
+      let result: BankAccount | { error: string }
       if (editingBankAccount) {
-        await updateBankAccount(editingBankAccount.id, dataInput)
+        result = await updateBankAccount(editingBankAccount.id, dataInput)
       } else {
-        console.log('addBank')
-        await addBankAccount(dataInput)
+        console.log('Adding new bank account with data:', dataInput)
+        result = await addBankAccount(dataInput)
       }
+
+      if ('error' in result) {
+        toast.error(
+          editingBankAccount ? 'Gagal Memperbarui' : 'Gagal Menambah',
+          {
+            description: result.error,
+          }
+        )
+        return // Stop execution if there's a validation error
+      }
+
       toast.success(
         editingBankAccount ? 'Rekening Diperbarui' : 'Rekening Ditambahkan'
       )

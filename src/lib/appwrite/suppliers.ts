@@ -16,6 +16,8 @@ export interface Supplier {
   phone?: string
   email?: string
   address?: string
+  notes?: string
+  contactPerson?: string
   branchId: string
   createdAt: string // ISO String, dari $createdAt
 }
@@ -67,7 +69,6 @@ export async function getSuppliers(
   } = {}
 ): Promise<{ suppliers: Supplier[]; lastDocId?: string; hasMore: boolean }> {
   if (!branchId) return { suppliers: [], hasMore: false }
-
   try {
     let queries: string[] = [Query.equal('branchId', branchId)]
 

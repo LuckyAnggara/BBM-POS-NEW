@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 import { BranchProvider } from '@/contexts/branch-context'
 import { AuthProvider } from '@/contexts/auth-context' // Import AuthProvider
+import { ThemeProvider } from '@/contexts/theme-context'
 import { Toaster } from '@/components/ui/sonner'
 
 export const metadata: Metadata = {
@@ -29,11 +30,18 @@ export default function RootLayout({
         />
       </head>
       <body className='font-body antialiased'>
-        <AuthProvider>
-          {/* Wrap BranchProvider with AuthProvider */}
-          <BranchProvider>{children}</BranchProvider>
-        </AuthProvider>
-        <Toaster richColors />
+        <ThemeProvider
+          attribute='class'
+          defaultTheme='system'
+          enableSystem
+          disableTransitionOnChange
+        >
+          <AuthProvider>
+            {/* Wrap BranchProvider with AuthProvider */}
+            <BranchProvider>{children}</BranchProvider>
+          </AuthProvider>
+        </ThemeProvider>
+        <Toaster richColors duration={2000} closeButton={true} />
       </body>
     </html>
   )
