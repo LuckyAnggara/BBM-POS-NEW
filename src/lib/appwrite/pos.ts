@@ -1,5 +1,6 @@
 // src/lib/appwrite/pos.ts
 
+import { getUserDocument } from '../firebase/users'
 import {
   databases,
   ID,
@@ -8,105 +9,134 @@ import {
   DATABASE_ID,
   POS_SHIFTS_COLLECTION_ID,
   POS_TRANSACTIONS_COLLECTION_ID,
-  INVENTORY_ITEMS_COLLECTION_ID,
-  CUSTOMERS_COLLECTION_ID,
+  POS_TRANSACTION_ITEMS_COLLECTION_ID,
+  BRANCHES_COLLECTION_ID,
 } from './config'
-import type { Customer } from './customers'
-import type { InventoryItem } from './inventory'
-import { addStockMutation } from './stockMutations'
+import {
+  TransactionDocument,
+  CreateTransactionPayload,
+  TransactionViewModel,
+  ShiftDocument,
+  TransactionItemDocument,
+} from './types' // Kita akan mengimpor tipe bersih dari satu file pusat
 
-// --- Definisi Tipe Data ---
-
-export interface POSShift {
-  id: string // dari $id
+interface GetTransactionsParams {
   branchId: string
-  userId: string
-  userName: string
-  startShift: string // ISO String
-  endShift?: string // ISO String
-  startingBalance: number
-  totalSales: number
-  totalCashPayments: number
-  totalOtherPayments: number
-  status: 'active' | 'ended'
+  shiftId?: string
+  options?: {
+    startDate?: string
+    endDate?: string
+    limit?: number
+    searchTerm?: string
+    page?: number
+  }
 }
 
-export type TransactionItem = {
-  itemId: string
-  name: string
-  quantity: number
-  price: number // Harga jual per item
-  total: number
-}
-
-export type PaymentMethod = 'cash' | 'card' | 'transfer' | 'qris' | 'credit'
-
-export interface POSTransaction {
-  id: string // dari $id
-  status: 'processing' | 'completed' | 'failed'
-  transactionNumber: string
-  branchId: string
-  shiftId: string
-  userId: string
-  userName: string
-  taxAmount: number // Jika ada pajak, bisa ditambahkan
-  discountAmount: number // Jika ada diskon, bisa ditambahkan
-  items: TransactionItem[] // Disimpan sebagai JSON string
-  subtotal: number
-  discount: number
-  totalAmount: number
-  totalCost: number // Total biaya sebelum pajak
-  shippingCost: number // Jika ada biaya pengiriman
-  paymentMethod: PaymentMethod
-  voucherCode?: string // Jika ada kode voucher
-  voucherDiscountAmount?: number // Jika ada diskon dari voucher
-  totalDiscountAmount?: number // Total diskon (diskon + voucher)
-  amountPaid: number
-  changeGiven?: number // Jumlah kembalian yang diberikan
-  paymentTerms?: string // Jika ada syarat pembayaran khusus
-  customerId?: string
-  bankTransactionRef?: string // Jika pembayaran melalui transfer bank
-  bankName?: string // Jika pembayaran melalui transfer bank
-  customerName?: string
-  createdAt: string // dari $createdAt
-}
-
-// --- Peringatan Kritis Mengenai Transaksi ---
+// =================================================================
+// FUNGSI MAPPER (PRAKTIK TERBAIK)
+// Untuk mengubah dokumen mentah dari Appwrite menjadi tipe yang bersih dan aman.
+// =================================================================
 
 /**
- * ===================================================================================
- * !! PERINGATAN KRITIS: ANDA HARUS MENGGUNAKAN APPWRITE FUNCTIONS UNTUK INI !!
- * ===================================================================================
- *
- * Fungsi `createPOSTransaction` adalah operasi paling kritikal di aplikasi Anda.
- * Di Firebase, ini dilindungi oleh `runTransaction`.
- *
- * Operasi ini harus:
- * 1. Membuat dokumen transaksi.
- * 2. Mengurangi stok untuk SETIAP item yang terjual.
- * 3. (Opsional) Membuat catatan mutasi stok untuk SETIAP item.
- * 4. (Opsional) Memperbarui data pelanggan (total belanja, dll).
- * 5. Memperbarui total penjualan di dokumen shift yang aktif.
- *
- * Melakukan ini semua dari klien (browser) sangatlah BERISIKO. Jika koneksi gagal
- * setelah mengurangi stok item pertama, data Anda akan RUSAK permanen.
- *
- * SOLUSI YANG BENAR:
- * Buat satu Appwrite Function (misal: 'processSale'). Kirim seluruh data keranjang belanja
- * ke fungsi ini. Biarkan server Appwrite yang menjalankan 5 langkah di atas secara aman.
- * Jika ada kegagalan, Anda bisa menangani error di server tanpa merusak data.
- *
- * Kode di bawah ini adalah representasi client-side dan TIDAK DIREKOMENDASIKAN UNTUK PRODUKSI.
- * ===================================================================================
+ * Mengubah dokumen mentah Appwrite menjadi tipe ShiftDocument yang bersih.
+ * @param doc Dokumen mentah dari Appwrite
+ * @returns Objek dengan tipe ShiftDocument
  */
+const mapDocToShiftDocument = (doc: any): ShiftDocument => ({
+  $id: doc.$id,
+  $createdAt: doc.$createdAt,
+  branchId: doc.branchId,
+  userId: doc.userId,
+  userName: doc.userName,
+  startShift: doc.startShift,
+  endShift: doc.endShift,
+  startingBalance: doc.startingBalance,
+  totalSales: doc.totalSales,
+  totalCashPayments: doc.totalCashPayments,
+  discountAmount: doc.discountAmount,
+  totalOtherPayments: doc.totalOtherPayments,
+  status: doc.status,
+})
 
-// --- Fungsi Manajemen Shift ---
+const mapDocToTransactionItemDocument = (
+  doc: any
+): TransactionItemDocument => ({
+  $id: doc.$id,
+  $createdAt: doc.$createdAt,
+  transactionId: doc.transactionId,
+  branchId: doc.branchId,
+  productId: doc.productId,
+  productName: doc.productName,
+  sku: doc.sku,
+  quantity: doc.quantity,
+  priceAtSale: doc.priceAtSale,
+  costAtSale: doc.costAtSale,
+  discountAmount: doc.discountAmount,
+  subtotal: doc.subtotal,
+})
+
+/**
+ * Mengubah dokumen mentah Appwrite menjadi tipe TransactionDocument yang bersih.
+ * @param doc Dokumen mentah dari Appwrite
+ * @returns Objek dengan tipe TransactionDocument
+ */
+const mapDocToTransactionDocument = (doc: any): TransactionDocument => {
+  // Parsing item yang disimpan sebagai JSON string dengan aman
+  let parsedItems = []
+  try {
+    if (doc.items && typeof doc.items === 'string') {
+      parsedItems = JSON.parse(doc.items)
+    } else if (Array.isArray(doc.items)) {
+      parsedItems = doc.items // Jika sudah berupa array
+    }
+  } catch (e) {
+    console.error(`Gagal parsing item untuk transaksi ${doc.$id}:`, e)
+  }
+
+  return {
+    $id: doc.$id,
+    $createdAt: doc.$createdAt,
+    status: doc.status,
+    transactionNumber: doc.transactionNumber,
+    branchId: doc.branchId,
+    shiftId: doc.shiftId,
+    userId: doc.userId,
+    customerId: doc.customerId,
+    userName: doc.userName,
+    customerName: doc.customerName,
+    items: parsedItems,
+    subtotal: doc.subtotal,
+    itemsDiscountAmount: doc.itemsDiscountAmount || 0,
+    voucherCode: doc.voucherCode,
+    voucherDiscountAmount: doc.voucherDiscountAmount || 0,
+    totalDiscountAmount: doc.totalDiscountAmount || 0,
+    shippingCost: doc.shippingCost || 0,
+    taxAmount: doc.taxAmount || 0,
+    totalAmount: doc.totalAmount,
+    totalCOGS: doc.totalCOGS || 0,
+    // Details
+    paymentMethod: doc.paymentMethod,
+    paymentStatus: doc.paymentStatus,
+    amountPaid: doc.amountPaid,
+    changeGiven: doc.changeGiven || 0,
+    isCreditSale: doc.isCreditSale || false,
+    creditDueDate: doc.creditDueDate,
+    outstandingAmount: doc.outstandingAmount || 0,
+    bankTransactionRef: doc.bankTransactionRef,
+    bankName: doc.bankName,
+  }
+}
+
+// =================================================================
+// FUNGSI MANAJEMEN SHIFT (SUDAH DIPERBAIKI)
+// =================================================================
 
 export async function getActiveShift(
-  branchId: string,
-  userId: string
-): Promise<POSShift | null> {
+  userId: string,
+  branchId: string
+): Promise<ShiftDocument | null> {
   if (!branchId || !userId) return null
+
   try {
     const response = await databases.listDocuments(
       DATABASE_ID,
@@ -118,9 +148,11 @@ export async function getActiveShift(
         Query.limit(1),
       ]
     )
-    if (response.total > 0) {
-      const doc = response.documents[0]
-      return doc as unknown as POSShift
+    console.log('Shift ditemukan:', response)
+
+    if (response.documents.length > 0) {
+      // Gunakan fungsi mapper untuk konsistensi dan keamanan tipe
+      return mapDocToShiftDocument(response.documents[0])
     }
     return null
   } catch (error) {
@@ -130,12 +162,13 @@ export async function getActiveShift(
 }
 
 export async function startShift(
-  branchId: string,
   userId: string,
+  branchId: string,
+  userName: string,
   startingBalance: number
-): Promise<POSShift | { error: string }> {
+): Promise<ShiftDocument | { error: string }> {
   try {
-    const existingShift = await getActiveShift(branchId, userId)
+    const existingShift = await getActiveShift(userId, branchId)
     if (existingShift) {
       return { error: 'Anda sudah memiliki shift yang aktif.' }
     }
@@ -143,14 +176,13 @@ export async function startShift(
     const dataToSave = {
       branchId,
       userId,
+      userName,
       startingBalance,
       startShift: new Date().toISOString(),
       totalSales: 0,
       totalCashPayments: 0,
       totalOtherPayments: 0,
-      totalBankPayments: 0,
-      TotalCardPayments: 0,
-      TotalQrisPayments: 0,
+      discountAmount: 0,
       status: 'active' as const,
     }
 
@@ -160,7 +192,8 @@ export async function startShift(
       ID.unique(),
       dataToSave
     )
-    return document as unknown as POSShift
+    // Gunakan mapper untuk memastikan tipe keluaran benar
+    return mapDocToShiftDocument(document)
   } catch (error: any) {
     console.error('Error starting shift:', error)
     return { error: error.message || 'Gagal memulai shift.' }
@@ -170,23 +203,10 @@ export async function startShift(
 export async function endShift(
   shiftId: string
 ): Promise<{ error: string } | void> {
+  // Peringatan: Logika ini sebaiknya ada di dalam Appwrite Function
+  // untuk menghitung ulang semua total sebelum menutup shift demi akurasi.
   if (!shiftId) return { error: 'ID Shift tidak valid.' }
-
-  // INI JUGA SEBAIKNYA MENJADI APPWRITE FUNCTION
-  // Untuk memastikan perhitungan total akurat sebelum menutup shift.
   try {
-    const shift = await databases.getDocument(
-      DATABASE_ID,
-      POS_SHIFTS_COLLECTION_ID,
-      shiftId
-    )
-    if (shift.status !== 'active')
-      return { error: 'Shift ini sudah tidak aktif.' }
-
-    // Di Appwrite Function, Anda akan menghitung ulang totalSales dari
-    // koleksi transaksi untuk memastikan akurasi sebelum menutup.
-    // Di sini kita hanya akan memperbarui statusnya.
-
     await databases.updateDocument(
       DATABASE_ID,
       POS_SHIFTS_COLLECTION_ID,
@@ -202,269 +222,208 @@ export async function endShift(
   }
 }
 
-// --- Fungsi Transaksi Penjualan Versi Client Side ---
+// =================================================================
+// FUNGSI TRANSAKSI (SUDAH DIPERBAIKI)
+// =================================================================
 
-// export async function createPOSTransaction(
-//   transactionData: Omit<
-//     POSTransaction,
-//     'id' | 'createdAt' | 'transactionNumber' | 'change'
-//   >
-// ): Promise<POSTransaction | { error: string }> {
-//   // --- AWAL DARI LOGIKA YANG HARUS PINDAH KE APPWRITE FUNCTION ---
-//   try {
-//     if (!transactionData.shiftId)
-//       return { error: 'Shift tidak aktif. Tidak bisa melakukan transaksi.' }
-
-//     const transactionNumber = `TRX-${Date.now()}`
-//     const change = transactionData.amountPaid - transactionData.total
-
-//     // Langkah yang lebih aman: Buat dokumen transaksi utama terlebih dahulu untuk mendapatkan ID
-//     const preTransactionDoc = await databases.createDocument(
-//       DATABASE_ID,
-//       POS_TRANSACTIONS_COLLECTION_ID,
-//       ID.unique(),
-//       {
-//         ...transactionData,
-//         items: JSON.stringify(transactionData.items),
-//         transactionNumber,
-//         change,
-//         status: 'processing', // Status sementara
-//       }
-//     )
-//     const transactionId = preTransactionDoc.$id
-
-//     // 1. Update stok untuk setiap item
-//     for (const item of transactionData.items) {
-//       const inventoryDoc = await databases.getDocument(
-//         DATABASE_ID,
-//         INVENTORY_ITEMS_COLLECTION_ID,
-//         item.itemId
-//       )
-//       const currentQuantity = inventoryDoc.quantity as number
-
-//       if (currentQuantity < item.quantity) {
-//         // Hapus transaksi yang gagal dibuat
-//         await databases.deleteDocument(
-//           DATABASE_ID,
-//           POS_TRANSACTIONS_COLLECTION_ID,
-//           transactionId
-//         )
-//         throw new Error(
-//           `Stok untuk ${item.name} tidak mencukupi (sisa ${currentQuantity}).`
-//         )
-//       }
-
-//       const newQuantity = currentQuantity - item.quantity
-//       await databases.updateDocument(
-//         DATABASE_ID,
-//         INVENTORY_ITEMS_COLLECTION_ID,
-//         item.itemId,
-//         {
-//           quantity: newQuantity,
-//         }
-//       )
-
-//       // Panggil fungsi 'addStockMutation'
-//       await addStockMutation({
-//         itemId: item.itemId,
-//         itemName: item.name,
-//         branchId: transactionData.branchId,
-//         change: -item.quantity, // Negatif karena barang keluar
-//         previousQuantity: currentQuantity,
-//         newQuantity: newQuantity,
-//         type: 'SALE',
-//         description: `Penjualan via POS - Transaksi #${transactionNumber}`,
-//         relatedTransactionId: transactionId,
-//         userId: transactionData.userId,
-//         userName: transactionData.userName,
-//       })
-//     }
-
-//     // 2. Update data pelanggan (jika ada)
-//     if (transactionData.customerId) {
-//       // ... (logika update pelanggan tetap sama)
-//       const customerDoc = await databases.getDocument(
-//         DATABASE_ID,
-//         CUSTOMERS_COLLECTION_ID,
-//         transactionData.customerId
-//       )
-//       const updatedData = {
-//         totalTransactions: (customerDoc.totalTransactions || 0) + 1,
-//         totalSpent: (customerDoc.totalSpent || 0) + transactionData.total,
-//         lastTransactionDate: new Date().toISOString(),
-//       }
-//       await databases.updateDocument(
-//         DATABASE_ID,
-//         CUSTOMERS_COLLECTION_ID,
-//         transactionData.customerId,
-//         updatedData
-//       )
-//     }
-
-//     // 3. Update total di dokumen shift
-//     // ... (logika update shift tetap sama)
-//     const shiftDoc = await databases.getDocument(
-//       DATABASE_ID,
-//       POS_SHIFTS_COLLECTION_ID,
-//       transactionData.shiftId
-//     )
-//     const shiftUpdate: Partial<POSShift> = {
-//       totalSales: (shiftDoc.totalSales || 0) + transactionData.total,
-//     }
-//     if (transactionData.paymentMethod === 'cash') {
-//       shiftUpdate.totalCashPayments =
-//         (shiftDoc.totalCashPayments || 0) + transactionData.total
-//     } else {
-//       shiftUpdate.totalOtherPayments =
-//         (shiftDoc.totalOtherPayments || 0) + transactionData.total
-//     }
-//     await databases.updateDocument(
-//       DATABASE_ID,
-//       POS_SHIFTS_COLLECTION_ID,
-//       transactionData.shiftId,
-//       shiftUpdate
-//     )
-
-//     // 4. Update status transaksi yang sudah final
-//     const finalDoc = await databases.updateDocument(
-//       DATABASE_ID,
-//       POS_TRANSACTIONS_COLLECTION_ID,
-//       transactionId,
-//       {
-//         status: 'completed', // Ubah status dari processing ke completed
-//       }
-//     )
-
-//     return {
-//       ...transactionData,
-//       id: finalDoc.$id,
-//       transactionNumber: finalDoc.transactionNumber,
-//       change: finalDoc.change,
-//       createdAt: finalDoc.$createdAt,
-//     }
-//   } catch (error: any) {
-//     console.error('CRITICAL: POS Transaction failed:', error)
-//     return {
-//       error: `Transaksi Gagal: ${error.message}. Periksa data stok dan shift secara manual.`,
-//     }
-//   }
-// }
-
-// --- Fungsi Pengambilan Data - Transaksi ---
-
-export async function getTransactions(
-  branchId: string,
-  shiftId?: string
-): Promise<POSTransaction[]> {
-  try {
-    const queries = [Query.equal('branchId', branchId)]
-
-    if (shiftId) {
-      queries.push(Query.equal('shiftId', shiftId))
-    }
-
-    queries.push(Query.orderDesc('$createdAt'))
-
-    const response = await databases.listDocuments(
-      DATABASE_ID,
-      POS_TRANSACTIONS_COLLECTION_ID,
-      queries
-    )
-
-    return response.documents.map((doc) => ({
-      id: doc.$id,
-      transactionNumber: doc.transactionNumber,
-      branchId: doc.branchId,
-      shiftId: doc.shiftId,
-      userId: doc.userId,
-      userName: doc.userName,
-      items: JSON.parse(doc.items),
-      subtotal: doc.subtotal,
-      discount: doc.discount,
-      total: doc.total,
-      paymentMethod: doc.paymentMethod,
-      amountPaid: doc.amountPaid,
-      change: doc.change,
-      customerId: doc.customerId,
-      customerName: doc.customerName,
-      createdAt: doc.$createdAt,
-    })) as POSTransaction[]
-  } catch (error: any) {
-    console.error('Error fetching transactions:', error)
-    return []
-  }
-}
-
-export async function getTransactionById(
-  transactionId: string
-): Promise<POSTransaction | null> {
-  try {
-    const doc = await databases.getDocument(
-      DATABASE_ID,
-      POS_TRANSACTIONS_COLLECTION_ID,
-      transactionId
-    )
-    return {
-      id: doc.$id,
-      transactionNumber: doc.transactionNumber,
-      branchId: doc.branchId,
-      shiftId: doc.shiftId,
-      userId: doc.userId,
-      userName: doc.userName,
-      items: JSON.parse(doc.items),
-      subtotal: doc.subtotal,
-      discount: doc.discount,
-      total: doc.total,
-      paymentMethod: doc.paymentMethod,
-      amountPaid: doc.amountPaid,
-      change: doc.change,
-      customerId: doc.customerId,
-      customerName: doc.customerName,
-      createdAt: doc.$createdAt,
-    } as POSTransaction
-  } catch (error) {
-    console.error('Error fetching transaction by ID:', error)
-    return null
-  }
-}
-
-// --- Fungsi Transaksi Penjualan Versi Cloud Function Side ---
-
+/**
+ * ===================================================================================
+ * !! PERINGATAN KRITIS: ANDA HARUS MENGGUNAKAN APPWRITE FUNCTIONS UNTUK INI !!
+ * ===================================================================================
+ * Fungsi ini sekarang berfungsi sebagai pembungkus (wrapper) yang aman untuk memanggil
+ * Appwrite Function. Semua logika berat (update stok, dll) terjadi di server.
+ * Ini adalah arsitektur yang BENAR dan direkomendasikan.
+ * ===================================================================================
+ */
 export async function createPOSTransaction(
-  transactionData: Omit<
-    POSTransaction,
-    'id' | 'createdAt' | 'transactionNumber' | 'change'
-  >
-): Promise<POSTransaction | { error: string }> {
-  // Ganti 'YOUR_FUNCTION_ID' dengan ID fungsi yang Anda dapatkan dari Appwrite Console
-  const FUNCTION_ID = '6855fe8e0013d45e6f0d' // atau ID uniknya
+  payload: CreateTransactionPayload
+): Promise<TransactionDocument | { error: string }> {
+  // Ganti 'YOUR_FUNCTION_ID' dengan ID fungsi yang Anda deploy di Appwrite
+  const CREATE_POS_FUNCTION_ID = '685fd6e3000a011a253e' // Ganti dengan ID Function Anda
 
   try {
     const result = await functions.createExecution(
-      FUNCTION_ID,
-      JSON.stringify(transactionData), // Kirim data sebagai string JSON
-      false, // async false, tunggu hasilnya
-      '/', // path
-      'POST' // method
+      CREATE_POS_FUNCTION_ID,
+      JSON.stringify(payload), // Kirim payload yang sudah bersih
+      false, // false = sinkron (menunggu hasil)
+      '/',
+      'POST'
     )
 
     if (result.status === 'completed') {
       const response = JSON.parse(result.responseBody)
       if (response.ok) {
-        // Sukses, kembalikan data transaksi yang telah dibuat
-        return response.data as POSTransaction
+        // Fungsi backend berhasil dan mengembalikan data transaksi
+        // Kita gunakan mapper untuk memastikan data yang kembali ke UI bersih
+        return mapDocToTransactionDocument(response.data)
       } else {
-        // Error dari logika di dalam fungsi
+        // Error logis dari dalam fungsi (misal: stok tidak cukup)
         return { error: response.msg || 'Fungsi backend mengembalikan error.' }
       }
     } else {
-      // Error pada eksekusi fungsi itu sendiri
+      // Error pada eksekusi fungsi itu sendiri (misal: timeout, crash)
       return {
-        error: `Eksekusi fungsi gagal dengan status: ${result.status}. Error: ${result.responseBody}`,
+        error: `Eksekusi fungsi gagal: ${result.status}. Error: ${result.responseBody}`,
       }
     }
   } catch (e: any) {
     console.error('Gagal memanggil fungsi transaksi POS:', e)
     return { error: e.message || 'Gagal menghubungi server.' }
+  }
+}
+
+// =================================================================
+// FUNGSI PENGAMBILAN DATA (SUDAH DIPERBAIKI)
+// =================================================================
+
+export async function getTransactions({
+  branchId,
+  shiftId,
+  options = {}, // Beri nilai default agar tidak error jika options tidak dikirim
+}: GetTransactionsParams): Promise<{
+  total: number
+  documents: TransactionDocument[]
+}> {
+  // Mengembalikan total juga untuk paginasi
+
+  try {
+    const limit = options.limit || 25
+    const page = options.page || 1
+    const offset = (page - 1) * limit
+
+    // Kumpulan query dasar yang selalu berlaku
+    const baseQueries = [
+      Query.equal('branchId', branchId),
+      Query.orderDesc('$createdAt'),
+    ]
+
+    if (shiftId) {
+      baseQueries.push(Query.equal('shiftId', shiftId))
+    }
+
+    if (options.startDate && options.endDate) {
+      const startDate = new Date(options.startDate)
+      const endDate = new Date(options.endDate)
+
+      baseQueries.push(
+        Query.greaterThanEqual('$createdAt', startDate.toISOString())
+      )
+      baseQueries.push(Query.lessThanEqual('$createdAt', endDate.toISOString()))
+    }
+
+    // --- LOGIKA PENCARIAN BARU ---
+    if (options.searchTerm) {
+      // Jalankan dua query pencarian secara paralel untuk efisiensi
+      const [customerNameResults, transactionNumberResults] = await Promise.all(
+        [
+          databases.listDocuments(DATABASE_ID, POS_TRANSACTIONS_COLLECTION_ID, [
+            Query.equal('branchId', branchId), // Selalu scope dengan branch
+            Query.startsWith('customerName', options.searchTerm), // Gunakan startsWith untuk pencarian nama
+            Query.limit(100), // Batasi hasil pencarian awal
+          ]),
+          databases.listDocuments(DATABASE_ID, POS_TRANSACTIONS_COLLECTION_ID, [
+            Query.equal('branchId', branchId),
+            Query.equal('transactionNumber', options.searchTerm), // Gunakan equal untuk no. transaksi
+            Query.limit(100),
+          ]),
+        ]
+      )
+
+      // Gabungkan ID dari kedua hasil dan hilangkan duplikat
+      const allIds = [
+        ...customerNameResults.documents.map((doc) => doc.$id),
+        ...transactionNumberResults.documents.map((doc) => doc.$id),
+      ]
+      const uniqueIds = [...new Set(allIds)]
+
+      if (uniqueIds.length === 0) {
+        // Jika tidak ada hasil sama sekali, kembalikan array kosong
+        return { total: 0, documents: [] }
+      }
+
+      // Tambahkan filter berdasarkan ID unik yang ditemukan
+      baseQueries.push(Query.equal('$id', uniqueIds))
+    }
+
+    // --- Query Final untuk mendapatkan data dan total ---
+    const finalQueries = [
+      ...baseQueries,
+      Query.limit(limit),
+      Query.offset(offset),
+    ]
+
+    // Kita perlu 2 query: satu untuk data (dengan limit/offset), satu untuk total (tanpa limit/offset)
+    const [response, totalResponse] = await Promise.all([
+      databases.listDocuments(
+        DATABASE_ID,
+        POS_TRANSACTIONS_COLLECTION_ID,
+        finalQueries
+      ),
+      databases.listDocuments(
+        DATABASE_ID,
+        POS_TRANSACTIONS_COLLECTION_ID,
+        baseQueries
+      ),
+    ])
+
+    return {
+      total: totalResponse.total,
+      documents: response.documents.map(mapDocToTransactionDocument),
+    }
+  } catch (error: any) {
+    console.error('Error fetching transactions:', error)
+    return { total: 0, documents: [] }
+  }
+}
+
+export async function getTransactionById(
+  transactionId: string
+): Promise<TransactionViewModel | null> {
+  try {
+    // Langkah 1: Ambil dokumen "kepala" transaksi
+    const transactionDoc = await databases.getDocument(
+      DATABASE_ID,
+      POS_TRANSACTIONS_COLLECTION_ID,
+      transactionId
+    )
+
+    if (!transactionDoc) return null
+
+    const [itemsResponse, branchData] = await Promise.all([
+      // Query untuk mengambil semua item terkait
+      databases.listDocuments(
+        DATABASE_ID,
+        POS_TRANSACTION_ITEMS_COLLECTION_ID,
+        [Query.equal('transactionId', transactionId), Query.limit(100)]
+      ),
+      // Query untuk mengambil data cabang
+      databases.getDocument(
+        DATABASE_ID,
+        BRANCHES_COLLECTION_ID,
+        transactionDoc.branchId
+      ),
+    ])
+    // Gabungkan hasilnya menjadi satu objek ViewModel yang siap ditampilkan
+    const transactionViewModel: TransactionViewModel = {
+      ...mapDocToTransactionDocument(transactionDoc), // Gunakan mapper untuk data kepala
+      items: itemsResponse.documents.map(mapDocToTransactionItemDocument), // Gunakan mapper untuk setiap item
+      // >> PROPERTI YANG HILANG SEKARANG DITAMBAHKAN DI SINI <<
+      branch: {
+        id: branchData.$id,
+        name: branchData.name,
+      },
+      user: {
+        id: transactionDoc.userId,
+        name: transactionDoc.userName,
+      },
+      customer: {
+        name: transactionDoc.customerName,
+      },
+    }
+
+    return transactionViewModel
+  } catch (error) {
+    console.error(`Error fetching transaction by ID ${transactionId}:`, error)
+    return null
   }
 }

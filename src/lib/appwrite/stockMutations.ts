@@ -21,7 +21,8 @@ export type StockMutationType =
   | 'TRANSACTION_DELETED_SALE_RESTOCK'
 
 export interface StockMutation {
-  id: string // dari $id
+  $id: string // dari $id
+  $createdAt: string // dari $createdAt
   branchId: string
   itemId: string
   itemName: string // Denormalisasi untuk mempermudah tampilan laporan
@@ -33,7 +34,6 @@ export interface StockMutation {
   relatedTransactionId?: string // ID transaksi POS atau PO
   userId: string
   userName: string
-  createdAt: string // dari $createdAt
 }
 
 // Tipe untuk membuat mutasi baru.
@@ -57,8 +57,6 @@ export async function addStockMutation(
     )
 
     return {
-      id: document.$id,
-      createdAt: document.$createdAt,
       ...mutationData, // Mengembalikan data input karena sudah lengkap
     }
   } catch (error: any) {
@@ -98,7 +96,8 @@ export async function getStockMutations(
     )
 
     return response.documents.map((doc) => ({
-      id: doc.$id,
+      $id: doc.$id,
+      $createdAt: doc.$createdAt,
       branchId: doc.branchId,
       itemId: doc.itemId,
       itemName: doc.itemName,
@@ -110,7 +109,6 @@ export async function getStockMutations(
       relatedTransactionId: doc.relatedTransactionId,
       userId: doc.userId,
       userName: doc.userName,
-      createdAt: doc.$createdAt,
     }))
   } catch (error: any) {
     console.error('Error fetching stock mutations:', error)

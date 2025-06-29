@@ -108,6 +108,7 @@ const categoryFormSchema = z.object({
   name: z.string().min(2, { message: 'Nama kategori minimal 2 karakter.' }),
 })
 type CategoryFormValues = z.infer<typeof categoryFormSchema>
+type ViewMode = 'card' | 'table'
 
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
 
@@ -115,6 +116,8 @@ export default function InventoryPage() {
   const router = useRouter()
   const { userData } = useAuth()
   const { selectedBranch, loadingBranches } = useBranch()
+
+  const [viewMode, setViewMode] = useState<ViewMode>('table')
 
   const [items, setItems] = useState<InventoryItem[]>([])
   const [totalItems, setTotalItems] = useState(0)

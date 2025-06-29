@@ -1,263 +1,525 @@
+'use client'
 
-"use client";
-
-import React, { useState, useEffect, useCallback } from "react";
-import MainLayout from "@/components/layout/main-layout";
-import ProtectedRoute from "@/components/auth/ProtectedRoute";
-import { useAuth } from "@/contexts/auth-context";
-import { useBranch } from "@/contexts/branch-context";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableCaption } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuCheckboxItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { PlusCircle, Filter, Download, FilePenLine, Trash2, CalendarIcon } from "lucide-react";
-import { useForm, Controller, type SubmitHandler } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { useToast } from "@/hooks/use-toast";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Timestamp } from "firebase/firestore";
-import { 
-  addExpense, 
-  getExpenses, 
-  updateExpense, 
-  deleteExpense, 
-  type Expense, 
+import React, { useState, useEffect, useCallback } from 'react'
+import MainLayout from '@/components/layout/main-layout'
+import ProtectedRoute from '@/components/auth/ProtectedRoute'
+import { useAuth } from '@/contexts/auth-context'
+import { useBranch } from '@/contexts/branch-context'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableCaption,
+} from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogClose,
+} from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  PlusCircle,
+  Filter,
+  Download,
+  FilePenLine,
+  Trash2,
+  CalendarIcon,
+  DollarSign,
+  Activity,
+} from 'lucide-react'
+import { Calendar } from '@/components/ui/calendar'
+import { type DateRange } from 'react-day-picker'
+import { useForm, Controller, type SubmitHandler } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { toast } from 'sonner'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  addExpense,
+  getExpenses,
+  updateExpense,
+  deleteExpense,
+  type Expense,
   type ExpenseInput,
   EXPENSE_CATEGORIES,
-  type ExpenseCategory
-} from "@/lib/firebase/expenses"; // Updated import
-import { format, parseISO } from "date-fns";
+} from '@/lib/appwrite/expenses'
+import { format, parseISO, startOfMonth, endOfMonth } from 'date-fns'
+import { cn } from '@/lib/utils'
 
 const expenseFormSchema = z.object({
-  date: z.date({ required_error: "Tanggal harus diisi." }),
-  category: z.string().min(1, { message: "Kategori harus dipilih." }),
-  amount: z.coerce.number().positive({ message: "Jumlah harus lebih dari 0." }),
-  description: z.string().min(3, {message: "Deskripsi minimal 3 karakter."}).max(200, {message: "Deskripsi maksimal 200 karakter."}),
-});
+  date: z.date({ required_error: 'Tanggal harus diisi.' }),
+  category: z.string().min(1, { message: 'Kategori harus dipilih.' }),
+  amount: z.coerce.number().positive({ message: 'Jumlah harus lebih dari 0.' }),
+  description: z
+    .string()
+    .min(3, { message: 'Deskripsi minimal 3 karakter.' })
+    .max(200, { message: 'Deskripsi maksimal 200 karakter.' }),
+})
 
-type ExpenseFormValues = z.infer<typeof expenseFormSchema>;
+type ExpenseFormValues = z.infer<typeof expenseFormSchema>
 
 export default function ExpensesPage() {
-  const { userData, currentUser } = useAuth();
-  const { selectedBranch } = useBranch();
-  const { toast } = useToast();
+  const { userData, currentUser } = useAuth()
 
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [loadingExpenses, setLoadingExpenses] = useState(true);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
-  const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const { selectedBranch } = useBranch()
+
+  const [expenses, setExpenses] = useState<Expense[]>([])
+  const [loadingExpenses, setLoadingExpenses] = useState(true)
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
+  const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null)
+  const [expenseSummary, setExpenseSummary] = useState<{
+    [key: string]: number
+  }>({})
+  const [totalExpenses, setTotalExpenses] = useState(0)
+
+  // Filter states
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([])
+  const [dateRange, setDateRange] = useState<DateRange | undefined>({
+    from: startOfMonth(new Date()),
+    to: endOfMonth(new Date()),
+  })
+
+  // Temporary states for filters inside Popover
+  const [tempCategories, setTempCategories] =
+    useState<string[]>(selectedCategories)
+  const [tempDateRange, setTempDateRange] = useState<DateRange | undefined>(
+    dateRange
+  )
 
   const expenseForm = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseFormSchema),
     defaultValues: {
       date: new Date(),
-      category: "",
+      category: '',
       amount: 0,
-      description: "",
+      description: '',
     },
-  });
+  })
 
   const fetchExpenses = useCallback(async () => {
     if (!selectedBranch) {
-      setExpenses([]);
-      setLoadingExpenses(false);
-      return;
+      setExpenses([])
+      setLoadingExpenses(false)
+      return
     }
-    setLoadingExpenses(true);
-    const fetchedExpenses = await getExpenses(selectedBranch.id, { categories: selectedCategories });
-    setExpenses(fetchedExpenses);
-    setLoadingExpenses(false);
-  }, [selectedBranch, selectedCategories]);
+    setLoadingExpenses(true)
+    const fetchedExpenses = await getExpenses(selectedBranch.id, {
+      categories: selectedCategories,
+      startDate: dateRange?.from ?? new Date('1900-01-01'),
+      endDate: dateRange?.to ?? new Date(),
+    })
+    setExpenses(fetchedExpenses)
+    setLoadingExpenses(false)
+  }, [selectedBranch, selectedCategories, dateRange])
 
   useEffect(() => {
-    fetchExpenses();
-  }, [fetchExpenses]);
+    fetchExpenses()
+  }, [fetchExpenses])
+
+  useEffect(() => {
+    const summary: { [key: string]: number } = {}
+    let total = 0
+
+    expenses.forEach((expense) => {
+      // Add to category summary
+      if (summary[expense.category]) {
+        summary[expense.category] += expense.amount
+      } else {
+        summary[expense.category] = expense.amount
+      }
+      // Add to total
+      total += expense.amount
+    })
+
+    setExpenseSummary(summary)
+    setTotalExpenses(total)
+  }, [expenses])
 
   const handleOpenDialog = (expense: Expense | null = null) => {
-    setEditingExpense(expense);
+    setEditingExpense(expense)
     if (expense) {
       expenseForm.reset({
-        date: expense.date.toDate(), 
+        date: parseISO(expense.date as any),
         category: expense.category,
         amount: expense.amount,
         description: expense.description,
-      });
+      })
     } else {
       expenseForm.reset({
         date: new Date(),
-        category: "",
+        category: '',
         amount: 0,
-        description: "",
-      });
+        description: '',
+      })
     }
-    setIsDialogOpen(true);
-  };
+    setIsDialogOpen(true)
+  }
 
   const onSubmitExpense: SubmitHandler<ExpenseFormValues> = async (values) => {
     if (!selectedBranch || !currentUser) {
-      toast({ title: "Error", description: "Cabang atau pengguna tidak valid.", variant: "destructive" });
-      return;
+      toast.error('Error', {
+        description: 'Cabang atau pengguna tidak valid.',
+      })
+      return
     }
 
     const expenseData: ExpenseInput = {
       branchId: selectedBranch.id,
-      date: Timestamp.fromDate(values.date),
+      date: values.date,
       category: values.category,
       amount: values.amount,
       description: values.description,
-    };
+      userId: currentUser.$id,
+    }
 
-    let result;
+    let result
     if (editingExpense) {
-      result = await updateExpense(editingExpense.id, expenseData);
+      result = await updateExpense(editingExpense.id, expenseData)
     } else {
-      result = await addExpense(expenseData, currentUser.uid);
+      result = await addExpense(expenseData)
     }
 
-    if (result && "error" in result) {
-      toast({ title: editingExpense ? "Gagal Memperbarui" : "Gagal Menambah", description: result.error, variant: "destructive" });
+    if (result && 'error' in result) {
+      toast.error(editingExpense ? 'Gagal Memperbarui' : 'Gagal Menambah', {
+        description: result.error,
+      })
     } else {
-      toast({ title: editingExpense ? "Pengeluaran Diperbarui" : "Pengeluaran Ditambahkan" });
-      setIsDialogOpen(false);
-      await fetchExpenses();
+      toast(
+        editingExpense ? 'Pengeluaran Diperbarui' : 'Pengeluaran Ditambahkan'
+      )
+      setIsDialogOpen(false)
+      await fetchExpenses()
     }
-  };
+  }
 
   const handleDeleteExpense = async () => {
-    if (!expenseToDelete) return;
-    const result = await deleteExpense(expenseToDelete.id);
-    if (result && "error" in result) {
-      toast({ title: "Gagal Menghapus", description: result.error, variant: "destructive" });
+    if (!expenseToDelete) return
+    const result = await deleteExpense(expenseToDelete.id)
+    if (result && 'error' in result) {
+      toast('Gagal Menghapus', {
+        description: result.error,
+      })
     } else {
-      toast({ title: "Pengeluaran Dihapus" });
-      await fetchExpenses();
+      toast('Pengeluaran Dihapus')
+      await fetchExpenses()
     }
-    setExpenseToDelete(null);
-  };
+    setExpenseToDelete(null)
+  }
 
-  const handleCategoryFilterChange = (category: string) => {
-    setSelectedCategories(prev =>
-      prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]
-    );
-  };
-  
-  const formatDate = (timestamp: Timestamp | Date) => {
-    const date = timestamp instanceof Timestamp ? timestamp.toDate() : timestamp;
-    return format(date, "dd MMM yyyy");
-  };
+  const handleApplyFilters = () => {
+    setDateRange(tempDateRange)
+    setSelectedCategories(tempCategories)
+    setIsFilterOpen(false)
+  }
+
+  const handleResetFilters = () => {
+    const now = new Date()
+    const defaultStart = startOfMonth(now)
+    const defaultEnd = endOfMonth(now)
+
+    // Reset temp state
+    setTempDateRange({ from: defaultStart, to: defaultEnd })
+    setTempCategories([])
+
+    // Also apply them immediately to re-fetch
+    setDateRange({ from: defaultStart, to: defaultEnd })
+    setSelectedCategories([])
+    setIsFilterOpen(false)
+  }
+
+  const formatDate = (dateInput: string | Date) => {
+    const date = typeof dateInput === 'string' ? parseISO(dateInput) : dateInput
+    return format(date, 'dd MMM yyyy')
+  }
 
   const formatCurrency = (amount: number) => {
-    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID')}`;
-  };
+    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString(
+      'id-ID'
+    )}`
+  }
+
+  const activeFilterCount =
+    (selectedCategories.length > 0 ? 1 : 0) +
+    (dateRange?.from || dateRange?.to ? 1 : 0)
 
   return (
     <ProtectedRoute>
       <MainLayout>
-        <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
-            <h1 className="text-xl md:text-2xl font-semibold font-headline">
+        <div className='space-y-4'>
+          <div className='flex flex-col sm:flex-row justify-between items-center gap-3'>
+            <h1 className='text-xl md:text-2xl font-semibold font-headline'>
               Pengeluaran {selectedBranch ? `- ${selectedBranch.name}` : ''}
             </h1>
-            <div className="flex gap-2 w-full sm:w-auto">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="rounded-md text-xs">
-                    <Filter className="mr-1.5 h-3.5 w-3.5" /> Filter Kategori
+            <div className='flex gap-2 w-full sm:w-auto'>
+              <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    className='rounded-md text-xs'
+                    onClick={() => {
+                      // Sync temp filters with applied filters when opening
+                      setTempDateRange(dateRange)
+                      setTempCategories(selectedCategories)
+                      setIsFilterOpen(true)
+                    }}
+                  >
+                    <Filter className='mr-1.5 h-3.5 w-3.5' />
+                    Filter {activeFilterCount > 0 && `(${activeFilterCount})`}
                   </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel className="text-xs">Filter berdasarkan Kategori</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {EXPENSE_CATEGORIES.map(cat => (
-                    <DropdownMenuCheckboxItem 
-                      key={cat} 
-                      className="text-xs"
-                      checked={selectedCategories.includes(cat)}
-                      onCheckedChange={() => handleCategoryFilterChange(cat)}
+                </PopoverTrigger>
+                <PopoverContent className='w-auto p-0' align='end'>
+                  <div className='p-4'>
+                    <h4 className='font-medium leading-none text-sm'>
+                      Filter Pengeluaran
+                    </h4>
+                    <p className='text-xs text-muted-foreground mt-1'>
+                      Filter berdasarkan tanggal dan kategori.
+                    </p>
+                  </div>
+                  <hr />
+                  <div className='p-4 flex flex-row space-x-4'>
+                    <div className='space-y-1'>
+                      <Label className='text-xs'>Rentang Tanggal</Label>
+                      <Calendar
+                        mode='range'
+                        selected={tempDateRange}
+                        onSelect={setTempDateRange}
+                        className='rounded-md border p-2'
+                        numberOfMonths={1}
+                      />
+                    </div>
+                    <div className='space-y-2'>
+                      <Label className='text-xs'>Kategori</Label>
+                      <div className='grid grid-cols-2 gap-2'>
+                        {EXPENSE_CATEGORIES.map((cat) => (
+                          <Button
+                            key={cat}
+                            variant={
+                              tempCategories.includes(cat)
+                                ? 'primary'
+                                : 'outline'
+                            }
+                            size='sm'
+                            className='text-xs h-8'
+                            onClick={() => {
+                              setTempCategories((prev) =>
+                                prev.includes(cat)
+                                  ? prev.filter((c) => c !== cat)
+                                  : [...prev, cat]
+                              )
+                            }}
+                          >
+                            {cat}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <hr />
+                  <div className='flex items-center justify-end gap-2 p-4'>
+                    <Button
+                      variant='ghost'
+                      size='sm'
+                      className='text-xs h-8'
+                      onClick={handleResetFilters}
                     >
-                      {cat}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button variant="outline" size="sm" className="rounded-md text-xs" disabled>
-                <Download className="mr-1.5 h-3.5 w-3.5" /> Ekspor (Segera)
+                      Reset
+                    </Button>
+                    <Button
+                      size='sm'
+                      className='text-xs h-8'
+                      onClick={handleApplyFilters}
+                    >
+                      Terapkan
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <Button
+                variant='outline'
+                size='sm'
+                className='rounded-md text-xs'
+                disabled
+              >
+                <Download className='mr-1.5 h-3.5 w-3.5' /> Ekspor (Segera)
               </Button>
-              <Button size="sm" className="rounded-md text-xs" onClick={() => handleOpenDialog()} disabled={!selectedBranch}>
-                <PlusCircle className="mr-1.5 h-3.5 w-3.5" /> Tambah Pengeluaran
+              <Button
+                size='sm'
+                className='rounded-md text-xs'
+                onClick={() => handleOpenDialog()}
+                disabled={!selectedBranch}
+              >
+                <PlusCircle className='mr-1.5 h-3.5 w-3.5' /> Tambah Pengeluaran
               </Button>
             </div>
           </div>
 
+          {!loadingExpenses && expenses.length > 0 && (
+            <div className='grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-4'>
+              <Card>
+                <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
+                  <CardTitle className='text-sm font-medium'>
+                    Total Pengeluaran
+                  </CardTitle>
+                  <DollarSign className='h-4 w-4 text-muted-foreground' />
+                </CardHeader>
+                <CardContent>
+                  <div className='text-2xl font-bold'>
+                    {formatCurrency(totalExpenses)}
+                  </div>
+                  <p className='text-xs text-muted-foreground'>
+                    Total dari semua kategori
+                  </p>
+                </CardContent>
+              </Card>
+              {Object.entries(expenseSummary).map(([category, total]) => (
+                <Card key={category}>
+                  <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
+                    <CardTitle className='text-sm font-medium'>
+                      {category}
+                    </CardTitle>
+                    <Activity className='h-4 w-4 text-muted-foreground' />
+                  </CardHeader>
+                  <CardContent>
+                    <div className='text-2xl font-bold'>
+                      {formatCurrency(total)}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
           {loadingExpenses ? (
-             <div className="space-y-2 border rounded-lg shadow-sm p-4">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
+            <div className='space-y-2 border rounded-lg shadow-sm p-4'>
+              <Skeleton className='h-10 w-full' />
+              <Skeleton className='h-10 w-full' />
+              <Skeleton className='h-10 w-full' />
             </div>
           ) : !selectedBranch ? (
-            <div className="border rounded-lg shadow-sm overflow-hidden p-10 text-center">
-                <p className="text-sm text-muted-foreground">Pilih cabang untuk melihat data pengeluaran.</p>
+            <div className='border rounded-lg shadow-sm overflow-hidden p-10 text-center'>
+              <p className='text-sm text-muted-foreground'>
+                Pilih cabang untuk melihat data pengeluaran.
+              </p>
             </div>
           ) : expenses.length === 0 ? (
-            <div className="border rounded-lg shadow-sm overflow-hidden p-10 text-center">
-                <p className="text-sm text-muted-foreground">
-                    {selectedCategories.length > 0 ? "Tidak ada pengeluaran yang cocok dengan filter kategori Anda." : "Belum ada data pengeluaran untuk cabang ini."}
-                </p>
+            <div className='border rounded-lg shadow-sm overflow-hidden p-10 text-center'>
+              <p className='text-sm text-muted-foreground'>
+                {selectedCategories.length > 0
+                  ? 'Tidak ada pengeluaran yang cocok dengan filter kategori Anda.'
+                  : 'Belum ada data pengeluaran untuk cabang ini.'}
+              </p>
             </div>
           ) : (
-            <div className="border rounded-lg shadow-sm overflow-hidden">
+            <div className='border rounded-lg shadow-sm overflow-hidden'>
               <Table>
-                <TableCaption className="text-xs">Daftar pengeluaran untuk {selectedBranch?.name || 'cabang terpilih'}.</TableCaption>
+                <TableCaption className='text-xs'>
+                  Daftar pengeluaran untuk{' '}
+                  {selectedBranch?.name || 'cabang terpilih'}.
+                </TableCaption>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">Tanggal</TableHead>
-                    <TableHead className="text-xs">Kategori</TableHead>
-                    <TableHead className="hidden sm:table-cell text-xs">Deskripsi</TableHead>
-                    <TableHead className="text-right text-xs">Jumlah</TableHead>
-                    <TableHead className="text-right text-xs">Aksi</TableHead>
+                    <TableHead className='text-xs'>Tanggal</TableHead>
+                    <TableHead className='text-xs'>Kategori</TableHead>
+                    <TableHead className='hidden sm:table-cell text-xs'>
+                      Deskripsi
+                    </TableHead>
+                    <TableHead className='text-right text-xs'>Jumlah</TableHead>
+                    <TableHead className='text-right text-xs'>Aksi</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {expenses.map((expense) => (
                     <TableRow key={expense.id}>
-                      <TableCell className="py-2 text-xs">{formatDate(expense.date)}</TableCell>
-                      <TableCell className="py-2 text-xs">{expense.category}</TableCell>
-                      <TableCell className="hidden sm:table-cell py-2 text-xs">{expense.description}</TableCell>
-                      <TableCell className="text-right font-medium py-2 text-xs">{formatCurrency(expense.amount)}</TableCell>
-                      <TableCell className="text-right py-2">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenDialog(expense)}>
-                          <FilePenLine className="h-3.5 w-3.5" />
-                           <span className="sr-only">Edit</span>
+                      <TableCell className='py-2 text-xs'>
+                        {formatDate(expense.date)}
+                      </TableCell>
+                      <TableCell className='py-2 text-xs'>
+                        {expense.category}
+                      </TableCell>
+                      <TableCell className='hidden sm:table-cell py-2 text-xs'>
+                        {expense.description}
+                      </TableCell>
+                      <TableCell className='text-right font-medium py-2 text-xs'>
+                        {formatCurrency(expense.amount)}
+                      </TableCell>
+                      <TableCell className='text-right py-2'>
+                        <Button
+                          variant='ghost'
+                          size='icon'
+                          className='h-7 w-7'
+                          onClick={() => handleOpenDialog(expense)}
+                        >
+                          <FilePenLine className='h-3.5 w-3.5' />
+                          <span className='sr-only'>Edit</span>
                         </Button>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive/80" onClick={() => setExpenseToDelete(expense)}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                              <span className="sr-only">Hapus</span>
+                            <Button
+                              variant='ghost'
+                              size='icon'
+                              className='h-7 w-7 text-destructive hover:text-destructive/80'
+                              onClick={() => setExpenseToDelete(expense)}
+                            >
+                              <Trash2 className='h-3.5 w-3.5' />
+                              <span className='sr-only'>Hapus</span>
                             </Button>
                           </AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogHeader>
-                              <AlertDialogTitle>Apakah Anda yakin?</AlertDialogTitle>
-                              <AlertDialogDescription className="text-xs">
-                                Tindakan ini akan menghapus pengeluaran untuk kategori "{expenseToDelete?.category}" sebesar {formatCurrency(expenseToDelete?.amount || 0)}.
+                              <AlertDialogTitle>
+                                Apakah Anda yakin?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription className='text-xs'>
+                                Tindakan ini akan menghapus pengeluaran untuk
+                                kategori "{expenseToDelete?.category}" sebesar{' '}
+                                {formatCurrency(expenseToDelete?.amount || 0)}.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
-                              <AlertDialogCancel className="text-xs h-8" onClick={() => setExpenseToDelete(null)}>Batal</AlertDialogCancel>
-                              <AlertDialogAction 
-                                className="text-xs h-8 bg-destructive hover:bg-destructive/90" 
+                              <AlertDialogCancel
+                                className='text-xs h-8'
+                                onClick={() => setExpenseToDelete(null)}
+                              >
+                                Batal
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                className='text-xs h-8 bg-destructive hover:bg-destructive/90'
                                 onClick={handleDeleteExpense}
                               >
                                 Ya, Hapus
@@ -275,86 +537,147 @@ export default function ExpensesPage() {
         </div>
 
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent className='sm:max-w-2xl'>
             <DialogHeader>
-              <DialogTitle className="text-base">{editingExpense ? "Edit Pengeluaran" : "Tambah Pengeluaran Baru"}</DialogTitle>
+              <DialogTitle className='text-base'>
+                {editingExpense
+                  ? 'Edit Pengeluaran'
+                  : 'Tambah Pengeluaran Baru'}
+              </DialogTitle>
             </DialogHeader>
-            <form onSubmit={expenseForm.handleSubmit(onSubmitExpense)} className="space-y-3 py-2 max-h-[70vh] overflow-y-auto pr-2">
+            <form
+              onSubmit={expenseForm.handleSubmit(onSubmitExpense)}
+              className='space-y-3 p-2 max-h-[70vh] overflow-y-auto pr-2'
+            >
               <div>
-                <Label htmlFor="date" className="text-xs">Tanggal</Label>
+                <Label htmlFor='date' className='text-xs'>
+                  Tanggal
+                </Label>
                 <Controller
-                  name="date"
+                  name='date'
                   control={expenseForm.control}
                   render={({ field }) => (
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button
-                          variant={"outline"}
-                          className="w-full justify-start text-left font-normal h-9 text-xs mt-1"
+                          variant={'outline'}
+                          className='w-full justify-start text-left font-normal h-9 text-xs mt-1'
                         >
-                          <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />
-                          {field.value ? format(field.value, "dd MMM yyyy") : <span>Pilih tanggal</span>}
+                          <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
+                          {field.value ? (
+                            format(field.value, 'dd MMM yyyy')
+                          ) : (
+                            <span>Pilih tanggal</span>
+                          )}
                         </Button>
                       </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
+                      <PopoverContent className='w-auto p-0' align='start'>
                         <Calendar
-                          mode="single"
+                          mode='single'
                           selected={field.value}
                           onSelect={field.onChange}
                           initialFocus
-                          disabled={(date) => date > new Date() || date < new Date("1900-01-01")}
+                          disabled={(date) =>
+                            date > new Date() || date < new Date('1900-01-01')
+                          }
                         />
                       </PopoverContent>
                     </Popover>
                   )}
                 />
-                {expenseForm.formState.errors.date && <p className="text-xs text-destructive mt-1">{expenseForm.formState.errors.date.message}</p>}
+                {expenseForm.formState.errors.date && (
+                  <p className='text-xs text-destructive mt-1'>
+                    {expenseForm.formState.errors.date.message}
+                  </p>
+                )}
               </div>
               <div>
-                <Label htmlFor="category" className="text-xs">Kategori</Label>
+                <Label htmlFor='category' className='text-xs'>
+                  Kategori
+                </Label>
                 <Controller
-                  name="category"
+                  name='category'
                   control={expenseForm.control}
                   render={({ field }) => (
-                     <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger className="h-9 text-xs mt-1">
-                        <SelectValue placeholder="Pilih kategori" />
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <SelectTrigger className='h-9 text-xs mt-1'>
+                        <SelectValue placeholder='Pilih kategori' />
                       </SelectTrigger>
                       <SelectContent>
-                        {EXPENSE_CATEGORIES.map(cat => (
-                          <SelectItem key={cat} value={cat} className="text-xs">{cat}</SelectItem>
+                        {EXPENSE_CATEGORIES.map((cat) => (
+                          <SelectItem key={cat} value={cat} className='text-xs'>
+                            {cat}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   )}
                 />
-                {expenseForm.formState.errors.category && <p className="text-xs text-destructive mt-1">{expenseForm.formState.errors.category.message}</p>}
+                {expenseForm.formState.errors.category && (
+                  <p className='text-xs text-destructive mt-1'>
+                    {expenseForm.formState.errors.category.message}
+                  </p>
+                )}
               </div>
               <div>
-                <Label htmlFor="amount" className="text-xs">Jumlah ({selectedBranch?.currency || 'Rp'})</Label>
-                <Input id="amount" type="number" {...expenseForm.register("amount")} className="h-9 text-xs mt-1" placeholder="Contoh: 50000"/>
-                {expenseForm.formState.errors.amount && <p className="text-xs text-destructive mt-1">{expenseForm.formState.errors.amount.message}</p>}
+                <Label htmlFor='amount' className='text-xs'>
+                  Jumlah ({selectedBranch?.currency || 'Rp'})
+                </Label>
+                <Input
+                  id='amount'
+                  type='number'
+                  {...expenseForm.register('amount')}
+                  className='h-9 text-xs mt-1'
+                  placeholder='Contoh: 50000'
+                />
+                {expenseForm.formState.errors.amount && (
+                  <p className='text-xs text-destructive mt-1'>
+                    {expenseForm.formState.errors.amount.message}
+                  </p>
+                )}
               </div>
               <div>
-                <Label htmlFor="description" className="text-xs">Deskripsi</Label>
-                <Textarea id="description" {...expenseForm.register("description")} className="text-xs mt-1 min-h-[70px]" placeholder="Deskripsi singkat pengeluaran"/>
-                {expenseForm.formState.errors.description && <p className="text-xs text-destructive mt-1">{expenseForm.formState.errors.description.message}</p>}
+                <Label htmlFor='description' className='text-xs'>
+                  Deskripsi
+                </Label>
+                <Textarea
+                  id='description'
+                  {...expenseForm.register('description')}
+                  className='text-xs mt-1 min-h-[70px]'
+                  placeholder='Deskripsi singkat pengeluaran'
+                />
+                {expenseForm.formState.errors.description && (
+                  <p className='text-xs text-destructive mt-1'>
+                    {expenseForm.formState.errors.description.message}
+                  </p>
+                )}
               </div>
-               <DialogFooter className="pt-3">
-                 <DialogClose asChild>
-                    <Button type="button" variant="outline" className="text-xs h-8">Batal</Button>
-                  </DialogClose>
-                <Button type="submit" className="text-xs h-8" disabled={expenseForm.formState.isSubmitting}>
-                  {expenseForm.formState.isSubmitting ? "Menyimpan..." : (editingExpense ? "Simpan Perubahan" : "Tambah Pengeluaran")}
+              <DialogFooter className='pt-3'>
+                <DialogClose asChild>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    className='text-xs h-8'
+                  >
+                    Batal
+                  </Button>
+                </DialogClose>
+                <Button
+                  type='submit'
+                  className='text-xs h-8'
+                  disabled={expenseForm.formState.isSubmitting}
+                >
+                  {expenseForm.formState.isSubmitting
+                    ? 'Menyimpan...'
+                    : editingExpense
+                    ? 'Simpan Perubahan'
+                    : 'Tambah Pengeluaran'}
                 </Button>
               </DialogFooter>
             </form>
           </DialogContent>
         </Dialog>
-
       </MainLayout>
     </ProtectedRoute>
-  );
+  )
 }
-
-    

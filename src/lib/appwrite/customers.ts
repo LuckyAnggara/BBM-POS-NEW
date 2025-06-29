@@ -21,6 +21,7 @@ export interface Customer {
   address?: string
   notes?: string
   branchId: string
+  qrCodeId?: string
   createdAt: string // ISO String, dari $createdAt
 }
 
@@ -73,29 +74,36 @@ export async function getCustomers(
   options: {
     limit?: number
     searchTerm?: string
-    cursorAfter?: string // Appwrite uses string ID for cursor
+    page?: number // Menggantikan cursor, default ke halaman 1
   } = {}
-): Promise<{ customers: Customer[]; lastDocId?: string; hasMore: boolean }> {
-  if (!branchId) return { customers: [], hasMore: false }
+): Promise<{
+  customers: Customer[]
+  total: number
+}> {
+  if (!branchId) return { customers: [], total: 0 }
+
+  // Set nilai default jika tidak disediakan
+  const limit = options.limit || 25
+  const page = options.page || 1
 
   try {
     let queries: string[] = [Query.equal('branchId', branchId)]
 
-    // PENTING: Appwrite Query.search() hanya bisa menargetkan satu atribut yang di-index.
-    // Di sini kita memilih untuk mencari berdasarkan 'name'. Jika Anda ingin mencari
-    // berdasarkan 'name' ATAU 'phone', Anda perlu membuat atribut gabungan di koleksi Anda,
-    // misalnya 'searchIndex' yang berisi "nama pelanggan 123456789", lalu buat index di situ.
     if (options.searchTerm) {
+      // PENTING: Appwrite Query.search() hanya bisa menargetkan satu atribut yang di-index.
+      // Di sini kita memilih untuk mencari berdasarkan 'name'. Jika Anda ingin mencari
+      // berdasarkan 'name' ATAU 'phone', Anda perlu membuat atribut gabungan di koleksi Anda,
+      // misalnya 'searchIndex' yang berisi "nama pelanggan 123456789", lalu buat index di situ.
       queries.push(Query.search('name', options.searchTerm))
     } else {
       queries.push(Query.orderDesc('$createdAt')) // Urutkan berdasarkan yang terbaru jika tidak ada pencarian
     }
 
-    if (options.limit && options.limit > 0) {
-      queries.push(Query.limit(options.limit + 1)) // Ambil satu ekstra untuk cek `hasMore`
-    }
-    if (options.cursorAfter) {
-      queries.push(Query.cursorAfter(options.cursorAfter))
+    queries.push(Query.limit(limit))
+
+    if (page > 1) {
+      const offset = (page - 1) * limit
+      queries.push(Query.offset(offset))
     }
 
     const response = await databases.listDocuments(
@@ -104,15 +112,7 @@ export async function getCustomers(
       queries
     )
 
-    let documents = response.documents
-    let hasMore = false
-
-    if (options.limit && documents.length > options.limit) {
-      hasMore = true
-      documents.pop() // Hapus item ekstra
-    }
-
-    const customers: Customer[] = documents.map((doc) => ({
+    const customers: Customer[] = response.documents.map((doc) => ({
       id: doc.$id,
       createdAt: doc.$createdAt,
       name: doc.name,
@@ -122,13 +122,10 @@ export async function getCustomers(
       branchId: doc.branchId,
     }))
 
-    const lastDocId =
-      customers.length > 0 ? customers[customers.length - 1].id : undefined
-
-    return { customers, lastDocId, hasMore }
+    return { customers, total: response.total }
   } catch (error: any) {
     console.error('Error fetching customers:', error)
-    return { customers: [], hasMore: false }
+    return { customers: [], total: 0 }
   }
 }
 

@@ -26,7 +26,7 @@ export const ScanCustomerDialog = ({
   onOpenChange,
   onCustomerSelect,
 }: ScanCustomerDialogProps) => {
-  const { branch } = useBranch()
+  const { selectedBranch } = useBranch()
   const [searchTerm, setSearchTerm] = useState('')
   const debouncedSearch = useDebounce(searchTerm, 300)
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -35,9 +35,9 @@ export const ScanCustomerDialog = ({
   useEffect(() => {
     if (!isOpen) return
     const fetch = async () => {
-      if (!branch?.id) return
+      if (!selectedBranch?.id) return
       setIsLoading(true)
-      const result = await getCustomers(branch.id, {
+      const result = await getCustomers(selectedBranch.id, {
         searchTerm: debouncedSearch,
         limit: 10,
       })
@@ -45,7 +45,7 @@ export const ScanCustomerDialog = ({
       setIsLoading(false)
     }
     fetch()
-  }, [debouncedSearch, isOpen, branch?.id])
+  }, [debouncedSearch, isOpen, selectedBranch?.id])
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
