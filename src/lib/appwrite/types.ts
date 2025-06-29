@@ -69,13 +69,22 @@ interface PaymentDetails {
   bankName?: string
 }
 
+interface returnTransaction {
+  returnedAt?: string // ISO String
+  returnReason?: string
+  returnedByUserId?: string
+}
+
 interface CreditDetails {
   isCreditSale: boolean
   creditDueDate?: string // ISO Date String
   outstandingAmount: number
 }
 
-export interface TransactionDocument extends PaymentDetails, CreditDetails {
+export interface TransactionDocument
+  extends PaymentDetails,
+    CreditDetails,
+    returnTransaction {
   // --- Core Fields dari Appwrite ---
   $id: string
   $createdAt: string
@@ -87,8 +96,7 @@ export interface TransactionDocument extends PaymentDetails, CreditDetails {
   // --- Relational IDs ---
   branchId: string
   shiftId: string
-  // userId: string
-  userIda: string
+  userId: string
   customerId?: string
   notes?: string
 
@@ -131,8 +139,7 @@ export type CreateTransactionPayload = Pick<
   TransactionDocument,
   | 'branchId'
   | 'shiftId'
-  // | 'userId'
-  | 'userIda'
+  | 'userId'
   | 'userName'
   | 'subtotal'
   | 'totalDiscountAmount'
@@ -149,6 +156,9 @@ export type CreateTransactionPayload = Pick<
     Pick<
       TransactionDocument,
       | 'customerId'
+      | 'returnedAt'
+      | 'returnReason'
+      | 'returnedByUserId'
       | 'customerName'
       | 'notes'
       | 'voucherCode'
@@ -243,6 +253,13 @@ export interface InventoryItem {
   supplierId?: string
   imageUrl?: string
   lowStockThreshold: number
+}
+
+export interface ProcessReturnPayload {
+  transactionId: string
+  reason: string
+  returnedByUserId: string
+  returnedByUserName: string
 }
 
 export const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]

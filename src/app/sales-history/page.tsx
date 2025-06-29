@@ -6,13 +6,16 @@ import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
 
-import { getTransactions } from '@/lib/appwrite/pos' // Updated import
+import {
+  getTransactions,
+  processFullTransactionReturn,
+} from '@/lib/appwrite/pos' // Updated import
 
 // import {
 //   createDeletionRequest,
 //   type TransactionDeletionRequestInput,
 // } from '@/lib/appwrite/deletionRequests'
-import { startOfMonth, endOfMonth } from 'date-fns'
+import { startOfMonth, endOfMonth, endOfDay } from 'date-fns'
 import {
   ITEMS_PER_PAGE_OPTIONS,
   TransactionDocument,
@@ -58,16 +61,16 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogFooter,
   DialogContent,
   DialogHeader,
-  DialogTitle as DialogModalTitle,
-  DialogFooter as DialogModalFooter,
+  DialogTitle,
   DialogClose,
-  DialogDescription as DialogModalDescription,
+  DialogDescription,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -103,15 +106,11 @@ export default function SalesHistoryPage() {
   const { selectedBranch } = useBranch()
 
   const [transactions, setTransactions] = useState<TransactionDocument[]>([])
-  const [loading, setLoading] = useState(false)
-
-  const [startDate, setStartDate] = useState<string | undefined>(
-    format(startOfMonth(new Date()), 'yyyy-MM-dd')
+  const [loading, setLoading] = useState(true) // PERBAIKAN: Default ke true untuk loading awal
+  const [startDate, setStartDate] = useState<Date | undefined>(
+    startOfMonth(new Date())
   )
-  const [endDate, setEndDate] = useState<string | undefined>(
-    format(endOfMonth(new Date()), 'yyyy-MM-dd')
-  )
-
+  const [endDate, setEndDate] = useState<Date | undefined>(endOfDay(new Date()))
   const [searchTerm, setSearchTerm] = useState('')
   const [itemsPerPage, setItemsPerPage] = useState<number>(
     ITEMS_PER_PAGE_OPTIONS[0]
@@ -119,30 +118,204 @@ export default function SalesHistoryPage() {
   const [totalItems, setTotalItems] = useState(0)
   const totalPages = Math.ceil(totalItems / itemsPerPage)
 
-  const debouncedSearchTerm = useDebounce(searchTerm, 500)
-
   const [currentPage, setCurrentPage] = useState(1)
-  const [hasNextPage, setHasNextPage] = useState(false)
+  const [refetchCounter, setRefetchCounter] = useState(0)
 
   const [showReturnDialog, setShowReturnDialog] = useState(false)
   const [transactionToReturn, setTransactionToReturn] =
     useState<TransactionDocument | null>(null)
   const [returnReason, setReturnReason] = useState('')
   const [isProcessingReturn, setIsProcessingReturn] = useState(false)
-
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [transactionToDelete, setTransactionToDelete] =
     useState<TransactionDocument | null>(null)
   const [deletePasswordInput, setDeletePasswordInput] = useState('')
-  const [isDeleting, setIsDeleting] = useState(false)
 
+  const [isDeleting, setIsDeleting] = useState(false)
   const [showRequestDeletionDialog, setShowRequestDeletionDialog] =
     useState(false)
+
   const [deletionRequestReason, setDeletionRequestReason] = useState('')
   const [isRequestingDeletion, setIsRequestingDeletion] = useState(false)
+
   const [requestedDeletionIds, setRequestedDeletionIds] = useState<Set<string>>(
     new Set()
   )
+
+  const debouncedSearchTerm = useDebounce(searchTerm, 500)
+
+  const handleNextPage = () => {
+    // Cek jika halaman saat ini belum mencapai halaman terakhir
+    if (currentPage < totalPages) {
+      setCurrentPage((prevPage) => prevPage + 1)
+    }
+  }
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage((prevPage) => prevPage - 1)
+    }
+  }
+
+  const triggerRefetch = () => {
+    setRefetchCounter((c) => c + 1)
+  }
+
+  const handleOpenReturnDialog = (transaction: TransactionDocument) => {
+    setTransactionToReturn(transaction)
+    setReturnReason('')
+    setShowReturnDialog(true)
+  }
+
+  const handleProcessReturn = async () => {
+    if (!transactionToReturn || !currentUser || !userData) {
+      toast.error('Error', {
+        description: 'Transaksi atau pengguna tidak valid untuk retur.',
+      })
+      return
+    }
+    if (!returnReason.trim()) {
+      toast.error('Alasan Diperlukan', {
+        description: 'Silakan masukkan alasan retur.',
+      })
+      return
+    }
+
+    setIsProcessingReturn(true)
+
+    // Panggil fungsi dari pos.ts dengan payload yang benar
+    const result = await processFullTransactionReturn({
+      transactionId: transactionToReturn.$id, // Gunakan $id
+      reason: returnReason,
+      returnedByUserId: currentUser.$id,
+      returnedByUserName: userData.name, // Gunakan nama dari userData
+    })
+
+    setIsProcessingReturn(false)
+
+    if (result && 'error' in result) {
+      toast.error('Gagal Memproses Retur', {
+        description: result.error,
+      })
+    } else {
+      toast.success('Retur Berhasil', {
+        description: `Transaksi ${transactionToReturn.transactionNumber} telah diretur.`,
+      })
+      setShowReturnDialog(false)
+      setTransactionToReturn(null)
+      setReturnReason('')
+      triggerRefetch() // Panggil refetch untuk memperbarui daftar transaksi
+    }
+  }
+
+  const handleOpenDeleteAction = (tx: TransactionDocument) => {
+    setTransactionToDelete(tx)
+    if (userData?.role === 'admin') {
+      setDeletePasswordInput('')
+      setShowDeleteDialog(true)
+    } else {
+      setDeletionRequestReason('')
+      setShowRequestDeletionDialog(true)
+    }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!transactionToDelete || !selectedBranch) {
+      toast.error('Error', {
+        description: 'Transaksi atau cabang tidak valid untuk dihapus.',
+      })
+      return
+    }
+    if (!selectedBranch.transactionDeletionPassword) {
+      toast.error('Password Belum Diatur', {
+        description:
+          'Password hapus transaksi belum diatur untuk cabang ini. Hubungi admin.',
+      })
+      setShowDeleteDialog(false)
+      return
+    }
+    if (!deletePasswordInput) {
+      toast.error('Password Diperlukan', {
+        description: 'Silakan masukkan password hapus transaksi.',
+      })
+      return
+    }
+
+    setIsDeleting(true)
+    const result = await apiDeleteTransaction(/* ... */)
+    setIsDeleting(false)
+
+    if (result.success) {
+      toast.success('Transaksi Dihapus')
+      setShowDeleteDialog(false)
+      // PERBAIKAN #3: Gunakan trigger refetch
+      triggerRefetch()
+    } else {
+      toast.error('Gagal Menghapus', { description: result.error || 'Error' })
+    }
+  }
+
+  const handleConfirmRequestDeletion = async () => {
+    if (!transactionToDelete || !currentUser || !userData || !selectedBranch) {
+      toast.error('Error', {
+        description: 'Data tidak lengkap untuk mengajukan permintaan.',
+      })
+      return
+    }
+    if (!deletionRequestReason.trim()) {
+      toast.error('Alasan Diperlukan', {
+        description: 'Mohon isi alasan mengapa transaksi ini perlu dihapus.',
+      })
+      return
+    }
+    setIsRequestingDeletion(true)
+
+    const transactionDate = new Date(transactionToDelete!.$createdAt)
+
+    const requestInput: TransactionDeletionRequestInput = {
+      transactionId: transactionToDelete!.$id,
+      transactionNumber: transactionToDelete.transactionNumber,
+      transactionDate: transactionDate, // Convert Timestamp to Date
+      transactionTotalAmount: transactionToDelete.totalAmount,
+      branchId: selectedBranch.id,
+      requestedByUserId: currentUser.$id,
+      requestedByUserName: userData.name,
+      reason: deletionRequestReason,
+    }
+    const result = await createDeletionRequest(requestInput)
+    setIsRequestingDeletion(false)
+
+    if ('error' in result) {
+      toast.error('Gagal Mengajukan', {
+        description: result.error,
+      })
+    } else {
+      toast.success('Permintaan Terkirim', {
+        description: 'Permintaan penghapusan transaksi telah dikirim ke admin.',
+      })
+      setRequestedDeletionIds((prev) =>
+        new Set(prev).add(transactionToDelete.id)
+      )
+      setShowRequestDeletionDialog(false)
+      setTransactionToDelete(null)
+      setDeletionRequestReason('')
+    }
+  }
+
+  const getStatusChip = (status: 'completed' | 'returned' | undefined) => {
+    if (status === 'returned') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> Diretur
+        </span>
+      )
+    }
+    return (
+      <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700'>
+        <CheckCircle className='mr-1 h-3 w-3' /> Selesai
+      </span>
+    )
+  }
 
   const fetchTransactions = useCallback(async () => {
     if (!currentUser || !selectedBranch || !startDate || !endDate) {
@@ -155,7 +328,6 @@ export default function SalesHistoryPage() {
       toast.error('Rentang Tanggal Tidak Valid')
       return
     }
-
     setLoading(true)
 
     // PERBAIKAN 3: Format tanggal yang aman saat akan melakukan query
@@ -198,192 +370,8 @@ export default function SalesHistoryPage() {
   ])
 
   useEffect(() => {
-    // Setiap kali salah satu dari dependensi ini berubah,
-    // data akan otomatis diambil ulang dari server.
     fetchTransactions()
   }, [fetchTransactions]) // Hanya perlu fetchTransactions sebagai dependensi
-
-  const handleSearchAndFilter = () => {
-    fetchTransactions()
-  }
-
-  const handleClearFilters = () => {
-    setStartDate(startOfMonth(new Date()))
-    setEndDate(endOfDay(new Date()))
-    setSearchTerm('')
-    setCurrentPage(1) // Reset ke halaman pertama saat filter dibersihkan
-  }
-
-  const handleOpenReturnDialog = (transaction: TransactionDocument) => {
-    setTransactionToReturn(transaction)
-    setReturnReason('')
-    setShowReturnDialog(true)
-  }
-
-  const handleProcessReturn = async () => {
-    if (!transactionToReturn || !currentUser) {
-      toast.error('Error', {
-        description: 'Transaksi atau pengguna tidak valid untuk retur.',
-      })
-      return
-    }
-    if (!returnReason.trim()) {
-      toast.error('Alasan Diperlukan', {
-        description: 'Silakan masukkan alasan retur.',
-      })
-      return
-    }
-
-    setIsProcessingReturn(true)
-    const result = await processFullTransactionReturn(
-      transactionToReturn.id,
-      returnReason,
-      currentUser.$id
-    )
-    setIsProcessingReturn(false)
-
-    if (result && 'error' in result) {
-      toast.error('Gagal Memproses Retur', {
-        description: result.error,
-      })
-    } else {
-      toast.success('Retur Berhasil', {
-        description: `Transaksi ${transactionToReturn.transactionNumber} telah diretur.`,
-      })
-      setShowReturnDialog(false)
-      setTransactionToReturn(null)
-      setReturnReason('')
-      await fetchTransactions(currentPage, debouncedSearchTerm)
-    }
-  }
-
-  const handleOpenDeleteAction = (tx: TransactionDocument) => {
-    setTransactionToDelete(tx)
-    if (userData?.role === 'admin') {
-      setDeletePasswordInput('')
-      setShowDeleteDialog(true)
-    } else {
-      setDeletionRequestReason('')
-      setShowRequestDeletionDialog(true)
-    }
-  }
-
-  const handleConfirmDelete = async () => {
-    if (!transactionToDelete || !selectedBranch) {
-      toast.error('Error', {
-        description: 'Transaksi atau cabang tidak valid untuk dihapus.',
-      })
-      return
-    }
-    if (!selectedBranch.transactionDeletionPassword) {
-      toast.error('Password Belum Diatur', {
-        description:
-          'Password hapus transaksi belum diatur untuk cabang ini. Hubungi admin.',
-      })
-      setShowDeleteDialog(false)
-      return
-    }
-    if (!deletePasswordInput) {
-      toast.error('Password Diperlukan', {
-        description: 'Silakan masukkan password hapus transaksi.',
-      })
-      return
-    }
-
-    setIsDeleting(true)
-    const result = await apiDeleteTransaction(
-      transactionToDelete.id,
-      selectedBranch.id,
-      deletePasswordInput
-    )
-    setIsDeleting(false)
-
-    if (result.success) {
-      toast.success('Transaksi Dihapus', {
-        description: 'Transaksi berhasil dihapus dan stok dikembalikan.',
-      })
-      setShowDeleteDialog(false)
-      setTransactionToDelete(null)
-      await fetchTransactions(currentPage, debouncedSearchTerm)
-    } else {
-      toast.error('Gagal Menghapus', {
-        description:
-          result.error || 'Terjadi kesalahan saat menghapus transaksi.',
-      })
-    }
-  }
-
-  const handleConfirmRequestDeletion = async () => {
-    if (!transactionToDelete || !currentUser || !userData || !selectedBranch) {
-      toast.error('Error', {
-        description: 'Data tidak lengkap untuk mengajukan permintaan.',
-      })
-      return
-    }
-    if (!deletionRequestReason.trim()) {
-      toast.error('Alasan Diperlukan', {
-        description: 'Mohon isi alasan mengapa transaksi ini perlu dihapus.',
-      })
-      return
-    }
-    setIsRequestingDeletion(true)
-    const requestInput: TransactionDeletionRequestInput = {
-      transactionId: transactionToDelete.id,
-      transactiontransactionNumber: transactionToDelete.transactionNumber,
-      transactionDate: transactionToDelete.timestamp.toDate(), // Convert Timestamp to Date
-      transactionTotalAmount: transactionToDelete.totalAmount,
-      branchId: selectedBranch.id,
-      requestedByUserId: currentUser.$id,
-      requestedByUserName: userData.name,
-      reason: deletionRequestReason,
-    }
-    const result = await createDeletionRequest(requestInput)
-    setIsRequestingDeletion(false)
-
-    if ('error' in result) {
-      toast.error('Gagal Mengajukan', {
-        description: result.error,
-      })
-    } else {
-      toast.success('Permintaan Terkirim', {
-        description: 'Permintaan penghapusan transaksi telah dikirim ke admin.',
-      })
-      setRequestedDeletionIds((prev) =>
-        new Set(prev).add(transactionToDelete.id)
-      )
-      setShowRequestDeletionDialog(false)
-      setTransactionToDelete(null)
-      setDeletionRequestReason('')
-    }
-  }
-
-  const getStatusChip = (status: 'completed' | 'returned' | undefined) => {
-    if (status === 'returned') {
-      return (
-        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'>
-          <XCircle className='mr-1 h-3 w-3' /> Diretur
-        </span>
-      )
-    }
-    return (
-      <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700'>
-        <CheckCircle className='mr-1 h-3 w-3' /> Selesai
-      </span>
-    )
-  }
-
-  const handleNextPage = () => {
-    // Cek jika halaman saat ini belum mencapai halaman terakhir
-    if (currentPage < totalPages) {
-      setCurrentPage((prevPage) => prevPage + 1)
-    }
-  }
-
-  const handlePrevPage = () => {
-    if (currentPage > 1) {
-      setCurrentPage((prevPage) => prevPage - 1)
-    }
-  }
 
   return (
     <ProtectedRoute>
@@ -403,7 +391,7 @@ export default function SalesHistoryPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className='grid grid-cols-1 sm:grid-cols-3 gap-4'>
+              <div className='grid grid-cols-1 sm:flex flex-row space-x-4'>
                 <div className='space-y-2'>
                   <Label htmlFor='itemsPerPage' className='text-xs'>
                     Tampilkan Data
@@ -430,7 +418,7 @@ export default function SalesHistoryPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className='space-y-2'>
+                <div className='space-y-2 w-full'>
                   <Label htmlFor='searchTerm' className='text-xs'>
                     Cari Invoice/Pelanggan
                   </Label>
@@ -519,7 +507,7 @@ export default function SalesHistoryPage() {
                         </div>
                       </div>
 
-                      <div className='flex justify-end space-x-2'>
+                      {/* <div className='flex justify-end space-x-2'>
                         <Button
                           onClick={handleClearFilters}
                           variant='outline'
@@ -537,9 +525,27 @@ export default function SalesHistoryPage() {
                         >
                           Terapkan
                         </Button>
-                      </div>
+                      </div> */}
                     </PopoverContent>
                   </Popover>
+                </div>
+                <div className='flex flex-col space-y-2 justify-end'>
+                  <Button
+                    variant='outline'
+                    className='h-9 text-xs'
+                    onClick={() => {
+                      fetchTransactions()
+                    }}
+                  >
+                    <RotateCcw
+                      className={`mr-2 h-3.5 w-3.5 ${
+                        loading ? 'animate-spin' : ''
+                      }`}
+                    />
+
+                    {/* 3. (Opsional) Ubah teks tombol untuk memberikan feedback yang lebih jelas */}
+                    {loading ? 'Memuat...' : 'Refresh Data'}
+                  </Button>
                 </div>
               </div>
             </CardContent>
@@ -563,7 +569,7 @@ export default function SalesHistoryPage() {
                   Silakan pilih rentang tanggal dan klik "Terapkan" untuk
                   melihat riwayat penjualan.
                 </p>
-              ) : transactions.length === 0 && transactions.length > 0 ? (
+              ) : transactions.length === 0 && debouncedSearchTerm ? (
                 <p className='text-sm text-muted-foreground text-center py-8'>
                   Tidak ada transaksi yang cocok dengan pencarian Anda untuk
                   rentang tanggal yang dipilih.
@@ -634,6 +640,18 @@ export default function SalesHistoryPage() {
                               )}
                             </TableCell>
                             <TableCell className='text-xs text-center py-2'>
+                              {tx.status !== 'returned' && (
+                                <Button
+                                  variant='ghost'
+                                  size='icon'
+                                  className='text-xs cursor-pointer text-amber-700 focus:bg-amber-50 focus:text-amber-800'
+                                  onClick={() => {
+                                    handleOpenReturnDialog(tx)
+                                  }}
+                                >
+                                  <RotateCcw className='mr-2 h-3.5 w-3.5' />
+                                </Button>
+                              )}
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button
@@ -659,19 +677,15 @@ export default function SalesHistoryPage() {
                                       Lihat Invoice
                                     </Link>
                                   </DropdownMenuItem>
-                                  {tx.status !== 'returned' && (
-                                    <DropdownMenuItem
-                                      className='text-xs cursor-pointer text-amber-700 focus:bg-amber-50 focus:text-amber-800'
-                                      onClick={() => handleOpenReturnDialog(tx)}
-                                    >
-                                      <RotateCcw className='mr-2 h-3.5 w-3.5' />
-                                      Proses Retur
-                                    </DropdownMenuItem>
-                                  )}
+
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
                                     className='text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
-                                    onClick={() => handleOpenDeleteAction(tx)}
+                                    onSelect={(e) => {
+                                      e.preventDefault()
+                                      // 2. Tetap panggil fungsi Anda untuk membuka dialog
+                                      handleOpenDeleteAction(tx)
+                                    }}
                                     disabled={requestedDeletionIds.has(tx.$id)}
                                   >
                                     <Trash2 className='mr-2 h-3.5 w-3.5' />
@@ -718,48 +732,41 @@ export default function SalesHistoryPage() {
           </Card>
         </div>
 
-        <AlertDialog open={showReturnDialog} onOpenChange={setShowReturnDialog}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Proses Retur Transaksi</AlertDialogTitle>
-              <AlertDialogDescription className='text-xs'>
+        <Dialog open={showReturnDialog} onOpenChange={setShowReturnDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Proses Retur Transaksi</DialogTitle>
+              <DialogDescription className='text-xs'>
                 Anda akan memproses retur untuk invoice{' '}
                 <strong>{transactionToReturn?.transactionNumber}</strong>. Stok
                 barang akan dikembalikan.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
+              </DialogDescription>
+            </DialogHeader>
             <div className='py-2 space-y-2'>
-              <Label htmlFor='returnReason' className='text-xs'>
-                Alasan Retur (Wajib)
-              </Label>
+              <Label className='text-xs'>Alasan Retur (Wajib)</Label>
               <Input
-                id='returnReason'
                 value={returnReason}
                 onChange={(e) => setReturnReason(e.target.value)}
                 placeholder='Contoh: Barang rusak, Salah ukuran, dll.'
                 className='text-xs h-9'
               />
             </div>
-            <AlertDialogFooter>
-              <AlertDialogCancel
-                className='text-xs h-8'
-                onClick={() => {
-                  setShowReturnDialog(false)
-                  setTransactionToReturn(null)
-                }}
-              >
-                Batal
-              </AlertDialogCancel>
-              <AlertDialogAction
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type='button' variant='secondary'>
+                  Close
+                </Button>
+              </DialogClose>
+              <Button
                 className='text-xs h-8 bg-amber-600 hover:bg-amber-700 text-white'
                 onClick={handleProcessReturn}
                 disabled={isProcessingReturn || !returnReason.trim()}
               >
                 {isProcessingReturn ? 'Memproses...' : 'Ya, Proses Retur'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {userData?.role === 'admin' && (
           <AlertDialog
@@ -828,13 +835,13 @@ export default function SalesHistoryPage() {
           >
             <DialogContent className='sm:max-w-md'>
               <DialogHeader>
-                <DialogModalTitle className='text-base'>
+                <DialogTitle className='text-base'>
                   Ajukan Permintaan Hapus Transaksi
-                </DialogModalTitle>
-                <DialogModalDescription className='text-xs'>
+                </DialogTitle>
+                <DialogDescription className='text-xs'>
                   Permintaan akan dikirim ke Admin untuk invoice:{' '}
                   <strong>{transactionToDelete?.transactionNumber}</strong>.
-                </DialogModalDescription>
+                </DialogDescription>
               </DialogHeader>
               <div className='py-3 space-y-2'>
                 <Label htmlFor='deletionRequestReason' className='text-xs'>

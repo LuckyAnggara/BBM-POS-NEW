@@ -379,11 +379,11 @@ export default function POSPage() {
   const fetchShiftTransactions = useCallback(async () => {
     if (activeShift && selectedBranch) {
       setLoadingShiftTransactions(true)
-      const transactions = await getTransactionsForShift(
-        selectedBranch.id,
-        activeShift.$id
-      )
-      setShiftTransactions(transactions)
+      const transactions = await getTransactionsForShift({
+        branchId: selectedBranch.id,
+        shiftId: activeShift.$id,
+      })
+      setShiftTransactions(transactions.documents)
       setLoadingShiftTransactions(false)
     } else {
       setShiftTransactions([])
@@ -790,8 +790,7 @@ export default function POSPage() {
         // --- Relational & Denormalized Info ---
         branchId: selectedBranch.id,
         shiftId: activeShift.$id,
-        // userId: currentUser.$id,
-        userIda: currentUser.$id,
+        userId: currentUser.$id,
         userName: currentUser.name,
         customerName: customerNameInputCash.trim() || undefined,
 
@@ -920,6 +919,7 @@ export default function POSPage() {
         isCreditSale: false,
         bankName: selectedBankName, // Tambahkan ini
         bankTransactionRef: bankRefNumberInput.trim(), // Tambahkan ini
+        paymentStatus: 'paid', // <-- TAMBAHKAN INI
       }
       // 2. Blok `try`: Eksekusi alur sukses
       const result = await recordTransaction(payload)
@@ -1051,6 +1051,7 @@ export default function POSPage() {
         amountPaid: 0, // Untuk penjualan kredit baru, yang dibayar adalah 0
         isCreditSale: true, // Set ke true
         creditDueDate: creditDueDate ? creditDueDate.toISOString() : undefined,
+        paymentStatus: 'unpaid', // <-- TAMBAHKAN INI
       }
 
       const result = await recordTransaction(payload)
@@ -1328,7 +1329,7 @@ export default function POSPage() {
             {activeShift ? (
               <div className='col-span-1 text-center'>
                 <p className='text-green-600 font-medium flex items-center justify-center text-sm'>
-                  <PlayCircle className='h-4 w-4 mr-1.5' /> Shift Aktif
+                  <PlayCircle className='h-4 w-4 mr-1.5' /> SHIFT AKTIF
                 </p>
               </div>
             ) : (

@@ -11,6 +11,8 @@ import {
   POS_TRANSACTIONS_COLLECTION_ID,
   POS_TRANSACTION_ITEMS_COLLECTION_ID,
   BRANCHES_COLLECTION_ID,
+  CREATE_POS_FUNCTION_ID,
+  PROCESS_RETURN_FUNCTION_ID,
 } from './config'
 import {
   TransactionDocument,
@@ -18,6 +20,7 @@ import {
   TransactionViewModel,
   ShiftDocument,
   TransactionItemDocument,
+  ProcessReturnPayload,
 } from './types' // Kita akan mengimpor tipe bersih dari satu file pusat
 
 interface GetTransactionsParams {
@@ -239,7 +242,7 @@ export async function createPOSTransaction(
   payload: CreateTransactionPayload
 ): Promise<TransactionDocument | { error: string }> {
   // Ganti 'YOUR_FUNCTION_ID' dengan ID fungsi yang Anda deploy di Appwrite
-  const CREATE_POS_FUNCTION_ID = '685fd6e3000a011a253e' // Ganti dengan ID Function Anda
+  // Ganti dengan ID Function Anda
 
   try {
     const result = await functions.createExecution(
@@ -425,5 +428,51 @@ export async function getTransactionById(
   } catch (error) {
     console.error(`Error fetching transaction by ID ${transactionId}:`, error)
     return null
+  }
+}
+
+// Fungsi retur data
+export async function processFullTransactionReturn(
+  payload: ProcessReturnPayload
+): Promise<TransactionDocument | { error: string }> {
+  // ID dari Cloud Function 'processReturn' yang Anda deploy di Appwrite
+
+  // 1. Validasi dasar di sisi klien
+  const { transactionId, reason, returnedByUserId, returnedByUserName } =
+    payload
+  if (!transactionId || !reason || !returnedByUserId) {
+    return { error: 'Data untuk proses retur tidak lengkap.' }
+  }
+
+  try {
+    // 2. Memanggil Cloud Function dengan payload yang sudah di-stringify
+    const result = await functions.createExecution(
+      PROCESS_RETURN_FUNCTION_ID,
+      JSON.stringify(payload), // Kirim seluruh payload
+      false, // false = sinkron (menunggu hasil)
+      '/',
+      'POST'
+    )
+
+    // 3. Memproses hasil dari Cloud Function
+    if (result.status === 'completed') {
+      const response = JSON.parse(result.responseBody)
+      if (response.ok) {
+        // Sukses, kembalikan data transaksi yang telah diupdate
+        // Kita gunakan mapper untuk memastikan datanya bersih
+        return mapDocToTransactionDocument(response.data)
+      } else {
+        // Error dari logika di dalam fungsi (misal: transaksi sudah diretur)
+        return { error: response.msg || 'Fungsi backend mengembalikan error.' }
+      }
+    } else {
+      // Error pada eksekusi fungsi itu sendiri (misal: timeout, crash)
+      return {
+        error: `Eksekusi fungsi retur gagal: ${result.status}. Log: ${result.responseBody}`,
+      }
+    }
+  } catch (e: any) {
+    console.error('Gagal memanggil fungsi proses retur:', e)
+    return { error: e.message || 'Gagal menghubungi server.' }
   }
 }
