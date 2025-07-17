@@ -1,7 +1,6 @@
 'use client'
 
 import type { Branch, TransactionViewModel } from '@/lib/appwrite/types'
-import { Timestamp } from 'firebase/firestore'
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card'
 import {
   Table,
@@ -10,9 +9,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableCaption,
 } from '@/components/ui/table'
 import { Separator } from '@/components/ui/separator'
+import { format, parseISO, isValid } from 'date-fns' // Impor dari date-fns
 
 interface InvoiceTemplateProps {
   transaction: TransactionViewModel
@@ -23,24 +22,20 @@ export default function InvoiceTemplate({
   transaction,
   branch,
 }: InvoiceTemplateProps) {
-  const formatDate = (timestamp: Timestamp | Date | undefined) => {
-    if (!timestamp) return 'N/A'
-    const date = timestamp instanceof Timestamp ? timestamp.toDate() : timestamp
-    return new Intl.DateTimeFormat('id-ID', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(date)
+  // PERBAIKAN #1: Menggunakan date-fns untuk memformat ISO string dari Appwrite
+  const formatDate = (isoString?: string) => {
+    if (!isoString) return 'N/A'
+    const date = parseISO(isoString)
+    if (!isValid(date)) return 'Tanggal tidak valid'
+    // Format contoh: 30 Jun 2025, 10:50
+    return format(date, 'dd MMM yyyy, HH:mm')
   }
 
   const formatCurrency = (amount: number) => {
     return `${branch.currency || 'Rp'}${amount.toLocaleString('id-ID')}`
   }
 
-  // Try to get user's name if available, otherwise fallback
-  const cashierName = transaction.user.name
-    ? `Kasir: ${transaction.user.name.substring(0, 8)}`
-    : 'Kasir: N/A'
-  // In a real app, you'd fetch user data based on transaction.userId if needed.
+  const cashierName = `Kasir: ${transaction.user.name || 'N/A'}`
 
   return (
     <Card className='w-full max-w-4xl mx-auto my-4 shadow-lg print:shadow-none print:border-none print:my-0'>
@@ -65,7 +60,8 @@ export default function InvoiceTemplate({
               No: {transaction.transactionNumber}
             </p>
             <p className='text-xs text-muted-foreground'>
-              Tanggal: {transaction.$createdAt}
+              {/* Menggunakan fungsi format tanggal yang sudah diperbaiki */}
+              Tanggal: {formatDate(transaction.$createdAt)}
             </p>
           </div>
         </div>
@@ -100,22 +96,44 @@ export default function InvoiceTemplate({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {transaction.items.map((item) => (
-              <TableRow key={item.productId}>
-                <TableCell className='font-medium px-2 py-1'>
-                  {item.productName}
-                </TableCell>
-                <TableCell className='text-center px-2 py-1'>
-                  {item.quantity}
-                </TableCell>
-                <TableCell className='text-right px-2 py-1'>
-                  {formatCurrency(item.priceAtSale)}
-                </TableCell>
-                <TableCell className='text-right px-2 py-1'>
-                  {formatCurrency(item.subtotal)}
-                </TableCell>
-              </TableRow>
-            ))}
+            {transaction.items.map((item) => {
+              {
+                item
+              }
+              // PERBAIKAN #2: Logika untuk menampilkan detail harga & diskon per item
+              const hasItemDiscount = item.discountAmount > 0
+              // Rekonstruksi harga asli per unit jika ada diskon
+              const originalPricePerUnit = item
+              const discountPerUnit = hasItemDiscount ? item.discountAmount : 0
+
+              return (
+                <TableRow key={item.productId}>
+                  <TableCell className='font-medium px-2 py-1'>
+                    {item.productName}
+                    {/* Tampilkan detail diskon HANYA jika ada */}
+                    {hasItemDiscount && (
+                      <div className='text-[0.7rem] text-muted-foreground pl-2'>
+                        <span className='line-through'>
+                          {formatCurrency(originalPricePerUnit)}
+                        </span>
+                        <span className='ml-1 text-red-600'>
+                          (-{formatCurrency(discountPerUnit)})
+                        </span>
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className='text-center px-2 py-1'>
+                    {item.quantity}
+                  </TableCell>
+                  <TableCell className='text-right px-2 py-1'>
+                    {formatCurrency(item.priceAtSale)}
+                  </TableCell>
+                  <TableCell className='text-right px-2 py-1'>
+                    {formatCurrency(item.subtotal)}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
           </TableBody>
         </Table>
 
@@ -127,15 +145,27 @@ export default function InvoiceTemplate({
               <span>Subtotal:</span>
               <span>{formatCurrency(transaction.subtotal)}</span>
             </div>
+
+            {/* PERBAIKAN #3: Tampilkan total diskon jika ada */}
+            {transaction.totalDiscountAmount > 0 && (
+              <div className='flex justify-between text-destructive'>
+                <span>Diskon:</span>
+                <span>-{formatCurrency(transaction.totalDiscountAmount)}</span>
+              </div>
+            )}
+
             <div className='flex justify-between'>
               <span>Pajak ({branch.taxRate || 0}%):</span>
               <span>{formatCurrency(transaction.taxAmount)}</span>
             </div>
+
             <Separator className='my-1' />
+
             <div className='flex justify-between font-bold text-sm'>
               <span>Total:</span>
               <span>{formatCurrency(transaction.totalAmount)}</span>
             </div>
+
             {transaction.paymentMethod === 'cash' && (
               <>
                 <div className='flex justify-between mt-1'>

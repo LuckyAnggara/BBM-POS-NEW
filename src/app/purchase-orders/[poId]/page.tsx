@@ -16,9 +16,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea"; 
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import type { PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus, ReceivedItemData, PurchaseOrderPaymentStatus, PaymentToSupplier } from "@/lib/firebase/purchaseOrders";
-import { getPurchaseOrderById, updatePurchaseOrderStatus, receivePurchaseOrderItems, recordPaymentToSupplier } from "@/lib/firebase/purchaseOrders";
-import { Timestamp } from "firebase/firestore";
+import type { PurchaseOrder, PurchaseOrderItem, PurchaseOrderStatus, ReceivedItemData, PurchaseOrderPaymentStatus, PaymentToSupplier } from "@/lib/appwrite/purchaseOrders";
+import { getPurchaseOrderById, updatePurchaseOrderStatus, receivePurchaseOrderItems, recordPaymentToSupplier } from "@/lib/appwrite/purchaseOrders";
 import { format, isBefore, startOfDay } from "date-fns";
 import Link from "next/link";
 import { ArrowLeft, Printer, PackageCheck, PackageX, DollarSign, CalendarIcon } from "lucide-react";
@@ -231,24 +230,15 @@ export default function PurchaseOrderDetailPage() {
   };
 
 
-  const formatDate = (timestamp: any, includeTime = false) => {
-    if (!timestamp) return "N/A";
-  
-    let date: Date;
-  
-    if (timestamp instanceof Timestamp) {
-      date = timestamp.toDate();
-    } else if (timestamp instanceof Date) {
-      date = timestamp;
-    } else if (timestamp?.seconds) {
-      // kemungkinan objek dari Firestore yang belum diconvert
-      date = new Timestamp(timestamp.seconds, timestamp.nanoseconds).toDate();
-    } else {
-      // fallback
-      date = new Date(timestamp);
+  const formatDate = (dateInput: string | Date | undefined, includeTime = false) => {
+    if (!dateInput) return "N/A";
+    try {
+      const date = new Date(dateInput);
+      return format(date, includeTime ? "dd MMM yyyy, HH:mm" : "dd MMM yyyy");
+    } catch (error) {
+      console.error("Invalid date format:", dateInput, error);
+      return "Invalid Date";
     }
-  
-    return format(date, includeTime ? "dd MMM yyyy, HH:mm" : "dd MMM yyyy");
   };
 
   const formatCurrency = (amount: number | undefined) => {
@@ -280,7 +270,7 @@ export default function PurchaseOrderDetailPage() {
     }
   };
 
-  const getPaymentStatusBadgeVariant = (status: PurchaseOrderPaymentStatus | undefined, dueDateMillis?: number) => {
+  const getPaymentStatusBadgeVariant = (status: PurchaseOrderPaymentStatus | undefined, dueDateString?: string) => {
     let variant: "default" | "secondary" | "destructive" | "outline" = "secondary";
     if (!status) return variant;
 
@@ -288,16 +278,13 @@ export default function PurchaseOrderDetailPage() {
     else if (status === 'unpaid') { variant = 'destructive'; }
     else if (status === 'partially_paid') { variant = 'outline'; }
 
-    // Convert milliseconds to a Date object before comparison
-    const dueDate = dueDateMillis !== undefined ? new Date(dueDateMillis) : undefined;
-
-    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate, startOfDay(new Date()))) {
+    if (dueDateString && (status === 'unpaid' || status === 'partially_paid') && isBefore(new Date(dueDateString), startOfDay(new Date()))) {
       variant = 'destructive';
     }
     return variant;
   };
 
-  const getPaymentStatusText = (status: PurchaseOrderPaymentStatus | undefined, dueDateMillis?: number) => {
+  const getPaymentStatusText = (status: PurchaseOrderPaymentStatus | undefined, dueDateString?: string) => {
     if (!status) return "N/A";
     let text = "";
      switch (status) {
@@ -306,11 +293,7 @@ export default function PurchaseOrderDetailPage() {
       case 'partially_paid': text = "Bayar Sebagian"; break;
     }
   
-    // Convert milliseconds to a Date object before comparison
-    const dueDate = dueDateMillis !== undefined ? new Date(dueDateMillis) : undefined;
-  
-    // Now check for overdue status using the Date object
-    if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate, startOfDay(new Date()))) {
+    if (dueDateString && (status === 'unpaid' || status === 'partially_paid') && isBefore(new Date(dueDateString), startOfDay(new Date()))) {
       return text + " (Jatuh Tempo)";
     }
   

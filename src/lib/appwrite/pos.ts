@@ -13,6 +13,7 @@ import {
   BRANCHES_COLLECTION_ID,
   CREATE_POS_FUNCTION_ID,
   PROCESS_RETURN_FUNCTION_ID,
+  PROCESS_DELETION_FUNCTION_ID,
 } from './config'
 import {
   TransactionDocument,
@@ -21,6 +22,7 @@ import {
   ShiftDocument,
   TransactionItemDocument,
   ProcessReturnPayload,
+  ProcessDeletionPayload,
 } from './types' // Kita akan mengimpor tipe bersih dari satu file pusat
 
 interface GetTransactionsParams {
@@ -151,7 +153,6 @@ export async function getActiveShift(
         Query.limit(1),
       ]
     )
-    console.log('Shift ditemukan:', response)
 
     if (response.documents.length > 0) {
       // Gunakan fungsi mapper untuk konsistensi dan keamanan tipe
@@ -475,4 +476,44 @@ export async function processFullTransactionReturn(
     console.error('Gagal memanggil fungsi proses retur:', e)
     return { error: e.message || 'Gagal menghubungi server.' }
   }
+}
+
+async function callProcessDeletion(payload: ProcessDeletionPayload) {
+  try {
+    const result = await functions.createExecution(
+      PROCESS_DELETION_FUNCTION_ID,
+      JSON.stringify(payload),
+      false
+    )
+    const response = JSON.parse(result.responseBody)
+    return response.ok ? { success: true } : { error: response.msg }
+  } catch (e: any) {
+    return { error: e.message }
+  }
+}
+
+// Fungsi spesifik untuk menghapus Transaksi POS
+export async function apiDeletePOSTransaction(
+  transactionId: string,
+  user: { id: string; name: string }
+) {
+  return callProcessDeletion({
+    documentType: 'POS_TRANSACTION',
+    documentId: transactionId,
+    deletedByUserId: user.id,
+    deletedByUserName: user.name,
+  })
+}
+
+// Fungsi spesifik untuk menghapus Purchase Order
+export async function apiDeletePurchaseOrder(
+  purchaseOrderId: string,
+  user: { id: string; name: string }
+) {
+  return callProcessDeletion({
+    documentType: 'PURCHASE_ORDER',
+    documentId: purchaseOrderId,
+    deletedByUserId: user.id,
+    deletedByUserName: user.name,
+  })
 }

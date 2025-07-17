@@ -402,9 +402,7 @@ export default function POSPage() {
     }
     setLoadingShift(true)
     const shift = await getActiveShift(currentUser.$id, selectedBranch.id)
-    console.log(currentUser.$id, selectedBranch.id)
     setActiveShift(shift)
-    console.log(shift)
     if (shift) {
       setInitialCashInput(shift.startingBalance.toString())
     } else {
@@ -544,7 +542,7 @@ export default function POSPage() {
               ? {
                   ...item,
                   quantity: item.quantity + 1,
-                  total: (item.quantity + 1) * item.price,
+                  subtotal: (item.quantity + 1) * item.price,
                 }
               : item
           )
@@ -630,7 +628,7 @@ export default function POSPage() {
             discountAmount: actualDiscountAmount,
             itemDiscountType: currentDiscountType,
             itemDiscountValue: parseFloat(currentDiscountValue) || 0,
-            total: discountedPrice * item.quantity,
+            subtotal: discountedPrice * item.quantity,
           }
         }
         return item
@@ -684,7 +682,7 @@ export default function POSPage() {
             ? {
                 ...item,
                 quantity: productInStock.quantity,
-                total: productInStock.quantity * item.price,
+                subtotal: productInStock.quantity * item.price,
               }
             : item
         )
@@ -1138,12 +1136,7 @@ export default function POSPage() {
             quantity: item.quantity,
             price: item.priceAtSale ?? 0, // Gunakan `priceAtSale`
             total: item.subtotal, // Gunakan `subtotal` dari item
-            // Penjelasan: `originalPrice` tidak kita simpan di `TransactionItemDocument`.
-            // Anda bisa menambahkannya jika perlu, atau cukup tampilkan harga setelah diskon.
-            // Di sini kita gunakan `priceAtSale` + `discountAmount` untuk merekonstruksinya.
-            originalPrice:
-              (item.priceAtSale ?? 0) +
-              (item.discountAmount ?? 0) / item.quantity,
+            originalPrice: item.priceAtSale,
             discountAmount:
               item.discountAmount == 0
                 ? 0
@@ -1702,24 +1695,23 @@ export default function POSPage() {
                           <TableRow key={item.productId}>
                             <TableCell className='font-medium text-xs py-1 px-2 truncate'>
                               {item.productName}
-                              {item.discountAmount &&
-                                item.discountAmount > 0 && (
-                                  <div className='flex items-center gap-1'>
-                                    <span className='text-[0.65rem] text-muted-foreground line-through'>
-                                      {currencySymbol}
-                                      {(item.originalPrice || 0).toLocaleString(
-                                        'id-ID'
-                                      )}
-                                    </span>
-                                    <span className='text-[0.65rem] text-destructive'>
-                                      (-{currencySymbol}
-                                      {item.discountAmount.toLocaleString(
-                                        'id-ID'
-                                      )}
-                                      )
-                                    </span>
-                                  </div>
-                                )}
+                              {item.discountAmount > 0 && (
+                                <div className='flex items-center gap-1'>
+                                  <span className='text-[0.65rem] text-muted-foreground line-through'>
+                                    {currencySymbol}
+                                    {(item.originalPrice || 0).toLocaleString(
+                                      'id-ID'
+                                    )}
+                                  </span>
+                                  <span className='text-[0.65rem] text-destructive'>
+                                    (-{currencySymbol}
+                                    {item.discountAmount.toLocaleString(
+                                      'id-ID'
+                                    )}
+                                    )
+                                  </span>
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell className='text-center text-xs py-1 px-1'>
                               <div className='flex items-center justify-center gap-0.5'>

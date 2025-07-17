@@ -13,6 +13,15 @@ export type TransactionStatus =
   | 'returned'
 export type ShiftStatus = 'active' | 'ended'
 
+export type DeletionDocumentType = 'POS_TRANSACTION' | 'PURCHASE_ORDER'
+
+export interface ProcessDeletionPayload {
+  documentType: DeletionDocumentType
+  documentId: string
+  deletedByUserId: string
+  deletedByUserName: string
+}
+
 // export interface TransactionItem {
 //   transactionId: string
 //   branchId: string

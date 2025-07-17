@@ -24,15 +24,8 @@ import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  getTransactionsByDateRangeAndBranch,
-  getActiveShift,
-  getTransactionsForShift,
-  type ClientPosTransaction,
-  type ClientPosShift,
-} from '@/lib/firebase/pos' // Updated to Client types
-import { getExpenses, type Expense } from '@/lib/firebase/expenses'
-import { getInventoryItems, type InventoryItem } from '@/lib/firebase/inventory'
+import { getExpenses } from '@/lib/appwrite/expenses'
+import { getInventoryItems } from '@/lib/appwrite/inventory'
 import {
   startOfMonth,
   endOfMonth,
@@ -66,6 +59,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { getActiveShift, getTransactions } from '@/lib/appwrite/pos'
+import clsx from 'clsx' // PERBAIKAN: Impor clsx untuk conditional class yang bersih
+import { ShiftDocument } from '@/lib/appwrite/types'
 
 interface DashboardStats {
   grossRevenueBeforeReturns: number
@@ -123,13 +119,29 @@ export default function DashboardPage() {
   const [inventorySummary, setInventorySummary] =
     useState<InventorySummary | null>(null)
   const [activeShiftSummary, setActiveShiftSummary] =
-    useState<ActiveShiftSummary | null>(null)
+    useState<ShiftDocument | null>(null)
+  const [loadingShift, setLoadingShift] = useState(true)
   const [chartSalesData, setChartSalesData] = useState<ChartDataPoint[]>([])
 
   const [loadingStats, setLoadingStats] = useState(true)
   const [loadingInventorySummary, setLoadingInventorySummary] = useState(true)
   const [loadingActiveShift, setLoadingActiveShift] = useState(true)
   const [loadingChartSales, setLoadingChartSales] = useState(true)
+
+  const [isShiftFromPreviousDay, setIsShiftFromPreviousDay] = useState(false)
+
+  const fetchActiveShift = useCallback(async () => {
+    if (currentUser && selectedBranch) {
+      setLoadingShift(true)
+      const shift = await getActiveShift(currentUser.$id, selectedBranch.id)
+      setActiveShiftSummary(shift)
+      setLoadingShift(false)
+    }
+  }, [currentUser, selectedBranch])
+
+  useEffect(() => {
+    fetchActiveShift()
+  }, [fetchActiveShift])
 
   const isCashierWithoutBranch =
     !loadingAuth &&
@@ -239,20 +251,26 @@ export default function DashboardPage() {
 
     try {
       const [
-        rangeTransactions, // Now ClientPosTransaction[]
+        transactionDocument, // Now ClientPosTransaction[]
         rangeExpenses,
         activeShiftData, // Now ClientPosShift | null
       ] = await Promise.all([
-        getTransactionsByDateRangeAndBranch(selectedBranch.id, start, end),
+        getTransactions({
+          branchId: selectedBranch.id,
+          options: {
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+          },
+        }),
         getExpenses(selectedBranch.id, { startDate: start, endDate: end }),
-        getActiveShift(currentUser.id, selectedBranch.id),
+        getActiveShift(currentUser.$id, selectedBranch.id),
       ])
 
       let grossRevenueBeforeReturns = 0
       let netRevenue = 0
       let netTransactionCount = 0
 
-      rangeTransactions.forEach((tx) => {
+      transactionDocument.documents.forEach((tx) => {
         if (tx.status === 'completed') {
           grossRevenueBeforeReturns += tx.totalAmount
           netRevenue += tx.totalAmount
@@ -288,10 +306,10 @@ export default function DashboardPage() {
         currentDateIterator = startOfDay(subDays(currentDateIterator, -1))
       }
 
-      rangeTransactions.forEach((tx) => {
-        const txDate = parseISO(tx.timestamp) // Parse ISO string to Date
-        if (isValid(txDate)) {
-          const dateStr = format(txDate, 'yyyy-MM-dd')
+      transactionDocument.documents.forEach((tx) => {
+        const txDate = parseISO(tx.$createdAt) // Parse ISO string to Date
+        if (isValid(tx.$createdAt)) {
+          const dateStr = format(tx.$createdAt, 'yyyy-MM-dd')
           if (salesByDay[dateStr]) {
             if (tx.status === 'completed') {
               salesByDay[dateStr].total += tx.totalAmount
@@ -328,32 +346,10 @@ export default function DashboardPage() {
       setLoadingChartSales(false)
 
       if (activeShiftData) {
-        const shiftTransactions = await getTransactionsForShift(
-          activeShiftData.id
-        ) // Returns ClientPosTransaction[]
-        const totalCashSalesShift = shiftTransactions
-          .filter(
-            (tx) => tx.paymentTerms === 'cash' && tx.status === 'completed'
-          )
-          .reduce((sum, tx) => sum + tx.totalAmount, 0)
-        const totalCardSalesShift = shiftTransactions
-          .filter(
-            (tx) => tx.paymentTerms === 'card' && tx.status === 'completed'
-          )
-          .reduce((sum, tx) => sum + tx.totalAmount, 0)
-        const totalTransferSalesShift = shiftTransactions
-          .filter(
-            (tx) => tx.paymentTerms === 'transfer' && tx.status === 'completed'
-          )
-          .reduce((sum, tx) => sum + tx.totalAmount, 0)
-        setActiveShiftSummary({
-          initialCash: activeShiftData.initialCash,
-          estimatedCashInDrawer:
-            activeShiftData.initialCash + totalCashSalesShift,
-          totalCashSalesShift,
-          totalCardSalesShift,
-          totalTransferSalesShift,
-        })
+        const shiftTransactions = await getTransactions({
+          branchId: selectedBranch.id,
+          shiftId: activeShiftData.$id,
+        }) // Returns ClientPosTransaction[]
       } else {
         setActiveShiftSummary(null)
       }
@@ -580,10 +576,10 @@ export default function DashboardPage() {
                           Modal Awal:
                         </p>
                         <p className='font-medium text-blue-700 dark:text-blue-200'>
-                          {formatCurrency(activeShiftSummary.initialCash)}
+                          {formatCurrency(activeShiftSummary.startingBalance)}
                         </p>
                       </div>
-                      <div>
+                      {/* <div>
                         <p className='text-blue-600 dark:text-blue-400'>
                           Kas Seharusnya:
                         </p>
@@ -612,8 +608,8 @@ export default function DashboardPage() {
                             activeShiftSummary.totalCardSalesShift
                           )}
                         </p>
-                      </div>
-                      <div>
+                      </div> */}
+                      {/* <div>
                         <p className='text-blue-600 dark:text-blue-400'>
                           Total Transfer (Shift):
                         </p>
@@ -622,7 +618,7 @@ export default function DashboardPage() {
                             activeShiftSummary.totalTransferSalesShift
                           )}
                         </p>
-                      </div>
+                      </div> */}
                     </CardContent>
                   </Card>
                 )
