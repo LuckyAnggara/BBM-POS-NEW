@@ -20,6 +20,8 @@ export interface ProcessDeletionPayload {
   documentId: string
   deletedByUserId: string
   deletedByUserName: string
+  deletedByUserRole: string
+  deletePasswordInput: string
 }
 
 // export interface TransactionItem {
@@ -244,6 +246,7 @@ export interface Branch {
   phoneNumber: string
   transactionDeletionPassword?: string
   defaultReportPeriod?: ReportPeriodPreset // Added field
+  printerPort?: number // Added field
 }
 
 // Tipe data untuk dokumen di koleksi 'inventoryItems' akan kita tambahkan di sini nanti

@@ -10,6 +10,7 @@ import {
   PURCHASE_ORDER_ITEMS_COLLECTION_ID, // ID Koleksi Baru
   SUPPLIER_PAYMENTS_COLLECTION_ID, // ID Koleksi Baru
   INVENTORY_ITEMS_COLLECTION_ID,
+  PURCHASE_ORDER_FUNCTION_ID,
   // RECEIVE_PO_ITEMS_FUNCTION_ID, // ID Fungsi yang Diperbarui
   // RECORD_SUPPLIER_PAYMENT_FUNCTION_ID, // ID Fungsi Baru
 } from './config'
@@ -207,116 +208,6 @@ export async function addPurchaseOrder(
   }
 }
 
-// --- FUNGSI DENGAN LOGIKA SERVER DI SISI KLIEN (UNTUK DEVELOPMENT) ---
-
-/**
- * [PERINGATAN DEV] Logika ini menjalankan banyak operasi database dari klien.
- * TIDAK AMAN UNTUK PRODUKSI karena tidak bersifat atomik.
- * Jika salah satu operasi gagal, data bisa menjadi tidak konsisten.
- * Gunakan hanya untuk pengujian. Pindahkan ke Appwrite Function sesegera mungkin.
- */
-export async function receivePurchaseOrderItems(
-  poId: string,
-  poBranchId: string,
-  poNumber: string,
-  itemsReceived: ReceivedItemData[],
-  receivedByUserId: string,
-  receivedByUserName: string
-): Promise<void | { error: string }> {
-  if (!poId || !receivedByUserId || itemsReceived.length === 0) {
-    return { error: 'Informasi PO, item, dan pengguna diperlukan.' }
-  }
-
-  // try {
-  //   // 1. Proses setiap item yang diterima
-  //   for (const receivedItem of itemsReceived) {
-  //     const poItemDoc = await databases.getDocument(
-  //       DATABASE_ID,
-  //       PURCHASE_ORDER_ITEMS_COLLECTION_ID,
-  //       receivedItem.purchaseOrderItemId
-  //     )
-
-  //     const newReceivedQty =
-  //       poItemDoc.receivedQuantity + receivedItem.quantityReceivedNow
-  //     if (newReceivedQty > poItemDoc.orderedQuantity) {
-  //       throw new Error(
-  //         `Kuantitas diterima melebihi pesanan untuk ${poItemDoc.productName}`
-  //       )
-  //     }
-
-  //     await databases.updateDocument(
-  //       DATABASE_ID,
-  //       PURCHASE_ORDER_ITEMS_COLLECTION_ID,
-  //       receivedItem.purchaseOrderItemId,
-  //       { receivedQuantity: newReceivedQty }
-  //     )
-
-  //     // Update inventaris & buat mutasi stok
-  //     const inventoryItemDoc = await databases.getDocument(
-  //       DATABASE_ID,
-  //       INVENTORY_ITEMS_COLLECTION_ID,
-  //       receivedItem.productId
-  //     )
-  //     const currentQuantity = inventoryItemDoc.quantity || 0
-  //     const newQuantity = currentQuantity + receivedItem.quantityReceivedNow
-
-  //     await databases.updateDocument(
-  //       DATABASE_ID,
-  //       INVENTORY_ITEMS_COLLECTION_ID,
-  //       receivedItem.productId,
-  //       { quantity: newQuantity }
-  //     )
-
-  //   //   await addStockMutation({
-  //   //     itemId: receivedItem.productId,
-  //   //     itemName: receivedItem.productName,
-  //   //     branchId: poBranchId,
-  //   //     change: receivedItem.quantityReceivedNow,
-  //   //     previousQuantity: currentQuantity,
-  //   //     newQuantity: newQuantity,
-  //   //     type: 'PURCHASE_RECEIPT',
-  //   //     description: `Penerimaan dari PO #${poNumber}`,
-  //   //     relatedTransactionId: poId,
-  //   //     userId: receivedByUserId,
-  //   //     userName: receivedByUserName,
-  //   //   })
-  //   // }
-
-  //   // 2. Setelah semua item diproses, update status PO utama
-  //   const allItemsForPo = await databases.listDocuments(
-  //     DATABASE_ID,
-  //     PURCHASE_ORDER_ITEMS_COLLECTION_ID,
-  //     [Query.equal('poId', poId), Query.limit(500)]
-  //   )
-  //   const anyItemPartiallyReceived = allItemsForPo.documents.some(
-  //     (item) => item.receivedQuantity > 0
-  //   )
-  //   const allItemsFullyReceived = allItemsForPo.documents.every(
-  //     (item) => item.receivedQuantity === item.orderedQuantity
-  //   )
-  //   const newStatus = allItemsFullyReceived
-  //     ? 'fully_received'
-  //     : anyItemPartiallyReceived
-  //     ? 'partially_received'
-  //     : 'ordered'
-
-  //   await databases.updateDocument(
-  //     DATABASE_ID,
-  //     PURCHASE_ORDERS_COLLECTION_ID,
-  //     poId,
-  //     { status: newStatus }
-  //   )
-  // } catch (error: any) {
-  //   console.error('Error receiving PO items on client:', error)
-  //   return { error: error.message || 'Gagal memproses penerimaan barang.' }
-  // }
-}
-
-/**
- * [PERINGATAN DEV] Logika ini menjalankan operasi "baca-lalu-tulis" dari klien.
- * Berisiko terjadi race condition jika ada dua operasi simultan pada PO yang sama.
- * Gunakan hanya untuk pengujian. Pindahkan ke Appwrite Function sesegera mungkin.
- */
 export async function recordPaymentToSupplier(
   poId: string,
   paymentDetails: Omit<
@@ -372,141 +263,256 @@ export async function recordPaymentToSupplier(
   }
 }
 
-/*
---- KODE DI BAWAH INI UNTUK APPWRITE FUNCTIONS (Simpan untuk nanti) ---
+export async function updatePaymentToSupplier(
+  poId: string,
+  paymentId: string,
+  paymentUpdateDetails: Partial<
+    Omit<SupplierPaymentDocument, '$id' | 'poId' | 'branchId' | 'supplierId'>
+  >
+): Promise<void | { error: string }> {
+  if (!poId || !paymentId || !paymentUpdateDetails.amountPaid) {
+    return { error: 'ID PO, ID Pembayaran, dan jumlah pembayaran diperlukan.' }
+  }
 
-A. KODE UNTUK FUNGSI `receive-po-items`
-File: functions/receive-po-items/src/index.ts
-(Jalankan ini di server Node.js Appwrite untuk keamanan dan transaksi data)
+  try {
+    const poDoc = await databases.getDocument(
+      DATABASE_ID,
+      PURCHASE_ORDERS_COLLECTION_ID,
+      poId
+    )
+    const paymentDoc = await databases.getDocument(
+      DATABASE_ID,
+      SUPPLIER_PAYMENTS_COLLECTION_ID,
+      paymentId
+    )
 
-import { Client, Databases, ID } from 'node-appwrite';
+    const originalAmount = paymentDoc.amountPaid
+    const newAmount = paymentUpdateDetails.amountPaid
+    const difference = newAmount - originalAmount
 
-export default async ({ req, res, log, error }) => {
-    const {
-        poId,
-        itemsReceived,
-        receivedByUserId,
-        receivedByUserName
-    } = JSON.parse(req.body);
+    await databases.updateDocument(
+      DATABASE_ID,
+      SUPPLIER_PAYMENTS_COLLECTION_ID,
+      paymentId,
+      paymentUpdateDetails
+    )
 
-    const client = new Client()
-        .setEndpoint(process.env.APPWRITE_ENDPOINT)
-        .setProject(process.env.APPWRITE_PROJECT_ID)
-        .setKey(process.env.APPWRITE_API_KEY);
-    const db = new Databases(client);
+    const newOutstandingAmount = poDoc.outstandingPOAmount - difference
+    const newPaymentStatus =
+      newOutstandingAmount <= 0.01 ? 'paid' : 'partially_paid'
 
-    try {
-        const poDoc = await db.getDocument(process.env.APPWRITE_DATABASE_ID, process.env.PURCHASE_ORDERS_COLLECTION_ID, poId);
+    await databases.updateDocument(
+      DATABASE_ID,
+      PURCHASE_ORDERS_COLLECTION_ID,
+      poId,
+      {
+        outstandingPOAmount:
+          newOutstandingAmount < 0 ? 0 : newOutstandingAmount,
+        paymentStatusOnPO: newPaymentStatus,
+      }
+    )
+  } catch (error: any) {
+    console.error('Error updating payment on client:', error)
+    return { error: error.message || 'Gagal memperbarui pembayaran.' }
+  }
+}
 
-        for (const receivedItem of itemsReceived) {
-            const poItemDoc = await db.getDocument(process.env.APPWRITE_DATABASE_ID, process.env.PURCHASE_ORDER_ITEMS_COLLECTION_ID, receivedItem.purchaseOrderItemId);
-            const newReceivedQty = poItemDoc.receivedQuantity + receivedItem.quantityReceivedNow;
+export async function deletePaymentToSupplier(
+  poId: string,
+  paymentId: string
+): Promise<void | { error: string }> {
+  if (!poId || !paymentId) {
+    return { error: 'ID PO dan ID Pembayaran diperlukan.' }
+  }
 
-            if (newReceivedQty > poItemDoc.orderedQuantity) {
-                throw new Error(`Kuantitas diterima melebihi pesanan untuk ${poItemDoc.productName}`);
-            }
+  try {
+    const poDoc = await databases.getDocument(
+      DATABASE_ID,
+      PURCHASE_ORDERS_COLLECTION_ID,
+      poId
+    )
+    const paymentDoc = await databases.getDocument(
+      DATABASE_ID,
+      SUPPLIER_PAYMENTS_COLLECTION_ID,
+      paymentId
+    )
 
-            await db.updateDocument(process.env.APPWRITE_DATABASE_ID, process.env.PURCHASE_ORDER_ITEMS_COLLECTION_ID, receivedItem.purchaseOrderItemId, { receivedQuantity: newReceivedQty });
+    const deletedAmount = paymentDoc.amountPaid
 
-            const inventoryItemDoc = await db.getDocument(process.env.APPWRITE_DATABASE_ID, process.env.INVENTORY_ITEMS_COLLECTION_ID, receivedItem.productId);
-            const currentQuantity = inventoryItemDoc.quantity || 0;
-            const newQuantity = currentQuantity + receivedItem.quantityReceivedNow;
+    await databases.deleteDocument(
+      DATABASE_ID,
+      SUPPLIER_PAYMENTS_COLLECTION_ID,
+      paymentId
+    )
 
-            await db.updateDocument(process.env.APPWRITE_DATABASE_ID, process.env.INVENTORY_ITEMS_COLLECTION_ID, receivedItem.productId, { quantity: newQuantity });
-            
-            // Panggil helper addStockMutation versi server
-            await addStockMutation(db, {
-                itemId: receivedItem.productId,
-                itemName: poItemDoc.productName,
-                branchId: poDoc.branchId,
-                change: receivedItem.quantityReceivedNow,
-                previousQuantity: currentQuantity,
-                newQuantity: newQuantity,
-                type: 'PURCHASE_RECEIPT',
-                description: `Penerimaan dari PO #${poDoc.poNumber}`,
-                relatedTransactionId: poId,
-                userId: receivedByUserId,
-                userName: receivedByUserName,
-            });
-        }
+    const newOutstandingAmount = poDoc.outstandingPOAmount + deletedAmount
+    const newPaymentStatus =
+      newOutstandingAmount >= poDoc.totalAmount ? 'unpaid' : 'partially_paid'
 
-        const allItemsForPo = await db.listDocuments(process.env.APPWRITE_DATABASE_ID, process.env.PURCHASE_ORDER_ITEMS_COLLECTION_ID, [Query.equal('poId', poId), Query.limit(500)]);
-        const anyItemPartiallyReceived = allItemsForPo.documents.some(item => item.receivedQuantity > 0);
-        const allItemsFullyReceived = allItemsForPo.documents.every(item => item.receivedQuantity === item.orderedQuantity);
-        const newStatus = allItemsFullyReceived ? 'fully_received' : anyItemPartiallyReceived ? 'partially_received' : 'ordered';
+    await databases.updateDocument(
+      DATABASE_ID,
+      PURCHASE_ORDERS_COLLECTION_ID,
+      poId,
+      {
+        outstandingPOAmount: newOutstandingAmount,
+        paymentStatusOnPO: newPaymentStatus,
+      }
+    )
+  } catch (error: any) {
+    console.error('Error deleting payment on client:', error)
+    return { error: error.message || 'Gagal menghapus pembayaran.' }
+  }
+}
 
-        await db.updateDocument(process.env.APPWRITE_DATABASE_ID, process.env.PURCHASE_ORDERS_COLLECTION_ID, poId, { status: newStatus });
+/**
+ * Memperbarui status Purchase Order (misalnya, dari 'draft' ke 'ordered' atau 'cancelled').
+ * Hanya diizinkan jika status saat ini adalah 'draft'.
+ * @param {string} poId - ID dari Purchase Order yang akan diperbarui.
+ * @param {'ordered' | 'cancelled'} newStatus - Status baru untuk PO.
+ * @returns {Promise<PurchaseOrder | { error: string }>} - Dokumen PO yang diperbarui atau objek error.
+ */
+export async function updatePurchaseOrderStatus({
+  poId,
+  newStatus,
+}: {
+  poId: string
+  newStatus: PurchaseOrderStatus
+}): Promise<PurchaseOrder | { error: string }> {
+  if (!poId || !newStatus) {
+    return { error: 'ID Pesanan Pembelian dan status baru diperlukan.' }
+  }
 
-        return res.json({ success: true, message: 'Barang berhasil diterima.' });
-    } catch (e) {
-        error(e.message);
-        return res.json({ success: false, message: e.message }, 500);
+  if (newStatus !== 'ordered' && newStatus !== 'cancelled') {
+    return {
+      error:
+        'Status baru tidak valid. Hanya "ordered" atau "cancelled" yang diizinkan.',
     }
-};
+  }
 
----
+  try {
+    // 1. Ambil dokumen PO saat ini untuk verifikasi
+    const poDoc = await databases.getDocument(
+      DATABASE_ID,
+      PURCHASE_ORDERS_COLLECTION_ID,
+      poId
+    )
 
-B. KODE UNTUK FUNGSI `record-supplier-payment`
-File: functions/record-supplier-payment/src/index.ts
-
-import { Client, Databases, ID } from 'node-appwrite';
-
-export default async ({ req, res, log, error }) => {
-    const {
-        poId,
-        amountPaid,
-        paymentDate,
-        paymentMethod,
-        notes,
-        recordedByUserId,
-    } = JSON.parse(req.body);
-
-    const client = new Client()
-        .setEndpoint(process.env.APPWRITE_ENDPOINT)
-        .setProject(process.env.APPWRITE_PROJECT_ID)
-        .setKey(process.env.APPWRITE_API_KEY);
-    const db = new Databases(client);
-
-    try {
-        const poDoc = await db.getDocument(process.env.APPWRITE_DATABASE_ID, process.env.PURCHASE_ORDERS_COLLECTION_ID, poId);
-
-        await db.createDocument(
-            process.env.APPWRITE_DATABASE_ID,
-            process.env.SUPPLIER_PAYMENTS_COLLECTION_ID,
-            ID.unique(),
-            {
-                poId,
-                branchId: poDoc.branchId,
-                supplierId: poDoc.supplierId,
-                amountPaid,
-                paymentDate,
-                paymentMethod,
-                notes,
-                recordedByUserId,
-            }
-        );
-
-        const newOutstandingAmount = poDoc.outstandingPOAmount - amountPaid;
-        const newPaymentStatus = newOutstandingAmount <= 0.01 ? 'paid' : 'partially_paid';
-
-        await db.updateDocument(
-            process.env.APPWRITE_DATABASE_ID,
-            process.env.PURCHASE_ORDERS_COLLECTION_ID,
-            poId,
-            {
-                outstandingPOAmount: newOutstandingAmount < 0 ? 0 : newOutstandingAmount,
-                paymentStatusOnPO: newPaymentStatus,
-            }
-        );
-
-        return res.json({ success: true, message: 'Pembayaran berhasil dicatat.' });
-    } catch (e) {
-        error(e.message);
-        return res.json({ success: false, message: e.message }, 500);
+    // 2. Periksa apakah status saat ini adalah 'draft'
+    if (poDoc.status !== 'draft') {
+      return {
+        error: `Hanya pesanan dengan status "draft" yang dapat diubah. Status saat ini: ${poDoc.status}.`,
+      }
     }
-};
 
-*/
+    // 3. Lakukan pembaruan status
+    const updatedDoc = await databases.updateDocument(
+      DATABASE_ID,
+      PURCHASE_ORDERS_COLLECTION_ID,
+      poId,
+      {
+        status: newStatus,
+      }
+    )
+
+    return {
+      $id: updatedDoc.$id,
+      status: updatedDoc.status,
+      poNumber: updatedDoc.poNumber,
+      branchId: updatedDoc.branchId,
+      supplierId: updatedDoc.supplierId,
+      supplierName: updatedDoc.supplierName,
+      orderDate: updatedDoc.orderDate,
+      subtotal: updatedDoc.subtotal,
+      totalAmount: updatedDoc.totalAmount,
+      outstandingPOAmount: updatedDoc.outstandingPOAmount,
+      paymentStatusOnPO: updatedDoc.paymentStatusOnPO,
+      createdById: updatedDoc.createdById,
+      $createdAt: updatedDoc.$createdAt,
+      $updatedAt: updatedDoc.$updatedAt,
+      items: updatedDoc.items,
+      payments: updatedDoc.payments,
+      expectedDeliveryDate: updatedDoc.expectedDeliveryDate,
+      notes: updatedDoc.notes,
+      paymentTermsOnPO: updatedDoc.paymentTermsOnPO,
+      supplierInvoiceNumber: updatedDoc.supplierInvoiceNumber,
+      paymentDueDateOnPO: updatedDoc.paymentDueDateOnPO,
+      taxDiscountAmount: updatedDoc.taxDiscountAmount,
+      shippingCostCharged: updatedDoc.shippingCostCharged,
+      otherCosts: updatedDoc.otherCosts,
+      isCreditPurchase: updatedDoc.isCreditPurchase,
+    }
+  } catch (error: any) {
+    console.error('Error updating purchase order status:', error)
+    return {
+      error: error.message || 'Gagal memperbarui status pesanan pembelian.',
+    }
+  }
+}
+
+export async function receivePurchaseOrderItems({
+  poId,
+  poBranchId,
+  poNumber,
+  itemsReceived,
+  receivedByUserId,
+  receivedByUserName,
+}: {
+  poId: string
+  poBranchId: string
+  poNumber: string
+  itemsReceived: ReceivedItemData[]
+  receivedByUserId: string
+  receivedByUserName: string
+}): Promise<{ success: boolean } | { error: string }> {
+  if (
+    !poId ||
+    !poBranchId ||
+    !poNumber ||
+    !receivedByUserId ||
+    itemsReceived.length === 0
+  ) {
+    return { error: 'Informasi PO, item, dan pengguna diperlukan.' }
+  }
+
+  try {
+    // Membuat payload untuk dikirim ke Appwrite Function
+    const payload = JSON.stringify({
+      action: 'receiveItems',
+      poId,
+      poBranchId,
+      poNumber,
+      itemsReceived,
+      receivedByUserId,
+      receivedByUserName,
+    })
+
+    // Memanggil Appwrite Function
+    const result = await functions.createExecution(
+      PURCHASE_ORDER_FUNCTION_ID, // ID Fungsi yang Anda buat
+      payload,
+      false // `false` untuk eksekusi sinkron
+    )
+
+    if (result.status === 'failed') {
+      // Jika eksekusi fungsi gagal, coba parsing respons error
+      try {
+        const response = JSON.parse(result.responseBody)
+        throw new Error(response.message || 'Eksekusi fungsi gagal.')
+      } catch (e: any) {
+        return { error: e.message }
+      }
+    }
+    // Jika semua berhasil
+    return { success: true }
+  } catch (error: any) {
+    console.error('Error calling receivePurchaseOrderItems function:', error)
+    return {
+      error:
+        error.message ||
+        'Gagal memanggil fungsi untuk memproses penerimaan barang.',
+    }
+  }
+}
 
 // --- FUNGSI BARU UNTUK MENGAMBIL DATA PURCHASE ORDER ---
 

@@ -486,6 +486,7 @@ async function callProcessDeletion(payload: ProcessDeletionPayload) {
       false
     )
     const response = JSON.parse(result.responseBody)
+    console.log(response)
     return response.ok ? { success: true } : { error: response.msg }
   } catch (e: any) {
     return { error: e.message }
@@ -495,13 +496,16 @@ async function callProcessDeletion(payload: ProcessDeletionPayload) {
 // Fungsi spesifik untuk menghapus Transaksi POS
 export async function apiDeletePOSTransaction(
   transactionId: string,
-  user: { id: string; name: string }
+  user: { id: string; name: string; role: string },
+  deletePasswordInput: string
 ) {
   return callProcessDeletion({
     documentType: 'POS_TRANSACTION',
     documentId: transactionId,
     deletedByUserId: user.id,
     deletedByUserName: user.name,
+    deletedByUserRole: user.role,
+    deletePasswordInput: deletePasswordInput,
   })
 }
 

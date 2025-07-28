@@ -13,6 +13,7 @@ import { DataTable } from '@/components/layout/data-table'
 import { SectionCards } from '@/components/layout/section-cards'
 import { SiteHeader } from '@/components/layout/site-header'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { Toaster } from '@/components/ui/sonner'
 
 export default function MainLayout({
   children,
@@ -45,6 +46,7 @@ export default function MainLayout({
           {/* <Breadcrumbs /> */}
           {children}
         </main>
+        <Toaster richColors />
       </SidebarInset>
     </SidebarProvider>
   )

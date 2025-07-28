@@ -35,7 +35,7 @@ import type {
 } from '@/lib/appwrite/purchaseOrders'
 import {
   getPurchaseOrders,
-  receivePurchaseOrderItems,
+  updatePurchaseOrderStatus,
 } from '@/lib/appwrite/purchaseOrders'
 import { format, isBefore, startOfDay } from 'date-fns'
 import { Badge } from '@/components/ui/badge'
@@ -114,8 +114,14 @@ export default function PurchaseOrdersPage() {
   } | null>(null)
 
   // Filter states
-  const [startDate, setStartDate] = useState<Date | undefined>(undefined)
-  const [endDate, setEndDate] = useState<Date | undefined>(undefined)
+  const [startDate, setStartDate] = useState<Date | undefined>(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth(), 1)
+  })
+  const [endDate, setEndDate] = useState<Date | undefined>(() => {
+    const today = new Date()
+    return new Date(today.getFullYear(), today.getMonth() + 1, 0)
+  })
   const [searchTerm, setSearchTerm] = useState('')
   const [statusPoFilter, setStatusPoFilter] = useState<
     PurchaseOrderStatus | 'all'
@@ -269,30 +275,30 @@ export default function PurchaseOrdersPage() {
   const handleUpdateStatus = async () => {
     if (!poToUpdate || !selectedBranch) return
     setIsUpdatingStatus(true)
-    const result = await receivePurchaseOrderItems(
-      poToUpdate.poNumber,
-      poToUpdate.id,
-      poToUpdate.newStatus
-    )
+    const result = await updatePurchaseOrderStatus({
+      poId: poToUpdate.id,
+      newStatus: poToUpdate.newStatus,
+    })
     if (result && 'error' in result) {
       toast({
         title: 'Gagal Update Status',
         description: result.error,
         variant: 'destructive',
       })
-    } else {
+    } else if (result) {
       toast({
         title: 'Status Diperbarui',
         description: `Status PO ${
           poToUpdate.poNumber
-        } telah diubah menjadi ${getPOStatusText(poToUpdate.newStatus)}.`,
+        } telah diubah menjadi ${getPOStatusText(poToUpdate.newStatus)}. `,
       })
-      // Refetch data based on current filters (could be date-filtered or default)
-      if (startDate && endDate) {
-        await fetchPurchaseOrdersWithDateFilters()
-      } else {
-        await loadDefaultForBranch(selectedBranch.id)
-      }
+
+      setAllFetchedPOs((prevPOs) =>
+        prevPOs.map((po) => (po.$id === result.$id ? result : po))
+      )
+      setFilteredPOs((prevPOs) =>
+        prevPOs.map((po) => (po.$id === result.$id ? result : po))
+      )
     }
     setIsUpdatingStatus(false)
     setShowConfirmDialog(false)
@@ -449,7 +455,7 @@ export default function PurchaseOrdersPage() {
               <div className='grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 items-end'>
                 <div>
                   <Label htmlFor='startDatePO' className='text-xs'>
-                    Tgl Pesan Mulai
+                    Tanggal Awal
                   </Label>
                   <Popover>
                     <PopoverTrigger asChild>
@@ -480,7 +486,7 @@ export default function PurchaseOrdersPage() {
                 </div>
                 <div>
                   <Label htmlFor='endDatePO' className='text-xs'>
-                    Tgl Pesan Akhir
+                    Tanggal Akhir
                   </Label>
                   <Popover>
                     <PopoverTrigger asChild>
@@ -719,63 +725,40 @@ export default function PurchaseOrdersPage() {
                       <TableCell className='text-right py-2 text-xs'>
                         {formatCurrency(po.totalAmount)}
                       </TableCell>
-                      <TableCell className='text-center py-1.5'>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant='ghost'
-                              size='icon'
-                              className='h-7 w-7'
-                            >
-                              <MoreHorizontal className='h-4 w-4' />
-                              <span className='sr-only'>Aksi</span>
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align='end'>
-                            <DropdownMenuItem
-                              asChild
-                              className='text-xs cursor-pointer'
-                            >
-                              <Link href={`/purchase-orders/${po.$id}`}>
-                                <Eye className='mr-2 h-3.5 w-3.5' />
-                                Lihat Detail
-                              </Link>
-                            </DropdownMenuItem>
-                            {po.status === 'draft' && (
-                              <DropdownMenuItem
-                                className='text-xs cursor-pointer'
-                                onClick={() =>
-                                  openConfirmDialog(
-                                    po.$id,
-                                    po.poNumber,
-                                    'ordered'
-                                  )
-                                }
-                                disabled={isUpdatingStatus}
-                              >
-                                <CheckCircle className='mr-2 h-3.5 w-3.5' />
-                                Tandai Dipesan
-                              </DropdownMenuItem>
-                            )}
-                            {(po.status === 'draft' ||
-                              po.status === 'ordered') && (
-                              <DropdownMenuItem
-                                className='text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
-                                onClick={() =>
-                                  openConfirmDialog(
-                                    po.$id,
-                                    po.poNumber,
-                                    'cancelled'
-                                  )
-                                }
-                                disabled={isUpdatingStatus}
-                              >
-                                <XCircle className='mr-2 h-3.5 w-3.5' />
-                                Batalkan Pesanan
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                      <TableCell className='text-center py-1.5 flex flex-row gap-2 items-center'>
+                        <Link href={`/purchase-orders/${po.$id}`}>
+                          <Eye className='mr-2 h-3.5 w-3.5' />
+                        </Link>
+                        {po.status === 'draft' && (
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='text-xs cursor-pointer h-7 w-7 '
+                            onClick={() =>
+                              openConfirmDialog(po.$id, po.poNumber, 'ordered')
+                            }
+                            disabled={isUpdatingStatus}
+                          >
+                            <CheckCircle className='mr-2 h-3.5 w-3.5' />
+                          </Button>
+                        )}
+                        {(po.status === 'draft' || po.status === 'ordered') && (
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7 text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
+                            onClick={() =>
+                              openConfirmDialog(
+                                po.$id,
+                                po.poNumber,
+                                'cancelled'
+                              )
+                            }
+                            disabled={isUpdatingStatus}
+                          >
+                            <XCircle className='mr-2 h-3.5 w-3.5' />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

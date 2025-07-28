@@ -31,6 +31,8 @@ export const listBranches = async (): Promise<Branch[]> => {
       address: doc.address,
       phoneNumber: doc.phoneNumber,
       transactionDeletionPassword: doc.transactionDeletionPassword,
+      defaultReportPeriod: doc.defaultReportPeriod,
+      printerPort: doc.printerPort,
     }))
   } catch (error) {
     console.error('Appwrite Error :: listBranches :: ', error)
@@ -58,6 +60,8 @@ export const getBranchById = async (
       address: doc.address,
       phoneNumber: doc.phoneNumber,
       transactionDeletionPassword: doc.transactionDeletionPassword,
+      defaultReportPeriod: doc.defaultReportPeriod,
+      printerPort: doc.printerPort,
     }
   } catch (error) {
     console.error('Appwrite Error :: getBranchById :: ', error)
@@ -86,6 +90,8 @@ export const createBranch = async (
       address: newDoc.address,
       phoneNumber: newDoc.phoneNumber,
       transactionDeletionPassword: newDoc.transactionDeletionPassword,
+      defaultReportPeriod: newDoc.defaultReportPeriod,
+      printerPort: newDoc.printerPort,
     }
   } catch (error) {
     console.error('Appwrite Error :: createBranch :: ', error)
@@ -120,6 +126,8 @@ export const updateBranch = async (
       address: updatedDoc.address,
       phoneNumber: updatedDoc.phoneNumber,
       transactionDeletionPassword: updatedDoc.transactionDeletionPassword,
+      defaultReportPeriod: updatedDoc.defaultReportPeriod,
+      printerPort: updatedDoc.printerPort,
     }
   } catch (error) {
     console.error(`Appwrite Error :: updateBranch (ID: ${branchId}) :: `, error)

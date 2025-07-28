@@ -5,14 +5,12 @@ import { useParams } from 'next/navigation'
 import InvoiceTemplate from '@/components/invoice/invoice-template'
 import { getTransactionById } from '@/lib/appwrite/pos' // Updated import
 import { getBranchById } from '@/lib/appwrite/branches' // Updated import
-import type {
-  InvoicePrintPayload,
-  Branch,
-  TransactionViewModel,
-} from '@/lib/appwrite/types' // Updated import
+import type { Branch, TransactionViewModel } from '@/lib/appwrite/types' // Updated import
 import { Button } from '@/components/ui/button'
 import { Printer, ArrowLeft } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { toast } from 'sonner'
+import { handlePrint } from '@/lib/printHelper' // Updated import
 import Link from 'next/link'
 
 export default function InvoiceViewPage() {
@@ -25,6 +23,7 @@ export default function InvoiceViewPage() {
   const [branch, setBranch] = useState<Branch | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isPrinting, setIsPrinting] = useState(false)
 
   const invoiceRef = useRef<HTMLDivElement>(null)
 
@@ -65,8 +64,33 @@ export default function InvoiceViewPage() {
     fetchInvoiceData()
   }, [transactionId])
 
-  const handlePrint = () => {
-    window.print()
+  const printInvoice = async () => {
+    if (!branch) {
+      toast.error('Tidak ada cabang yang dipilih.')
+      return
+    }
+    if (!transaction) {
+      toast.error('Tidak ada transaksi yang tersedia untuk dicetak.')
+      return
+    }
+    setIsPrinting(true)
+    try {
+      toast.loading('Mengirim data untuk dicetak...', {
+        id: 'print-loading',
+      })
+      const result = await handlePrint({
+        printerType: '58mm',
+        branch,
+        transaction,
+        isPrinting,
+        setIsPrinting,
+      })
+      toast.success(result, { id: 'print-loading' })
+    } catch (error) {
+      toast.error('Gagal mencetak invoice.', { id: 'print-loading' })
+    } finally {
+      setIsPrinting(false)
+    }
   }
 
   if (loading) {
@@ -118,7 +142,7 @@ export default function InvoiceViewPage() {
             <ArrowLeft className='mr-2 h-4 w-4' /> Kembali
           </Link>
         </Button>
-        <Button onClick={handlePrint} size='sm'>
+        <Button onClick={printInvoice} size='sm'>
           <Printer className='mr-2 h-4 w-4' /> Cetak Invoice
         </Button>
       </div>
@@ -128,30 +152,30 @@ export default function InvoiceViewPage() {
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
           }
-          .print\\:shadow-none {
+          .print\:shadow-none {
             box-shadow: none !important;
           }
-          .print\\:border-none {
+          .print\:border-none {
             border: none !important;
           }
-          .print\\:my-0 {
+          .print\:my-0 {
             margin-top: 0 !important;
             margin-bottom: 0 !important;
           }
-          .print\\:py-0 {
+          .print\:py-0 {
             padding-top: 0 !important;
-            padding-bottom: 0 !important;
+            padding-bottom: 0 !importan;
           }
-          .print\\:bg-white {
+          .print\:bg-white {
             background-color: white !important;
           }
-          .print\\:border-b-2 {
+          .print\:border-b-2 {
             border-bottom-width: 2px !important;
           }
-          .print\\:border-t-2 {
+          .print\:border-t-2 {
             border-top-width: 2px !important;
           }
-          .print\\:hidden {
+          .print\:hidden {
             display: none !important;
           }
         }

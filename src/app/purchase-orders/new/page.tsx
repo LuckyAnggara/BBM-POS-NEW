@@ -20,6 +20,8 @@ import {
   AlertTriangle,
   ArrowLeft,
   ChevronsUpDown,
+  CheckCircle,
+  Package,
 } from 'lucide-react'
 
 // Konteks dan Hook
@@ -77,6 +79,8 @@ import {
 import { getSuppliers } from '@/lib/appwrite/suppliers'
 import { getInventoryItems } from '@/lib/appwrite/inventory' // Asumsi fungsi ini mengembalikan { documents, total }
 import { addPurchaseOrder } from '@/lib/appwrite/purchaseOrders'
+import { useDebounce } from '@uidotdev/usehooks'
+import { formatCurrency } from '@/lib/helper'
 
 // --- Skema Validasi (Zod) ---
 // Skema untuk satu item dalam form, ini adalah data mentah dari UI
@@ -121,80 +125,6 @@ const purchaseOrderFormSchema = z
     }
   )
 
-// --- Komponen ProductSelector (Helper) ---
-const ProductSelector = ({
-  control,
-  index,
-  inventoryItems,
-  onSelect,
-  loading,
-}: {
-  control: Control<PurchaseOrderFormValues>
-  index: number
-  inventoryItems: InventoryItem[]
-  onSelect: (product: InventoryItem) => void
-  loading: boolean
-}) => {
-  const [open, setOpen] = useState(false)
-  const [searchTerm, setSearchTerm] = useState('')
-
-  const filteredProducts = searchTerm
-    ? inventoryItems.filter(
-        (p) =>
-          p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          p.sku?.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    : inventoryItems
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant='outline'
-          role='combobox'
-          aria-expanded={open}
-          className='w-full justify-between'
-        >
-          <Controller
-            name={`items.${index}.productName`}
-            control={control}
-            render={({ field }) => field.value || 'Pilih produk...'}
-          />
-          <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className='w-[--radix-popover-trigger-width] p-0'>
-        <Command>
-          <CommandInput
-            placeholder='Cari produk (nama/SKU)...'
-            value={searchTerm}
-            onValueChange={setSearchTerm}
-          />
-          <CommandList>
-            {loading && <CommandItem>Memuat...</CommandItem>}
-            <CommandEmpty>Produk tidak ditemukan.</CommandEmpty>
-            <CommandGroup>
-              {filteredProducts.slice(0, 100).map((product) => (
-                <CommandItem
-                  key={product.id}
-                  value={product.name}
-                  onSelect={() => {
-                    onSelect(product)
-                    setOpen(false)
-                    setSearchTerm('')
-                  }}
-                >
-                  {product.name}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
 // Tipe yang dihasilkan dari skema Zod untuk digunakan di form
 type PurchaseOrderFormValues = z.infer<typeof purchaseOrderFormSchema>
 
@@ -210,12 +140,13 @@ export default function NewPurchaseOrderPage() {
   const [loading, setLoading] = useState(true)
   const [loadingSuppliers, setLoadingSuppliers] = useState(true)
   const [loadingInventory, setLoadingInventory] = useState(true)
-  const [productSearchTerms, setProductSearchTerms] = useState<
-    Record<number, string>
-  >({})
+
+  const [searchTerm, setSearchTerm] = useState('')
   const [openProductPopovers, setOpenProductPopovers] = useState<
     Record<number, boolean>
   >({})
+
+  const debouncedSearchTerm = useDebounce(searchTerm, 500)
 
   const poForm = useForm<PurchaseOrderFormValues>({
     resolver: zodResolver(purchaseOrderFormSchema),
@@ -245,14 +176,14 @@ export default function NewPurchaseOrderPage() {
     if (!selectedBranch) return
     setLoading(true)
     setLoadingSuppliers(true)
-    setLoadingInventory(true)
+
     try {
       const [suppliersResult, inventoryResult] = await Promise.all([
         getSuppliers(selectedBranch.id),
-        getInventoryItems(selectedBranch.id, { limit: 5000 }), // Ambil semua item untuk pencarian
+        getInventoryItems(selectedBranch.id, { limit: 5 }), // Ambil semua item untuk pencarian
       ])
       setSuppliers(suppliersResult.suppliers || [])
-      setInventoryItems(inventoryResult.documents || [])
+      setInventoryItems(inventoryResult.items || [])
     } catch (error) {
       console.error('Error fetching initial data:', error)
       toast({
@@ -267,23 +198,32 @@ export default function NewPurchaseOrderPage() {
     }
   }, [selectedBranch, toast])
 
+  const fetchInventoryData = useCallback(async () => {
+    if (!selectedBranch) return
+    setLoadingInventory(true)
+    try {
+      const [inventoryResult] = await Promise.all([
+        getInventoryItems(selectedBranch.id, {
+          limit: 5,
+          searchTerm: debouncedSearchTerm,
+        }), // Ambil semua item untuk pencarian
+      ])
+      setInventoryItems(inventoryResult.items || [])
+    } finally {
+      setLoadingInventory(false)
+    }
+  }, [debouncedSearchTerm])
+
   useEffect(() => {
     fetchInitialData()
   }, [fetchInitialData])
 
+  useEffect(() => {
+    fetchInventoryData()
+  }, [debouncedSearchTerm])
+
   const getFilteredProductsForItem = (index: number) => {
-    const searchTerm = productSearchTerms[index] || ''
-    if (!searchTerm.trim() && inventoryItems.length > 0) {
-      return inventoryItems.slice(0, 5)
-    }
-    const lowerSearch = searchTerm.toLowerCase()
-    return inventoryItems
-      .filter(
-        (product) =>
-          product.name.toLowerCase().includes(lowerSearch) ||
-          (product.sku && product.sku.toLowerCase().includes(lowerSearch))
-      )
-      .slice(0, 5)
+    const searchTerm = inventoryItems
   }
 
   const onSubmitPurchaseOrder: SubmitHandler<PurchaseOrderFormValues> = async (
@@ -348,10 +288,6 @@ export default function NewPurchaseOrderPage() {
     }
   }
 
-  const handleProductSearchChange = (index: number, value: string) => {
-    setProductSearchTerms((prev) => ({ ...prev, [index]: value }))
-  }
-
   const handleProductPopoverOpenChange = (index: number, open: boolean) => {
     setOpenProductPopovers((prev) => ({ ...prev, [index]: open }))
   }
@@ -364,11 +300,14 @@ export default function NewPurchaseOrderPage() {
     return acc + quantity * price
   }, 0)
 
-  const taxDiscountAmount = poForm.watch('taxDiscountAmount') || 0
-  const shippingCostCharged = poForm.watch('shippingCostCharged') || 0
-  const otherCosts = poForm.watch('otherCosts') || 0
+  const taxDiscountAmount = Number(poForm.watch('taxDiscountAmount')) || 0
+  const shippingCostCharged = Number(poForm.watch('shippingCostCharged')) || 0
+  const otherCosts = Number(poForm.watch('otherCosts')) || 0
   const totalAmount =
-    itemsSubtotal - taxDiscountAmount + shippingCostCharged + otherCosts
+    itemsSubtotal -
+    Number(taxDiscountAmount) +
+    Number(shippingCostCharged) +
+    Number(otherCosts)
   const currencySymbol = selectedBranch?.currency || 'Rp'
 
   if (!selectedBranch) {
@@ -731,7 +670,7 @@ export default function NewPurchaseOrderPage() {
               </CardHeader>
               <CardContent className='space-y-3'>
                 {fields.map((field, index) => {
-                  const filteredProducts = getFilteredProductsForItem(index)
+                  const filteredProducts = inventoryItems
                   const selectedProductValue = poForm.watch(
                     `items.${index}.productId`
                   )
@@ -791,9 +730,9 @@ export default function NewPurchaseOrderPage() {
                                 <Command shouldFilter={false}>
                                   <CommandInput
                                     placeholder='Cari produk (nama/SKU)...'
-                                    value={productSearchTerms[index] || ''}
+                                    value={searchTerm}
                                     onValueChange={(value) =>
-                                      handleProductSearchChange(index, value)
+                                      setSearchTerm(value)
                                     }
                                     className='h-9 text-xs'
                                   />
@@ -828,7 +767,6 @@ export default function NewPurchaseOrderPage() {
                                               index,
                                               false
                                             )
-                                            handleProductSearchChange(index, '')
                                           }}
                                           className='text-xs'
                                         >
@@ -919,14 +857,14 @@ export default function NewPurchaseOrderPage() {
                           Total Item
                         </Label>
                         <Input
-                          value={`${currencySymbol}${(
+                          value={`${formatCurrency(
                             (Number(
                               poForm.watch(`items.${index}.orderedQuantity`)
                             ) || 0) *
-                            (Number(
-                              poForm.watch(`items.${index}.purchasePrice`)
-                            ) || 0)
-                          ).toLocaleString('id-ID')}`}
+                              (Number(
+                                poForm.watch(`items.${index}.purchasePrice`)
+                              ) || 0)
+                          )}`}
                           className='h-8 text-xs mt-0.5 bg-transparent border-0 px-0'
                           readOnly
                           tabIndex={-1}
@@ -953,7 +891,7 @@ export default function NewPurchaseOrderPage() {
                   Subtotal Item:{' '}
                   <span className='font-semibold'>
                     {currencySymbol}
-                    {itemsSubtotal.toLocaleString('id-ID')}
+                    {formatCurrency(itemsSubtotal)}
                   </span>
                 </div>
                 {taxDiscountAmount > 0 && (
@@ -961,7 +899,7 @@ export default function NewPurchaseOrderPage() {
                     (-) Diskon Pajak:{' '}
                     <span className='font-semibold'>
                       {currencySymbol}
-                      {taxDiscountAmount.toLocaleString('id-ID')}
+                      {formatCurrency(taxDiscountAmount)}
                     </span>
                   </div>
                 )}
@@ -969,8 +907,7 @@ export default function NewPurchaseOrderPage() {
                   <div className='text-xs text-destructive'>
                     (+) Ongkos Kirim:{' '}
                     <span className='font-semibold'>
-                      {currencySymbol}
-                      {shippingCostCharged.toLocaleString('id-ID')}
+                      {formatCurrency(shippingCostCharged)}
                     </span>
                   </div>
                 )}
@@ -978,8 +915,7 @@ export default function NewPurchaseOrderPage() {
                   <div className='text-xs text-destructive'>
                     (+) Biaya Lainnya:{' '}
                     <span className='font-semibold'>
-                      {currencySymbol}
-                      {otherCosts.toLocaleString('id-ID')}
+                      {formatCurrency(otherCosts)}
                     </span>
                   </div>
                 )}
@@ -987,8 +923,7 @@ export default function NewPurchaseOrderPage() {
                 <div className='text-base font-bold'>
                   Total Pesanan:{' '}
                   <span className='font-semibold'>
-                    {currencySymbol}
-                    {totalAmount.toLocaleString('id-ID')}
+                    {formatCurrency(totalAmount)}
                   </span>
                 </div>
               </CardFooter>

@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
 
 import {
+  apiDeletePOSTransaction,
   getTransactions,
   processFullTransactionReturn,
 } from '@/lib/appwrite/pos' // Updated import
@@ -19,6 +20,7 @@ import { startOfMonth, endOfMonth, endOfDay } from 'date-fns'
 import {
   ITEMS_PER_PAGE_OPTIONS,
   TransactionDocument,
+  TransactionStatus,
 } from '@/lib/appwrite/types'
 import {
   Table,
@@ -127,6 +129,8 @@ export default function SalesHistoryPage() {
   const [returnReason, setReturnReason] = useState('')
   const [isProcessingReturn, setIsProcessingReturn] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [adminDeleteDialogOpen, setAdminDeleteDialogOpen] = useState(false)
+  const [userDeleteDialogOpen, setUserDeleteDialogOpen] = useState(false)
   const [transactionToDelete, setTransactionToDelete] =
     useState<TransactionDocument | null>(null)
   const [deletePasswordInput, setDeletePasswordInput] = useState('')
@@ -143,7 +147,6 @@ export default function SalesHistoryPage() {
   )
 
   const debouncedSearchTerm = useDebounce(searchTerm, 500)
-
   const handleNextPage = () => {
     // Cek jika halaman saat ini belum mencapai halaman terakhir
     if (currentPage < totalPages) {
@@ -155,10 +158,6 @@ export default function SalesHistoryPage() {
     if (currentPage > 1) {
       setCurrentPage((prevPage) => prevPage - 1)
     }
-  }
-
-  const triggerRefetch = () => {
-    setRefetchCounter((c) => c + 1)
   }
 
   const handleOpenReturnDialog = (transaction: TransactionDocument) => {
@@ -204,7 +203,6 @@ export default function SalesHistoryPage() {
       setShowReturnDialog(false)
       setTransactionToReturn(null)
       setReturnReason('')
-      triggerRefetch() // Panggil refetch untuk memperbarui daftar transaksi
     }
   }
 
@@ -212,44 +210,51 @@ export default function SalesHistoryPage() {
     setTransactionToDelete(tx)
     if (userData?.role === 'admin') {
       setDeletePasswordInput('')
-      setShowDeleteDialog(true)
+      setAdminDeleteDialogOpen(true)
     } else {
       setDeletionRequestReason('')
-      setShowRequestDeletionDialog(true)
+      setUserDeleteDialogOpen(true)
     }
   }
 
   const handleConfirmDelete = async () => {
+    setIsDeleting(true)
+
     if (!transactionToDelete || !selectedBranch) {
-      toast.error('Error', {
-        description: 'Transaksi atau cabang tidak valid untuk dihapus.',
-      })
+      toast.error('Transaksi atau cabang tidak valid untuk dihapus.')
+      setIsDeleting(false)
       return
     }
     if (!selectedBranch.transactionDeletionPassword) {
-      toast.error('Password Belum Diatur', {
-        description:
-          'Password hapus transaksi belum diatur untuk cabang ini. Hubungi admin.',
-      })
-      setShowDeleteDialog(false)
+      toast.error(
+        'Password hapus transaksi belum diatur untuk cabang ini. Hubungi admin.'
+      )
+      setIsDeleting(false)
       return
     }
     if (!deletePasswordInput) {
-      toast.error('Password Diperlukan', {
-        description: 'Silakan masukkan password hapus transaksi.',
-      })
+      toast.error('Silakan masukkan password hapus transaksi.')
+      setIsDeleting(false)
+      return
+    }
+    if (deletePasswordInput !== selectedBranch.transactionDeletionPassword) {
+      toast.error('Password hapus transaksi tidak sesuai.')
+      setIsDeleting(false)
       return
     }
 
-    setIsDeleting(true)
-    const result = await apiDeleteTransaction(/* ... */)
+    const result = await apiDeletePOSTransaction(
+      transactionToDelete.$id,
+      userData!,
+      deletePasswordInput
+    )
     setIsDeleting(false)
 
     if (result.success) {
-      toast.success('Transaksi Dihapus')
-      setShowDeleteDialog(false)
+      toast.success('Transaksi berhasil dihapus')
+      setAdminDeleteDialogOpen(false)
       // PERBAIKAN #3: Gunakan trigger refetch
-      triggerRefetch()
+      fetchTransactions()
     } else {
       toast.error('Gagal Menghapus', { description: result.error || 'Error' })
     }
@@ -294,7 +299,7 @@ export default function SalesHistoryPage() {
         description: 'Permintaan penghapusan transaksi telah dikirim ke admin.',
       })
       setRequestedDeletionIds((prev) =>
-        new Set(prev).add(transactionToDelete.id)
+        new Set(prev).add(transactionToDelete.$id)
       )
       setShowRequestDeletionDialog(false)
       setTransactionToDelete(null)
@@ -302,7 +307,7 @@ export default function SalesHistoryPage() {
     }
   }
 
-  const getStatusChip = (status: 'completed' | 'returned' | undefined) => {
+  const getStatusChip = (status: TransactionStatus) => {
     if (status === 'returned') {
       return (
         <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'>
@@ -576,7 +581,9 @@ export default function SalesHistoryPage() {
                 </p>
               ) : transactions.length === 0 ? (
                 <p className='text-sm text-muted-foreground text-center py-8'>
-                  Belum ada riwayat penjualan untuk filter yang dipilih.
+                  Tidak ada riwayat penjualan dari tanggal{' '}
+                  {formatDate(startDate.toISOString())} hingga{' '}
+                  {formatDate(endDate.toISOString())}.
                 </p>
               ) : (
                 <>
@@ -644,7 +651,7 @@ export default function SalesHistoryPage() {
                                 <Button
                                   variant='ghost'
                                   size='icon'
-                                  className='text-xs cursor-pointer text-amber-700 focus:bg-amber-50 focus:text-amber-800'
+                                  className='text-xs cursor-pointer text-yellow-700 focus:bg-amber-50 focus:text-amber-800'
                                   onClick={() => {
                                     handleOpenReturnDialog(tx)
                                   }}
@@ -652,51 +659,28 @@ export default function SalesHistoryPage() {
                                   <RotateCcw className='mr-2 h-3.5 w-3.5' />
                                 </Button>
                               )}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    variant='ghost'
-                                    size='icon'
-                                    className='h-7 w-7'
-                                  >
-                                    <MoreHorizontal className='h-4 w-4' />
-                                    <span className='sr-only'>Aksi</span>
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align='end'>
-                                  <DropdownMenuItem
-                                    asChild
-                                    className='text-xs cursor-pointer'
-                                  >
-                                    <Link
-                                      href={`/invoice/${tx.$id}/view`}
-                                      target='_blank'
-                                      rel='noopener noreferrer'
-                                    >
-                                      <Printer className='mr-2 h-3.5 w-3.5' />
-                                      Lihat Invoice
-                                    </Link>
-                                  </DropdownMenuItem>
-
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    className='text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
-                                    onSelect={(e) => {
-                                      e.preventDefault()
-                                      // 2. Tetap panggil fungsi Anda untuk membuka dialog
-                                      handleOpenDeleteAction(tx)
-                                    }}
-                                    disabled={requestedDeletionIds.has(tx.$id)}
-                                  >
-                                    <Trash2 className='mr-2 h-3.5 w-3.5' />
-                                    {userData?.role === 'admin'
-                                      ? 'Hapus Transaksi'
-                                      : requestedDeletionIds.has(tx.$id)
-                                      ? 'Permintaan Terkirim'
-                                      : 'Ajukan Hapus'}
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                              <Button asChild variant='ghost' size='icon'>
+                                <Link
+                                  href={`/invoice/${tx.$id}/view`}
+                                  target='_blank'
+                                  rel='noopener noreferrer'
+                                >
+                                  <Printer className='mr-2 h-3.5 w-3.5' />
+                                </Link>
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                className='text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  // 2. Tetap panggil fungsi Anda untuk membuka dialog
+                                  handleOpenDeleteAction(tx)
+                                }}
+                                disabled={requestedDeletionIds.has(tx.$id)}
+                              >
+                                <Trash2 className='mr-2 h-3.5 w-3.5' />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -768,122 +752,101 @@ export default function SalesHistoryPage() {
           </DialogContent>
         </Dialog>
 
-        {userData?.role === 'admin' && (
-          <AlertDialog
-            open={showDeleteDialog}
-            onOpenChange={(open) => {
-              if (!open) setTransactionToDelete(null)
-              setShowDeleteDialog(open)
-            }}
-          >
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Hapus Transaksi</AlertDialogTitle>
-                <AlertDialogDescription className='text-xs'>
-                  Anda akan menghapus invoice{' '}
-                  <strong>{transactionToDelete?.transactionNumber}</strong>{' '}
-                  secara permanen. Stok akan dikembalikan jika transaksi belum
-                  diretur. Tindakan ini tidak dapat dibatalkan.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <div className='py-2 space-y-2'>
-                <Label htmlFor='deletePasswordInput' className='text-xs'>
-                  Password Hapus Transaksi
-                </Label>
-                <Input
-                  id='deletePasswordInput'
-                  type='password'
-                  value={deletePasswordInput}
-                  onChange={(e) => setDeletePasswordInput(e.target.value)}
-                  placeholder='Masukkan password'
-                  className='text-xs h-9'
-                />
-                <p className='text-xs text-muted-foreground'>
-                  Password ini diatur oleh admin per cabang.
-                </p>
-              </div>
-              <AlertDialogFooter>
-                <AlertDialogCancel
-                  className='text-xs h-8'
-                  onClick={() => {
-                    setShowDeleteDialog(false)
-                    setTransactionToDelete(null)
-                  }}
-                >
-                  Batal
-                </AlertDialogCancel>
-                <AlertDialogAction
-                  className='text-xs h-8'
-                  variant='destructive'
-                  onClick={handleConfirmDelete}
-                  disabled={isDeleting || !deletePasswordInput.trim()}
-                >
-                  {isDeleting ? 'Menghapus...' : 'Ya, Hapus Transaksi'}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        )}
+        <AlertDialog open={adminDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Hapus Transaksi</AlertDialogTitle>
+              <AlertDialogDescription className='text-xs'>
+                Anda akan menghapus invoice{' '}
+                <strong>{transactionToDelete?.transactionNumber}</strong> secara
+                permanen. Stok akan dikembalikan jika transaksi belum diretur.
+                Tindakan ini tidak dapat dibatalkan.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className='py-2 space-y-2'>
+              <Label htmlFor='deletePasswordInput' className='text-xs'>
+                Password Hapus Transaksi
+              </Label>
+              <Input
+                id='deletePasswordInput'
+                type='password'
+                value={deletePasswordInput}
+                onChange={(e) => setDeletePasswordInput(e.target.value)}
+                placeholder='Masukkan password'
+                className='text-xs h-9'
+              />
+              <p className='text-xs text-muted-foreground'>
+                Password ini diatur oleh admin per cabang.
+              </p>
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                className='text-xs h-8'
+                disabled={isDeleting}
+                onClick={() => {
+                  setTransactionToDelete(null)
+                  setAdminDeleteDialogOpen(false)
+                  setDeletePasswordInput('')
+                }}
+              >
+                Batal
+              </AlertDialogCancel>
+              <AlertDialogAction
+                className='text-xs h-8'
+                onClick={handleConfirmDelete}
+                disabled={isDeleting || !deletePasswordInput.trim()}
+              >
+                {isDeleting ? 'Menghapus...' : 'Ya, Hapus Transaksi'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
-        {userData?.role === 'cashier' && (
-          <Dialog
-            open={showRequestDeletionDialog}
-            onOpenChange={(open) => {
-              if (!open) setTransactionToDelete(null)
-              setShowRequestDeletionDialog(open)
-            }}
-          >
-            <DialogContent className='sm:max-w-md'>
-              <DialogHeader>
-                <DialogTitle className='text-base'>
-                  Ajukan Permintaan Hapus Transaksi
-                </DialogTitle>
-                <DialogDescription className='text-xs'>
-                  Permintaan akan dikirim ke Admin untuk invoice:{' '}
-                  <strong>{transactionToDelete?.transactionNumber}</strong>.
-                </DialogDescription>
-              </DialogHeader>
-              <div className='py-3 space-y-2'>
-                <Label htmlFor='deletionRequestReason' className='text-xs'>
-                  Alasan Permintaan Penghapusan (Wajib)
-                </Label>
-                <Textarea
-                  id='deletionRequestReason'
-                  value={deletionRequestReason}
-                  onChange={(e) => setDeletionRequestReason(e.target.value)}
-                  placeholder='Jelaskan mengapa transaksi ini perlu dihapus...'
-                  className='text-xs min-h-[80px]'
-                />
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    className='text-xs h-8'
-                  >
-                    Batal
-                  </Button>
-                </DialogClose>
-                <Button
-                  onClick={handleConfirmRequestDeletion}
-                  className='text-xs h-8'
-                  disabled={
-                    isRequestingDeletion || !deletionRequestReason.trim()
-                  }
-                >
-                  {isRequestingDeletion ? (
-                    'Mengirim...'
-                  ) : (
-                    <>
-                      <Send className='mr-1.5 h-3.5 w-3.5' /> Kirim Permintaan
-                    </>
-                  )}
+        <Dialog open={userDeleteDialogOpen}>
+          <DialogContent className='sm:max-w-md'>
+            <DialogHeader>
+              <DialogTitle className='text-base'>
+                Ajukan Permintaan Hapus Transaksi
+              </DialogTitle>
+              <DialogDescription className='text-xs'>
+                Permintaan akan dikirim ke Admin untuk invoice:{' '}
+                <strong>{transactionToDelete?.transactionNumber}</strong>.
+              </DialogDescription>
+            </DialogHeader>
+            <div className='py-3 space-y-2'>
+              <Label htmlFor='deletionRequestReason' className='text-xs'>
+                Alasan Permintaan Penghapusan (Wajib)
+              </Label>
+              <Textarea
+                id='deletionRequestReason'
+                value={deletionRequestReason}
+                onChange={(e) => setDeletionRequestReason(e.target.value)}
+                placeholder='Jelaskan mengapa transaksi ini perlu dihapus...'
+                className='text-xs min-h-[80px]'
+              />
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type='button' variant='outline' className='text-xs h-8'>
+                  Batal
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
+              </DialogClose>
+              <Button
+                onClick={handleConfirmRequestDeletion}
+                className='text-xs h-8'
+                disabled={isRequestingDeletion || !deletionRequestReason.trim()}
+              >
+                {isRequestingDeletion ? (
+                  'Mengirim...'
+                ) : (
+                  <>
+                    <Send className='mr-1.5 h-3.5 w-3.5' /> Kirim Permintaan
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </MainLayout>
     </ProtectedRoute>
   )

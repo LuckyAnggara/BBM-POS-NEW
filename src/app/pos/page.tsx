@@ -136,6 +136,8 @@ import { format, parseISO, isValid } from 'date-fns' // Added parseISO and isVal
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useDebounce } from '@uidotdev/usehooks'
+import { formatCurrency } from '@/lib/helper'
+import { handlePrint } from '@/lib/printHelper'
 
 type ViewMode = 'card' | 'table'
 const LOCALSTORAGE_POS_VIEW_MODE_KEY = 'branchwise_posViewMode'
@@ -195,6 +197,7 @@ export default function POSPage() {
     null
   )
   const [showPrintInvoiceDialog, setShowPrintInvoiceDialog] = useState(false)
+  const [isPrinting, setIsPrinting] = useState(false)
 
   const [showCashPaymentModal, setShowCashPaymentModal] = useState(false)
   const [cashAmountPaidInput, setCashAmountPaidInput] = useState('')
@@ -692,7 +695,11 @@ export default function POSPage() {
     setCartItems((prevItems) =>
       prevItems.map((item) =>
         item.productId === productId
-          ? { ...item, quantity: newQuantity, total: newQuantity * item.price }
+          ? {
+              ...item,
+              quantity: newQuantity,
+              subtotal: newQuantity * item.price,
+            }
           : item
       )
     )
@@ -1106,103 +1113,45 @@ export default function POSPage() {
       return
     }
 
-    if (userData.localPrinterUrl) {
-      try {
-        const transactionDetails = await getTransactionById(targetTransactionId)
-
-        if (!transactionDetails) {
-          toast.error('Gagal Cetak', {
-            description: 'Detail transaksi tidak ditemukan.',
-          })
-          return
-        }
-
-        // PERBAIKAN: Gunakan `$createdAt` dari tipe dokumen baru kita.
-        const transactionDate = parseISO(transactionDetails.$createdAt)
-
-        // Membuat payload sesuai tipe InvoicePrintPayload yang kita definisikan
-        const payload: InvoicePrintPayload = {
-          branchName: selectedBranch.invoiceName || selectedBranch.name,
-          branchAddress: selectedBranch.address || '',
-          branchPhone: selectedBranch.phoneNumber || '',
-          invoiceNumber: transactionDetails.transactionNumber,
-          transactionDate: format(transactionDate, 'dd MMM yyyy, HH:mm'),
-          cashierName: transactionDetails.userName, // Lebih akurat dari transaksi
-          customerName: transactionDetails.customerName || '',
-
-          // PERBAIKAN: Mapping item sesuai tipe `TransactionItemDocument`
-          items: transactionDetails.items.map((item) => ({
-            name: item.productName,
-            quantity: item.quantity,
-            price: item.priceAtSale ?? 0, // Gunakan `priceAtSale`
-            total: item.subtotal, // Gunakan `subtotal` dari item
-            originalPrice: item.priceAtSale,
-            discountAmount:
-              item.discountAmount == 0
-                ? 0
-                : (item.discountAmount ?? 0) / item.quantity, // Diskon per unit
-          })),
-
-          // PERBAIKAN: Ambil nilai yang sudah dikalkulasi, bukan hitung ulang
-          subtotal: transactionDetails.subtotal,
-          taxAmount: transactionDetails.taxAmount,
-          shippingCost: transactionDetails.shippingCost,
-          totalItemDiscount: transactionDetails.itemsDiscountAmount, // Ambil dari data, bukan reduce()
-          voucherDiscount: transactionDetails.voucherDiscountAmount,
-          overallTotalDiscount: transactionDetails.totalDiscountAmount,
-
-          totalAmount: transactionDetails.totalAmount,
-          amountPaid: transactionDetails.amountPaid,
-          changeGiven: transactionDetails.changeGiven,
-          notes: transactionDetails.notes || '', // Ambil dari data transaksi
-
-          // PERBAIKAN: Logika yang lebih sederhana untuk paymentMethod
-          paymentMethod:
-            transactionDetails.paymentMethod.charAt(0).toUpperCase() +
-            transactionDetails.paymentMethod.slice(1),
-        }
-
-        const response = await fetch(userData.localPrinterUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-
-        if (response.ok) {
-          toast.success('Terkirim ke Printer', {
-            description: 'Data invoice berhasil dikirim ke printer lokal.',
-          })
-        } else {
-          // ... sisa logika error handling (sudah benar)
-          const errorData = await response.text()
-          toast.error('Gagal Kirim ke Printer', {
-            description: `Printer lokal merespons dengan kesalahan: ${
-              response.status
-            } - ${errorData || response.statusText}`,
-            duration: 7000,
-          })
-          window.open(`/invoice/${targetTransactionId}/view`, '_blank')
-        }
-      } catch (error: any) {
-        // ... sisa logika error handling (sudah benar)
-        console.error('Error sending to local printer:', error)
-        toast.error('Error Printer Lokal', {
-          description: `Tidak dapat terhubung ke printer lokal: ${error.message}. Invoice web akan dibuka.`,
-          duration: 7000,
-        })
-        window.open(`/invoice/${targetTransactionId}/view`, '_blank')
-      }
-    } else {
-      // ... sisa logika jika printer tidak diatur (sudah benar)
-      toast.info('Printer Lokal Belum Diatur', {
-        description: 'URL printer lokal belum diatur. Membuka invoice web.',
-        duration: 7000,
+    if (!selectedBranch) {
+      toast.error('Tidak ada cabang yang dipilih.')
+      return
+    }
+    if (!selectedBranch.printerPort) {
+      toast.error('Fitur ini tidak didukung untuk printer port.', {
+        id: 'print-error',
       })
-      window.open(`/invoice/${targetTransactionId}/view`, '_blank')
+      return
     }
 
-    setShowPrintInvoiceDialog(false)
-    setLastTransactionId(null)
+    const transaction = await getTransactionById(targetTransactionId)
+
+    if (!transaction) {
+      toast.error('Gagal Cetak', {
+        description: 'Detail transaksi tidak ditemukan.',
+      })
+      return
+    }
+
+    setIsPrinting(true)
+    try {
+      toast.loading('Mengirim data untuk dicetak...', {
+        id: 'print-loading',
+      })
+      const result = await handlePrint({
+        printerType: '58mm',
+        branch: selectedBranch,
+        transaction,
+      })
+      toast.success(result, { id: 'print-loading' })
+    } catch (error) {
+      toast.error('Gagal mencetak invoice.', { id: 'print-loading' })
+    } finally {
+      setIsPrinting(false)
+
+      setShowPrintInvoiceDialog(false)
+      setLastTransactionId(null)
+    }
   }
 
   const handlePrintInvoiceFromHistory = (transactionIdForReprint: string) => {
@@ -1677,7 +1626,10 @@ export default function POSPage() {
                             Item
                           </TableHead>
                           <TableHead className='text-center text-xs px-1 py-1.5 w-[60px]'>
-                            Jml
+                            Quantity
+                          </TableHead>
+                          <TableHead className='text-right text-xs px-2 py-1.5'>
+                            Harga
                           </TableHead>
                           <TableHead className='text-xs px-1 py-1.5 text-center w-[60px]'>
                             Diskon
@@ -1698,17 +1650,11 @@ export default function POSPage() {
                               {item.discountAmount > 0 && (
                                 <div className='flex items-center gap-1'>
                                   <span className='text-[0.65rem] text-muted-foreground line-through'>
-                                    {currencySymbol}
-                                    {(item.originalPrice || 0).toLocaleString(
-                                      'id-ID'
-                                    )}
+                                    {formatCurrency(item.originalPrice || 0)}
                                   </span>
                                   <span className='text-[0.65rem] text-destructive'>
-                                    (-{currencySymbol}
-                                    {item.discountAmount.toLocaleString(
-                                      'id-ID'
-                                    )}
-                                    )
+                                    (-
+                                    {formatCurrency(item.discountAmount)})
                                   </span>
                                 </div>
                               )}
@@ -1757,6 +1703,9 @@ export default function POSPage() {
                                 </Button>
                               </div>
                             </TableCell>
+                            <TableCell className='text-right text-xs py-1 px-2'>
+                              {formatCurrency(item.price)}
+                            </TableCell>
                             <TableCell className='text-center py-1 px-1'>
                               <Button
                                 variant='ghost'
@@ -1772,8 +1721,7 @@ export default function POSPage() {
                               </Button>
                             </TableCell>
                             <TableCell className='text-right text-xs py-1 px-2'>
-                              {currencySymbol}
-                              {item.subtotal.toLocaleString('id-ID')}
+                              {formatCurrency(item.subtotal)}
                             </TableCell>
                             <TableCell className='text-right py-1 px-1'>
                               <Button
@@ -2271,38 +2219,36 @@ export default function POSPage() {
                 {activeShift && endShiftCalculations && (
                   <div className='mt-2 p-2 border rounded-md bg-muted/50 text-xs space-y-1'>
                     <p>
-                      Modal Awal: {currencySymbol}
-                      {activeShift.startingBalance.toLocaleString('id-ID')}
+                      Modal Awal:
+                      {formatCurrency(activeShift.startingBalance)}
                     </p>
                     <p>
-                      Total Penjualan Tunai: {currencySymbol}
-                      {endShiftCalculations.totalSalesByPaymentMethod.cash.toLocaleString(
-                        'id-ID'
+                      Total Penjualan Tunai:
+                      {formatCurrency(
+                        endShiftCalculations.totalSalesByPaymentMethod.cash
                       )}
                     </p>
                     <p>
-                      Total Penjualan Kartu: {currencySymbol}
-                      {endShiftCalculations.totalSalesByPaymentMethod.card.toLocaleString(
-                        'id-ID'
+                      Total Penjualan Kartu:
+                      {formatCurrency(
+                        endShiftCalculations.totalSalesByPaymentMethod.card
                       )}
                     </p>
                     <p>
-                      Total Penjualan Transfer: {currencySymbol}
-                      {endShiftCalculations.totalSalesByPaymentMethod.transfer.toLocaleString(
-                        'id-ID'
+                      Total Penjualan Transfer:
+                      {formatCurrency(
+                        endShiftCalculations.totalSalesByPaymentMethod.transfer
                       )}
                     </p>
                     <p className='font-semibold'>
-                      Estimasi Kas Seharusnya: {currencySymbol}
-                      {endShiftCalculations.expectedCash.toLocaleString(
-                        'id-ID'
-                      )}
+                      Estimasi Kas Seharusnya:
+                      {formatCurrency(endShiftCalculations.expectedCash)}
                     </p>
                   </div>
                 )}
                 <div className='mt-2'>
                   <Label htmlFor='actualCashAtEndInput' className='text-xs'>
-                    Kas Aktual di Laci ({currencySymbol})
+                    Kas Aktual di Laci
                   </Label>
                   <Input
                     id='actualCashAtEndInput'
@@ -2380,84 +2326,95 @@ export default function POSPage() {
           onOpenChange={setShowCashPaymentModal}
         >
           <DialogContent className='sm:max-w-sm'>
-            <DialogHeader>
-              <DialogTitle className='text-base'>Pembayaran Tunai</DialogTitle>
-              <DialogDescription className='text-xs'>
-                Total Belanja:{' '}
-                <span className='font-semibold'>
-                  {currencySymbol}
-                  {total.toLocaleString('id-ID')}
-                </span>
-              </DialogDescription>
-            </DialogHeader>
-            <div className='py-3 space-y-3'>
-              <div>
-                <Label htmlFor='cashAmountPaidInput' className='text-xs'>
-                  Jumlah Dibayar Pelanggan ({currencySymbol})
-                </Label>
-                <Input
-                  id='cashAmountPaidInput'
-                  type='number'
-                  value={cashAmountPaidInput}
-                  onChange={handleCashAmountPaidChange}
-                  placeholder='Masukkan jumlah bayar'
-                  className='h-9 text-sm mt-1'
-                />
-              </div>
-              {calculatedChange !== null && (
-                <p
-                  className={cn(
-                    'text-sm font-medium',
-                    calculatedChange < 0 ? 'text-destructive' : 'text-green-600'
-                  )}
-                >
-                  Kembalian: {currencySymbol}
-                  {calculatedChange.toLocaleString('id-ID')}
-                </p>
-              )}
-              <div>
-                <Label htmlFor='customerNameInputCash' className='text-xs'>
-                  Nama Pelanggan (Opsional)
-                </Label>
-                <div className='flex items-center mt-1'>
-                  <UserPlus className='h-4 w-4 mr-2 text-muted-foreground' />
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleConfirmCashPayment()
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle className='text-base'>
+                  Pembayaran Tunai
+                </DialogTitle>
+                <DialogDescription className='text-xs'>
+                  Total Belanja:{' '}
+                  <span className='font-semibold'>
+                    {currencySymbol}
+                    {total.toLocaleString('id-ID')}
+                  </span>
+                </DialogDescription>
+              </DialogHeader>
+              <div className='py-3 space-y-3'>
+                <div>
+                  <Label htmlFor='cashAmountPaidInput' className='text-xs'>
+                    Jumlah Dibayar Pelanggan ({currencySymbol})
+                  </Label>
                   <Input
-                    id='customerNameInputCash'
-                    type='text'
-                    value={customerNameInputCash}
-                    onChange={(e) => setCustomerNameInputCash(e.target.value)}
-                    placeholder='Masukkan nama pelanggan'
-                    className='h-9 text-sm flex-1'
+                    id='cashAmountPaidInput'
+                    type='number'
+                    value={cashAmountPaidInput}
+                    onChange={handleCashAmountPaidChange}
+                    placeholder='Masukkan jumlah bayar'
+                    className='h-9 text-sm mt-1'
                   />
                 </div>
-                <p className='text-xs text-muted-foreground mt-1'>
-                  Kosongkan jika tidak ada nama pelanggan.
-                </p>
+                {calculatedChange !== null && (
+                  <p
+                    className={cn(
+                      'text-sm font-medium',
+                      calculatedChange < 0
+                        ? 'text-destructive'
+                        : 'text-green-600'
+                    )}
+                  >
+                    Kembalian: {currencySymbol}
+                    {calculatedChange.toLocaleString('id-ID')}
+                  </p>
+                )}
+                <div>
+                  <Label htmlFor='customerNameInputCash' className='text-xs'>
+                    Nama Pelanggan (Opsional)
+                  </Label>
+                  <div className='flex items-center mt-1'>
+                    <UserPlus className='h-4 w-4 mr-2 text-muted-foreground' />
+                    <Input
+                      id='customerNameInputCash'
+                      type='text'
+                      value={customerNameInputCash}
+                      onChange={(e) => setCustomerNameInputCash(e.target.value)}
+                      placeholder='Masukkan nama pelanggan'
+                      className='h-9 text-sm flex-1'
+                    />
+                  </div>
+                  <p className='text-xs text-muted-foreground mt-1'>
+                    Kosongkan jika tidak ada nama pelanggan.
+                  </p>
+                </div>
               </div>
-            </div>
-            <DialogFooter>
-              <DialogClose asChild>
+              <DialogFooter className='mt-4'>
+                <DialogClose asChild>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    className='text-xs h-8'
+                    onClick={() => setShowCashPaymentModal(false)}
+                  >
+                    Batal
+                  </Button>
+                </DialogClose>
                 <Button
-                  type='button'
-                  variant='outline'
+                  type='submit' // agar Enter memicu tombol ini
                   className='text-xs h-8'
-                  onClick={() => setShowCashPaymentModal(false)}
+                  disabled={
+                    isProcessingSale ||
+                    calculatedChange === null ||
+                    calculatedChange < 0
+                  }
                 >
-                  Batal
+                  {isProcessingSale ? 'Memproses...' : 'Konfirmasi Pembayaran'}
                 </Button>
-              </DialogClose>
-              <Button
-                onClick={handleConfirmCashPayment}
-                className='text-xs h-8'
-                disabled={
-                  isProcessingSale ||
-                  calculatedChange === null ||
-                  calculatedChange < 0
-                }
-              >
-                {isProcessingSale ? 'Memproses...' : 'Konfirmasi Pembayaran'}
-              </Button>
-            </DialogFooter>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
 
@@ -2780,7 +2737,7 @@ export default function POSPage() {
           open={showAllShiftTransactionsDialog}
           onOpenChange={setShowAllShiftTransactionsDialog}
         >
-          <DialogContent className='max-w-2xl'>
+          <DialogContent className='max-w-5xl'>
             <DialogHeader>
               <DialogTitle className='text-base'>
                 Riwayat Transaksi Shift Ini

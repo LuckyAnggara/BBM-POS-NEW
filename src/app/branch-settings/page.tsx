@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch, type ReportPeriodPreset } from '@/contexts/branch-context'
+import { useBranch } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -23,15 +23,26 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { useToast } from '@/hooks/use-toast'
-import { updateBranch, type BranchInput } from '@/lib/firebase/branches'
+import { toast } from 'sonner'
+import { updateBranch, type BranchInput } from '@/lib/appwrite/branches'
 import { Skeleton } from '@/components/ui/skeleton'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
-import { Settings, AlertTriangle } from 'lucide-react'
+import { Settings, AlertTriangle, Printer } from 'lucide-react'
 import { useForm, Controller, type SubmitHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Link from 'next/link'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 
 const branchSettingsFormSchema = z.object({
   name: z.string().min(3, { message: 'Nama cabang minimal 3 karakter.' }),
@@ -47,6 +58,7 @@ const branchSettingsFormSchema = z.object({
   address: z.string().optional(),
   phoneNumber: z.string().optional(),
   defaultReportPeriod: z.enum(['thisMonth', 'thisWeek', 'today']),
+  printerPort: z.coerce.number().optional(),
 })
 
 type BranchSettingsFormValues = z.infer<typeof branchSettingsFormSchema>
@@ -55,8 +67,8 @@ export default function BranchSettingsPage() {
   const { selectedBranch, loadingBranches, refreshBranches } = useBranch()
   const { userData, loadingAuth, loadingUserData } = useAuth()
   const router = useRouter()
-  const { toast } = useToast()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [showTestPrintDialog, setShowTestPrintDialog] = useState(false)
 
   const branchSettingsForm = useForm<BranchSettingsFormValues>({
     resolver: zodResolver(branchSettingsFormSchema),
@@ -68,6 +80,7 @@ export default function BranchSettingsPage() {
       address: '',
       phoneNumber: '',
       defaultReportPeriod: 'thisMonth',
+      printerPort: 5000,
     },
   })
 
@@ -81,6 +94,7 @@ export default function BranchSettingsPage() {
         address: selectedBranch.address || '',
         phoneNumber: selectedBranch.phoneNumber || '',
         defaultReportPeriod: selectedBranch.defaultReportPeriod || 'thisMonth',
+        printerPort: selectedBranch.printerPort || 9100,
       })
     } else if (
       !loadingBranches &&
@@ -96,10 +110,8 @@ export default function BranchSettingsPage() {
     values
   ) => {
     if (!selectedBranch) {
-      toast({
-        title: 'Error',
+      toast.error('error', {
         description: 'Tidak ada cabang yang dipilih.',
-        variant: 'destructive',
       })
       return
     }
@@ -112,23 +124,93 @@ export default function BranchSettingsPage() {
       address: values.address,
       phoneNumber: values.phoneNumber,
       defaultReportPeriod: values.defaultReportPeriod,
+      printerPort: values.printerPort,
     }
 
-    const result = await updateBranch(selectedBranch.id, updates)
-    if (result && 'error' in result) {
-      toast({
-        title: 'Gagal Memperbarui',
-        description: result.error,
-        variant: 'destructive',
-      })
-    } else {
-      toast({
-        title: 'Pengaturan Cabang Diperbarui',
+    try {
+      await updateBranch(selectedBranch.id, updates)
+      toast.success('Pengaturan Cabang Diperbarui', {
         description: 'Perubahan telah disimpan.',
       })
-      await refreshBranches() // Refresh branch context to reflect changes
+      refreshBranches() // Refresh branch context to reflect changes
+    } catch (error) {
+      toast.error('Gagal Memperbarui', {
+        description: (error as Error).message,
+      })
     }
     setIsSubmitting(false)
+  }
+
+  const handleTestPrint = async (printerType: '58mm' | 'dot-matrix') => {
+    if (!selectedBranch) {
+      toast.error('Tidak ada cabang yang dipilih.')
+      return
+    }
+
+    const testData = {
+      printMode: printerType,
+      data: {
+        branchName: selectedBranch.name || 'Nama Toko Anda',
+        branchAddress: selectedBranch.address || 'Alamat Toko Anda',
+        branchPhone: selectedBranch.phoneNumber || 'Nomor Telepon Toko',
+        invoiceNumber: 'INV-12345678',
+        transactionDate: new Date().toLocaleString('id-ID', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        cashierName: userData?.name || 'Kasir 01',
+        customerName: 'Nama Pelanggan',
+        items: [
+          {
+            name: 'Kopi Susu',
+            quantity: 2,
+            price: 18000,
+            total: 36000,
+          },
+          {
+            name: 'Donat Coklat',
+            quantity: 1,
+            price: 8000,
+            total: 8000,
+          },
+        ],
+        subtotal: 44000,
+        taxAmount: 4400,
+        totalAmount: 48400,
+        paymentMethod: 'Cash',
+        amountPaid: 50000,
+        changeGiven: 1600,
+      },
+    }
+    const port = selectedBranch.printerPort || '3000'
+    const url = `http://localhost:${port}/print` // Endpoint yang benar
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(testData),
+      })
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      toast.success('Print Test Sent', {
+        description: `Test print for ${printerType} sent to port ${
+          selectedBranch.printerPort || 9100
+        }`,
+      })
+    } catch (error) {
+      console.error('Could not connect to the printer app:', error)
+      toast.error('Connection Error', {
+        description:
+          'Could not connect to the printer app. Make sure it is running and the port is correct.',
+      })
+    }
+    setShowTestPrintDialog(false)
   }
 
   // const isLoading = loadingAuth || loadingUserData || loadingBranches;
@@ -322,6 +404,26 @@ export default function BranchSettingsPage() {
                     />
                   </div>
                   <div>
+                    <Label htmlFor='printerPortSettings' className='text-xs'>
+                      Port Printer
+                    </Label>
+                    <Input
+                      id='printerPortSettings'
+                      type='number'
+                      {...branchSettingsForm.register('printerPort')}
+                      className='h-9 text-sm mt-1'
+                      disabled={isSubmitting}
+                    />
+                    {branchSettingsForm.formState.errors.printerPort && (
+                      <p className='text-xs text-destructive mt-1'>
+                        {
+                          branchSettingsForm.formState.errors.printerPort
+                            .message
+                        }
+                      </p>
+                    )}
+                  </div>
+                  <div>
                     <Label htmlFor='defaultReportPeriod' className='text-xs'>
                       Periode Laporan Default*
                     </Label>
@@ -361,17 +463,28 @@ export default function BranchSettingsPage() {
                       </p>
                     )}
                   </div>
-                  <Button
-                    type='submit'
-                    className='text-sm h-9'
-                    disabled={
-                      isSubmitting || !branchSettingsForm.formState.isDirty
-                    }
-                  >
-                    {isSubmitting
-                      ? 'Menyimpan...'
-                      : 'Simpan Perubahan Pengaturan'}
-                  </Button>
+                  <div className='flex space-x-2'>
+                    <Button
+                      type='submit'
+                      className='text-sm h-9'
+                      disabled={
+                        isSubmitting || !branchSettingsForm.formState.isDirty
+                      }
+                    >
+                      {isSubmitting
+                        ? 'Menyimpan...'
+                        : 'Simpan Perubahan Pengaturan'}
+                    </Button>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      className='text-sm h-9'
+                      onClick={() => setShowTestPrintDialog(true)}
+                    >
+                      <Printer className='mr-2 h-4 w-4' />
+                      Test Printer
+                    </Button>
+                  </div>
                 </form>
               </CardContent>
             </Card>
@@ -384,6 +497,28 @@ export default function BranchSettingsPage() {
             </Card>
           )}
         </div>
+        <AlertDialog
+          open={showTestPrintDialog}
+          onOpenChange={setShowTestPrintDialog}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Test Printer</AlertDialogTitle>
+              <AlertDialogDescription>
+                Pilih jenis printer untuk melakukan test print.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Batal</AlertDialogCancel>
+              <AlertDialogAction onClick={() => handleTestPrint('58mm')}>
+                58mm
+              </AlertDialogAction>
+              <AlertDialogAction onClick={() => handleTestPrint('dot-matrix')}>
+                Dot Matrix
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </MainLayout>
     </ProtectedRoute>
   )
