@@ -121,6 +121,10 @@ export interface GetPurchaseOrdersParams {
     endDate?: string | Date
     searchTerm?: string
     status?: PurchaseOrderStatus
+    isCreditPurchase?: boolean
+    paymentStatusOnPO?: PurchaseOrderPaymentStatus
+    orderByField?: string
+    orderDirection?: 'asc' | 'desc'
   }
 }
 
@@ -608,10 +612,7 @@ export async function getPurchaseOrders({
 
     return {
       total: totalResponse.total,
-      documents: response.documents as unknown as Omit<
-        PurchaseOrder,
-        'items' | 'payments'
-      >[],
+      documents: response.documents as unknown as PurchaseOrder[],
     }
   } catch (error: any) {
     console.error('Error fetching purchase orders:', error)
@@ -669,5 +670,45 @@ export async function getPurchaseOrderById(
       error
     )
     return null
+  }
+}
+
+export async function getOutstandingPurchaseOrdersByBranch({
+  branchId,
+  options = {},
+}: GetPurchaseOrdersParams): Promise<{
+  total: number
+  documents: PurchaseOrder[]
+}> {
+  try {
+    const limit = options.limit || 25
+    const page = options.page || 1
+    const offset = (page - 1) * limit
+
+    // Kumpulan query dasar
+    const baseQueries = [
+      Query.equal('branchId', branchId),
+      Query.equal('isCreditPurchase', true),
+      Query.equal('paymentStatusOnPO', 'unpaid'),
+    ]
+
+    const dataQueries = [
+      ...baseQueries,
+      Query.limit(limit),
+      Query.offset(offset),
+    ]
+
+    const response = await databases.listDocuments(
+      DATABASE_ID,
+      PURCHASE_ORDERS_COLLECTION_ID,
+      dataQueries
+    )
+    return {
+      total: response.total,
+      documents: response.documents as unknown as PurchaseOrder[],
+    }
+  } catch (error) {
+    console.error('Error fetching outstanding purchase orders:', error)
+    return { total: 0, documents: [] }
   }
 }
