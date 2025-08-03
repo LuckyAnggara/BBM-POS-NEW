@@ -47,30 +47,30 @@ import {
   updateBranch,
   deleteBranch,
   type BranchInput,
-} from '@/lib/appwrite/branches'
-import { Branch } from '@/lib/appwrite/types' // Pastikan path ini benar
+} from '@/lib/laravel/branches'
+import { Branch } from '@/lib/types' // Pastikan path ini benar
 import { toast } from 'sonner'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { set } from 'date-fns'
 
 interface BranchFormState {
   name: string
-  invoiceName: string
+  invoice_name: string
   currency: string
-  taxRate: string
+  tax_rate: string
   address: string
-  phoneNumber: string
-  transactionDeletionPassword?: string
+  phone: string
+  transaction_deletion_password?: string
 }
 
 const initialBranchFormState: BranchFormState = {
   name: '',
-  invoiceName: '',
+  invoice_name: '',
   currency: 'IDR',
-  taxRate: '0',
+  tax_rate: '0',
   address: '',
-  phoneNumber: '',
-  transactionDeletionPassword: '',
+  phone: '',
+  transaction_deletion_password: '',
 }
 
 interface ManageBranchesProps {
@@ -92,7 +92,7 @@ export default function ManageBranches({
   const [branchForm, setBranchForm] = useState<BranchFormState>(
     initialBranchFormState
   )
-  const { refreshBranches } = useBranch()
+  const { refreshBranches } = useBranches()
   const [isSubmittingBranch, setIsSubmittingBranch] = useState(false)
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null)
   const [editBranchForm, setEditBranchForm] = useState<BranchFormState>(
@@ -123,12 +123,13 @@ export default function ManageBranches({
     setIsSubmittingBranch(true)
     const branchInput: BranchInput = {
       name: branchForm.name,
-      invoiceName: branchForm.invoiceName || branchForm.name,
+      invoice_name: branchForm.invoice_name || branchForm.name,
       currency: branchForm.currency || 'IDR',
-      taxRate: parseFloat(branchForm.taxRate) || 0,
+      tax_rate: parseFloat(branchForm.tax_rate) || 0,
       address: branchForm.address,
-      phoneNumber: branchForm.phoneNumber,
-      transactionDeletionPassword: branchForm.transactionDeletionPassword || '',
+      phone: branchForm.phone,
+      transaction_deletion_password:
+        branchForm.transaction_deletion_password || '',
     }
     try {
       const newBranch = await createBranch(branchInput)
@@ -136,7 +137,7 @@ export default function ManageBranches({
         description: `Cabang "${newBranch.name}" telah ditambahkan.`,
       })
       setBranchForm(initialBranchFormState)
-      await refreshBranches()
+      refreshBranches()
     } catch (error: any) {
       toast.error('Gagal Membuat Cabang', {
         description: error.message || 'Terjadi kesalahan saat membuat cabang.',
@@ -151,12 +152,12 @@ export default function ManageBranches({
     setEditingBranch(branch)
     setEditBranchForm({
       name: branch.name,
-      invoiceName: branch.invoiceName || branch.name,
+      invoice_name: branch.invoice_name || branch.name,
       currency: branch.currency || 'IDR',
-      taxRate: (branch.taxRate || 0).toString(),
+      tax_rate: (branch.tax_rate || 0).toString(),
       address: branch.address || '',
-      phoneNumber: branch.phoneNumber || '',
-      transactionDeletionPassword: branch.transactionDeletionPassword || '',
+      phone: branch.phone || '',
+      transaction_deletion_password: branch.transaction_deletion_password || '',
     })
     setIsEditBranchModalOpen(true)
   }
@@ -171,19 +172,20 @@ export default function ManageBranches({
     setIsUpdatingBranch(true)
     const branchUpdates: Partial<BranchInput> = {
       name: editBranchForm.name,
-      invoiceName: editBranchForm.invoiceName || editBranchForm.name,
+      invoice_name: editBranchForm.invoice_name || editBranchForm.name,
       currency: editBranchForm.currency || 'IDR',
-      taxRate: parseFloat(editBranchForm.taxRate) || 0,
+      tax_rate: parseFloat(editBranchForm.tax_rate) || 0,
       address: editBranchForm.address,
-      phoneNumber: editBranchForm.phoneNumber,
-      transactionDeletionPassword: editBranchForm.transactionDeletionPassword,
+      phone: editBranchForm.phone,
+      transaction_deletion_password:
+        editBranchForm.transaction_deletion_password,
     }
     try {
       const updatedBranch = await updateBranch(editingBranch.id, branchUpdates)
       toast.success('Cabang Berhasil Diperbarui')
       setIsEditBranchModalOpen(false)
       setEditingBranch(null)
-      await refreshBranches()
+      refreshBranches()
       if (adminSelectedBranch && adminSelectedBranch.id === updatedBranch.id) {
         setAdminSelectedBranchId(updatedBranch.id)
       }
@@ -203,7 +205,7 @@ export default function ManageBranches({
     try {
       await deleteBranch(branchToDelete.id)
       toast.success('Cabang Berhasil Dihapus')
-      await refreshBranches()
+      refreshBranches()
       await fetchUsers() // Refresh user list as their branch assignments might change
       if (adminSelectedBranch && adminSelectedBranch.id === branchToDelete.id) {
         setAdminSelectedBranchId(null) // Kosongkan pilihan jika cabang yang aktif dihapus
@@ -240,7 +242,7 @@ export default function ManageBranches({
             className='text-xs h-8'
             onClick={() => handleOpenNewBranchModal()}
           >
-            <PlusCircle className='mr-1.5 h-3.5 w-3.5' /> Tambah Rekening
+            <PlusCircle className='mr-1.5 h-3.5 w-3.5' /> Tambah Cabang
           </Button>
         </div>
       </CardHeader>
@@ -282,16 +284,16 @@ export default function ManageBranches({
                         {branch.name}
                       </TableCell>
                       <TableCell className='text-xs py-2 hidden sm:table-cell'>
-                        {branch.invoiceName || branch.name}
+                        {branch.invoice_name || branch.name}
                       </TableCell>
                       <TableCell className='text-xs py-2 hidden md:table-cell'>
                         {branch.currency || 'IDR'}
                       </TableCell>
                       <TableCell className='text-xs py-2 hidden md:table-cell'>
-                        {branch.taxRate !== undefined ? branch.taxRate : 0}%
+                        {branch.tax_rate !== undefined ? branch.tax_rate : 0}%
                       </TableCell>
                       <TableCell className='text-xs py-2 hidden lg:table-cell'>
-                        {branch.transactionDeletionPassword
+                        {branch.transaction_deletion_password
                           ? 'Terpasang'
                           : 'Tidak Ada'}
                       </TableCell>
@@ -390,13 +392,13 @@ export default function ManageBranches({
                 />
               </div>
               <div>
-                <Label htmlFor='invoiceName' className='text-xs'>
+                <Label htmlFor='invoice_name' className='text-xs'>
                   Nama di Invoice (Opsional)
                 </Label>
                 <Input
-                  id='invoiceName'
-                  name='invoiceName'
-                  value={branchForm.invoiceName}
+                  id='invoice_name'
+                  name='invoice_name'
+                  value={branchForm.invoice_name}
                   onChange={(e) => handleBranchFormChange(e, setBranchForm)}
                   placeholder='Sama seperti nama cabang jika kosong'
                   className='h-9 text-xs'
@@ -418,14 +420,14 @@ export default function ManageBranches({
                 />
               </div>
               <div>
-                <Label htmlFor='taxRate' className='text-xs'>
+                <Label htmlFor='tax_rate' className='text-xs'>
                   Tarif Pajak (%)
                 </Label>
                 <Input
-                  id='taxRate'
-                  name='taxRate'
+                  id='tax_rate'
+                  name='tax_rate'
                   type='number'
-                  value={branchForm.taxRate}
+                  value={branchForm.tax_rate}
                   onChange={(e) => handleBranchFormChange(e, setBranchForm)}
                   placeholder='0'
                   className='h-9 text-xs'
@@ -448,13 +450,13 @@ export default function ManageBranches({
               />
             </div>
             <div>
-              <Label htmlFor='phoneNumber' className='text-xs'>
+              <Label htmlFor='phone' className='text-xs'>
                 Nomor Telepon
               </Label>
               <Input
-                id='phoneNumber'
-                name='phoneNumber'
-                value={branchForm.phoneNumber}
+                id='phone'
+                name='phone'
+                value={branchForm.phone}
                 onChange={(e) => handleBranchFormChange(e, setBranchForm)}
                 placeholder='08xxxxxxxxxx'
                 className='h-9 text-xs'
@@ -472,9 +474,9 @@ export default function ManageBranches({
                 <KeyRound className='absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground' />
                 <Input
                   id='transactionDeletionPasswordCreate'
-                  name='transactionDeletionPassword'
+                  name='transaction_deletion_password'
                   type='password'
-                  value={branchForm.transactionDeletionPassword}
+                  value={branchForm.transaction_deletion_password}
                   onChange={(e) => handleBranchFormChange(e, setBranchForm)}
                   placeholder='Kosongkan jika tidak diset'
                   className='h-9 text-xs pl-8'
@@ -520,8 +522,8 @@ export default function ManageBranches({
               </Label>
               <Input
                 id='editInvoiceName'
-                name='invoiceName'
-                value={editBranchForm.invoiceName}
+                name='invoice_name'
+                value={editBranchForm.invoice_name}
                 onChange={(e) => handleBranchFormChange(e, setEditBranchForm)}
                 className='text-xs h-9'
               />
@@ -544,9 +546,9 @@ export default function ManageBranches({
               </Label>
               <Input
                 id='editTaxRate'
-                name='taxRate'
+                name='tax_rate'
                 type='number'
-                value={editBranchForm.taxRate}
+                value={editBranchForm.tax_rate}
                 onChange={(e) => handleBranchFormChange(e, setEditBranchForm)}
                 className='text-xs h-9'
               />
@@ -569,8 +571,8 @@ export default function ManageBranches({
               </Label>
               <Input
                 id='editPhoneNumber'
-                name='phoneNumber'
-                value={editBranchForm.phoneNumber}
+                name='phone'
+                value={editBranchForm.phone}
                 onChange={(e) => handleBranchFormChange(e, setEditBranchForm)}
                 className='text-xs h-9'
               />
@@ -586,9 +588,9 @@ export default function ManageBranches({
                 <KeyRound className='absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground' />
                 <Input
                   id='transactionDeletionPasswordEdit'
-                  name='transactionDeletionPassword'
+                  name='transaction_deletion_password'
                   type='password'
-                  value={editBranchForm.transactionDeletionPassword}
+                  value={editBranchForm.transaction_deletion_password}
                   onChange={(e) => handleBranchFormChange(e, setEditBranchForm)}
                   placeholder='Kosongkan untuk tidak mengubah'
                   className='h-9 text-xs pl-8'

@@ -26,8 +26,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { getAllUsers, updateUserProfile, UserRole } from '@/lib/appwrite/users' // Pastikan path ini benar
-import type { UserData, Branch } from '@/lib/appwrite/types' // Pastikan path ini benar
+import { listUsers, updateUser } from '@/lib/laravel/users' // Pastikan path ini benar
+import type { User, Branch, UserRole } from '@/lib/types' // Pastikan path ini benar
 import { toast } from 'sonner'
 
 interface ManageUsersProps {
@@ -39,24 +39,24 @@ export default function ManageUsers({
   branches,
   loadingBranches,
 }: ManageUsersProps) {
-  const [users, setUsers] = useState<UserData[]>([])
+  const [users, setUsers] = useState<User[]>([])
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [userBranchChanges, setUserBranchChanges] = useState<
-    Record<string, string | null>
+    Record<number, number | null>
   >({})
   const [userRoleChanges, setUserRoleChanges] = useState<
-    Record<string, string>
+    Record<number, string>
   >({})
 
   const fetchUsers = async () => {
     setLoadingUsers(true)
-    const fetchedUsers = await getAllUsers()
+    const fetchedUsers = await listUsers()
     setUsers(fetchedUsers)
 
-    const initialBranchChanges: Record<string, string | null> = {}
-    const initialRoleChanges: Record<string, string> = {}
+    const initialBranchChanges: Record<number, number | null> = {}
+    const initialRoleChanges: Record<number, string> = {}
     fetchedUsers.forEach((user) => {
-      initialBranchChanges[user.id] = user.branchId || null
+      initialBranchChanges[user.id] = user.branch_id || null
       initialRoleChanges[user.id] = user.role
     })
     setUserBranchChanges(initialBranchChanges)
@@ -69,18 +69,18 @@ export default function ManageUsers({
     fetchUsers()
   }, [])
 
-  const handleUserBranchChange = (userId: string, branchId: string) => {
+  const handleUserBranchChange = (userId: number, branchId: string) => {
     setUserBranchChanges((prev) => ({
       ...prev,
-      [userId]: branchId === 'UNASSIGNED' ? null : branchId,
+      [userId]: branchId === 'UNASSIGNED' ? null : Number(branchId),
     }))
   }
 
-  const handleUserRoleChange = (userId: string, role: string) => {
+  const handleUserRoleChange = (userId: number, role: string) => {
     setUserRoleChanges((prev) => ({ ...prev, [userId]: role }))
   }
 
-  const handleUpdateUser = async (userId: string) => {
+  const handleUpdateUser = async (userId: number) => {
     const newBranchId = userBranchChanges[userId]
     const newRole = userRoleChanges[userId]
     const originalUser = users.find((u) => u.id === userId)
@@ -90,13 +90,13 @@ export default function ManageUsers({
     let roleUpdated = false
 
     try {
-      if (newBranchId !== originalUser.branchId) {
-        await updateUserProfile(userId, { branchId: newBranchId || undefined })
+      if (newBranchId !== originalUser.branch_id) {
+        await updateUser(userId, { branch_id: newBranchId || undefined })
         branchUpdated = true
       }
 
       if (newRole !== originalUser.role) {
-        await updateUserProfile(userId, { role: newRole as UserRole })
+        await updateUser(userId, { role: newRole as UserRole })
         roleUpdated = true
       }
 
@@ -155,11 +155,11 @@ export default function ManageUsers({
               <TableBody>
                 {users.map((user) => {
                   const currentBranch = branches.find(
-                    (b) => b.id === user.branchId
+                    (b) => b.id === user.branch_id
                   )
                   const currentBranchName = currentBranch
                     ? currentBranch.name
-                    : user.branchId
+                    : user.branch_id
                     ? 'ID Cabang Tidak Valid'
                     : 'Belum Ditetapkan'
                   return (
@@ -178,7 +178,12 @@ export default function ManageUsers({
                       </TableCell>
                       <TableCell className='text-xs py-2'>
                         <Select
-                          value={userBranchChanges[user.id] ?? 'UNASSIGNED'}
+                          value={
+                            userBranchChanges[user.id] === null ||
+                            userBranchChanges[user.id] === undefined
+                              ? 'UNASSIGNED'
+                              : String(userBranchChanges[user.id])
+                          }
                           onValueChange={(value) =>
                             handleUserBranchChange(user.id, value)
                           }
@@ -194,7 +199,7 @@ export default function ManageUsers({
                             {branches.map((branch) => (
                               <SelectItem
                                 key={branch.id}
-                                value={branch.id}
+                                value={String(branch.id)}
                                 className='text-xs'
                               >
                                 {branch.name}
@@ -230,9 +235,9 @@ export default function ManageUsers({
                           className='h-8 text-xs'
                           onClick={() => handleUpdateUser(user.id)}
                           disabled={
-                            (userBranchChanges[user.id] === user.branchId ||
+                            (userBranchChanges[user.id] === user.branch_id ||
                               (userBranchChanges[user.id] === null &&
-                                !user.branchId)) &&
+                                !user.branch_id)) &&
                             userRoleChanges[user.id] === user.role
                           }
                         >

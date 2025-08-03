@@ -17,7 +17,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import type { POSShift, PaymentMethod } from '@/lib/appwrite/pos'
 import { toast } from 'sonner'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 
 interface EndShiftDialogProps {
   isOpen: boolean
@@ -41,7 +41,7 @@ export function EndShiftDialog({
 }: EndShiftDialogProps) {
   const [actualCashInput, setActualCashInput] = useState('')
   const [cashDifference, setCashDifference] = useState<number | null>(null)
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
 
   useEffect(() => {
     if (!isOpen) {

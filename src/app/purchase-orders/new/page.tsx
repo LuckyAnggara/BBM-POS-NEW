@@ -26,7 +26,7 @@ import {
 
 // Konteks dan Hook
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { useToast } from '@/hooks/use-toast'
 
 // Komponen UI
@@ -130,7 +130,7 @@ type PurchaseOrderFormValues = z.infer<typeof purchaseOrderFormSchema>
 
 export default function NewPurchaseOrderPage() {
   const { currentUser } = useAuth()
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   const { toast } = useToast()
   const router = useRouter()
 

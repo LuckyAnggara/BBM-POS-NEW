@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -64,7 +64,7 @@ const branchSettingsFormSchema = z.object({
 type BranchSettingsFormValues = z.infer<typeof branchSettingsFormSchema>
 
 export default function BranchSettingsPage() {
-  const { selectedBranch, loadingBranches, refreshBranches } = useBranch()
+  const { selectedBranch, loadingBranches, refreshBranches } = useBranches()
   const { userData, loadingAuth, loadingUserData } = useAuth()
   const router = useRouter()
   const [isSubmitting, setIsSubmitting] = useState(false)

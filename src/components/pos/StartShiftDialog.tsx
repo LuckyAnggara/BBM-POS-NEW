@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 
 interface StartShiftDialogProps {
   isOpen: boolean
@@ -26,7 +26,7 @@ export function StartShiftDialog({
   onConfirm,
 }: StartShiftDialogProps) {
   const [cashValue, setCashValue] = useState('')
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   // Reset input when dialog is closed
   useEffect(() => {
     if (!isOpen) {

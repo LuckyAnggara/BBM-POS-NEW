@@ -2,7 +2,7 @@
 
 import React from 'react'
 import Link from 'next/link' // Added Link
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { useAuth } from '@/contexts/auth-context'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils'
 
 export default function SidebarUserProfile() {
   const { branches, selectedBranch, setSelectedBranchId, loadingBranches } =
-    useBranch()
+    useBranches()
   const { currentUser, userData, signOut, loadingAuth, loadingUserData } =
     useAuth()
   const handleLogout = async () => {

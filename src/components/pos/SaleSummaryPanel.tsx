@@ -60,7 +60,7 @@ import {
 import type { Customer } from '@/lib/appwrite/customers'
 import type { CartItem, InventoryItem } from '@/lib/appwrite/types' // Assuming type is exported from page.tsx
 import type { PaymentMethod } from '@/lib/appwrite/pos'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import {
   Dialog,
   DialogContent,
@@ -116,7 +116,7 @@ export function SaleSummaryPanel({
   onShowScanCustomerDialog,
   onCompleteSale,
 }: SaleSummaryPanelProps) {
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   const currency = selectedBranch?.currency || 'Rp'
   const taxDisplayRate = (selectedBranch?.taxRate || 11 * 100).toFixed(0)
 

@@ -2,10 +2,9 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/auth-context'
-import { AppwriteException } from 'appwrite' // <-- Impor tipe error Appwrite
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import {
@@ -18,23 +17,48 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import Link from 'next/link'
+import { Building2 } from 'lucide-react'
+
+const loadingMessages = [
+  'Memuat aplikasi...',
+  'Menyiapkan sesi Anda...',
+  'Cek sesi sebelumnya...',
+  'Menghubungkan ke data...',
+  'Hampir selesai...',
+]
 
 export default function LoginPage() {
+  const { currentUser, isLoading, isLoadingUserData } = useAuth()
   const router = useRouter()
-  const { login, loadingAuth: loading } = useAuth()
-
+  const auth = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  // Kita tidak lagi memerlukan state [error, setError]
+  const [currentMessageIndex, setCurrentMessageIndex] = useState(0)
+  const [isRedirecting, setIsRedirecting] = useState(false)
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setCurrentMessageIndex(
+        (prevIndex) => (prevIndex + 1) % loadingMessages.length
+      )
+    }, 1000) // Ganti pesan setiap 1 detik
+
+    return () => clearInterval(intervalId)
+  }, [])
+
+  useEffect(() => {
+    if (currentUser) {
+      router.replace('/dashboard')
+    }
+  }, [currentUser])
 
   // 3. Fungsi untuk menangani error secara spesifik
-  const handleLoginError = (error: unknown) => {
+  const handleLoginError = (error: any) => {
     let title = 'Login Gagal'
     let description =
       'Terjadi kesalahan yang tidak diketahui. Silakan coba lagi.'
-
-    if (error instanceof AppwriteException) {
-      switch (error.code) {
+    if (error.response) {
+      switch (error.response.status) {
         case 401: // user_unauthorized / general_unauthorized
           description =
             'Kombinasi email dan password salah. Mohon periksa kembali.'
@@ -44,7 +68,7 @@ export default function LoginPage() {
             'Terlalu banyak percobaan login. Silakan tunggu beberapa saat.'
           break
         default:
-          description = error.message // Gunakan pesan default dari Appwrite jika ada
+          description = error.response.message // Gunakan pesan default dari Appwrite jika ada
           break
       }
     }
@@ -59,8 +83,7 @@ export default function LoginPage() {
     e.preventDefault()
 
     try {
-      await login(email, password)
-
+      await auth.login({ email, password })
       // 4. Tampilkan notifikasi toast sukses
       toast.success('Login Berhasil!', {
         description: 'Anda akan diarahkan ke dashboard.',
@@ -71,6 +94,22 @@ export default function LoginPage() {
       console.error('Login Error:', err)
       handleLoginError(err) // Panggil fungsi error handler kita
     }
+  }
+
+  if (currentUser) {
+    return (
+      <div className='flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4'>
+        <Building2 className='h-16 w-16 text-primary animate-pulse mb-4' />
+        <h1 className='text-2xl font-semibold font-headline mb-2'>
+          Berkah Baja Makmur
+        </h1>
+        <p className='text-sm text-muted-foreground transition-opacity duration-500'>
+          {isLoadingUserData
+            ? loadingMessages[currentMessageIndex]
+            : 'Mengarahkan Anda...'}
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -94,7 +133,7 @@ export default function LoginPage() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                disabled={loading}
+                disabled={auth.isLoading}
               />
             </div>
             <div className='grid gap-2'>
@@ -105,11 +144,11 @@ export default function LoginPage() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
+                disabled={auth.isLoading}
               />
             </div>
-            <Button type='submit' className='w-full' disabled={loading}>
-              {loading ? 'Memproses...' : 'Login'}
+            <Button type='submit' className='w-full' disabled={auth.isLoading}>
+              {auth.isLoading ? 'Memproses...' : 'Login'}
             </Button>
           </form>
           <div className='mt-4 text-center text-sm'>

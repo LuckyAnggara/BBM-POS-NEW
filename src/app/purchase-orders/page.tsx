@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import {
   Table,
@@ -98,7 +98,7 @@ const ALL_PAYMENT_STATUSES: PurchaseOrderPaymentStatus[] = [
 
 export default function PurchaseOrdersPage() {
   const { currentUser } = useAuth()
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   const { toast } = useToast()
 
   const [allFetchedPOs, setAllFetchedPOs] = useState<PurchaseOrder[]>([])

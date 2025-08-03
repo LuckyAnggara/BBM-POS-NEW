@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import {
@@ -75,7 +75,7 @@ interface StockMovementReportData {
 }
 
 export default function StockMovementReportPage() {
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   const { toast } = useToast()
 
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])

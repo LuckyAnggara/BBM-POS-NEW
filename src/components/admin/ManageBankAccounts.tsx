@@ -50,30 +50,28 @@ import {
 import { Pencil, Trash2, PlusCircle } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
-  addBankAccount,
-  getBankAccounts,
+  createBankAccount,
+  listBankAccounts,
   updateBankAccount,
   deleteBankAccount,
-  type BankAccount,
-  type BankAccountInput,
-} from '@/lib/appwrite/bankAccounts' // Pastikan path ini benar
-import { Branch } from '@/lib/appwrite/types' // Pastikan path ini benar
+} from '@/lib/laravel/bankAccounts' // Pastikan path ini benar
+import { Branch, type BankAccount, type BankAccountInput } from '@/lib/types' // Pastikan path ini benar
 import { toast } from 'sonner'
 
 interface BankAccountFormState {
-  bankName: string
-  accountNumber: string
-  accountHolderName: string
-  branchId?: string | null
-  isActive: boolean
+  bank_name: string
+  account_number: string
+  account_holder_name: string
+  branch_id?: number | string | null
+  is_active: boolean
 }
 
 const initialBankAccountFormState: BankAccountFormState = {
-  bankName: '',
-  accountNumber: '',
-  accountHolderName: '',
-  branchId: null,
-  isActive: true,
+  bank_name: '',
+  account_number: '',
+  account_holder_name: '',
+  branch_id: 'NONE',
+  is_active: true,
 }
 
 interface ManageBankAccountsProps {
@@ -100,8 +98,7 @@ export default function ManageBankAccounts({
 
   const fetchBankAccounts = useCallback(async () => {
     setLoadingBankAccounts(true)
-    const fetchedBankAccounts = await getBankAccounts()
-    console.log(fetchedBankAccounts) // No filter needed here, or pass specific filters if required
+    const fetchedBankAccounts = await listBankAccounts()
     setBankAccounts(fetchedBankAccounts)
     setLoadingBankAccounts(false)
   }, [])
@@ -133,11 +130,11 @@ export default function ManageBankAccounts({
     setEditingBankAccount(bankAccount)
     if (bankAccount) {
       setBankAccountForm({
-        bankName: bankAccount.bankName,
-        accountNumber: bankAccount.accountNumber,
-        accountHolderName: bankAccount.accountHolderName,
-        branchId: bankAccount.branchId || null,
-        isActive: bankAccount.isActive,
+        bank_name: bankAccount.bank_name,
+        account_number: bankAccount.account_number,
+        account_holder_name: bankAccount.account_holder_name,
+        branch_id: bankAccount.branch_id ? bankAccount.branch_id : 'NONE',
+        is_active: bankAccount.is_active,
       })
     } else {
       setBankAccountForm(initialBankAccountFormState)
@@ -150,7 +147,8 @@ export default function ManageBankAccounts({
     setIsSubmittingBankAccount(true)
     const dataInput: BankAccountInput = {
       ...bankAccountForm,
-      branchId: bankAccountForm.branchId || null, // Ensure branchId is null if not selected
+      branch_id: bankAccountForm.branch_id || 'NONE', // Ensure branch_id is null if not selected
+      is_default: false, // Default to false, handled in backend logic
     }
     try {
       let result: BankAccount | { error: string }
@@ -158,7 +156,7 @@ export default function ManageBankAccounts({
         result = await updateBankAccount(editingBankAccount.id, dataInput)
       } else {
         console.log('Adding new bank account with data:', dataInput)
-        result = await addBankAccount(dataInput)
+        result = await createBankAccount(dataInput)
       }
 
       if ('error' in result) {
@@ -251,25 +249,25 @@ export default function ManageBankAccounts({
               </TableHeader>
               <TableBody>
                 {bankAccounts.map((acc) => {
-                  const linkedBranch = acc.branchId
-                    ? branches.find((b) => b.id === acc.branchId)?.name
+                  const linkedBranch = acc.branch_id
+                    ? branches.find((b) => b.id === acc.branch_id)?.name
                     : 'Global'
                   return (
                     <TableRow key={acc.id}>
                       <TableCell className='text-xs py-2 font-medium'>
-                        {acc.bankName}
+                        {acc.bank_name}
                       </TableCell>
                       <TableCell className='text-xs py-2'>
-                        {acc.accountNumber}
+                        {acc.account_number}
                       </TableCell>
                       <TableCell className='text-xs py-2 hidden sm:table-cell'>
-                        {acc.accountHolderName}
+                        {acc.account_holder_name}
                       </TableCell>
                       <TableCell className='text-xs py-2 hidden md:table-cell'>
                         {linkedBranch || 'N/A'}
                       </TableCell>
                       <TableCell className='text-xs text-center py-2'>
-                        {acc.isActive ? (
+                        {acc.is_active ? (
                           <span className='text-green-600'>Aktif</span>
                         ) : (
                           <span className='text-destructive'>Nonaktif</span>
@@ -304,9 +302,9 @@ export default function ManageBankAccounts({
                               </AlertDialogTitle>
                               <AlertDialogDescription className='text-xs'>
                                 Tindakan ini akan menghapus rekening bank "
-                                {bankAccountToDelete?.bankName} -{' '}
-                                {bankAccountToDelete?.accountNumber}". Ini tidak
-                                dapat dibatalkan.
+                                {bankAccountToDelete?.bank_name} -{' '}
+                                {bankAccountToDelete?.account_number}". Ini
+                                tidak dapat dibatalkan.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
@@ -355,39 +353,39 @@ export default function ManageBankAccounts({
           </DialogHeader>
           <form onSubmit={handleSubmitBankAccount} className='space-y-3 py-3'>
             <div>
-              <Label htmlFor='bankName' className='text-xs'>
+              <Label htmlFor='bank_name' className='text-xs'>
                 Nama Bank*
               </Label>
               <Input
-                id='bankName'
-                name='bankName'
-                value={bankAccountForm.bankName}
+                id='bank_name'
+                name='bank_name'
+                value={bankAccountForm.bank_name}
                 onChange={handleBankAccountFormChange}
                 placeholder='Contoh: BCA, Mandiri'
                 className='h-9 text-xs'
               />
             </div>
             <div>
-              <Label htmlFor='accountNumber' className='text-xs'>
+              <Label htmlFor='account_number' className='text-xs'>
                 Nomor Rekening*
               </Label>
               <Input
-                id='accountNumber'
-                name='accountNumber'
-                value={bankAccountForm.accountNumber}
+                id='account_number'
+                name='account_number'
+                value={bankAccountForm.account_number}
                 onChange={handleBankAccountFormChange}
                 placeholder='1234567890'
                 className='h-9 text-xs'
               />
             </div>
             <div>
-              <Label htmlFor='accountHolderName' className='text-xs'>
+              <Label htmlFor='account_holder_name' className='text-xs'>
                 Atas Nama (Pemilik)*
               </Label>
               <Input
-                id='accountHolderName'
-                name='accountHolderName'
-                value={bankAccountForm.accountHolderName}
+                id='account_holder_name'
+                name='account_holder_name'
+                value={bankAccountForm.account_holder_name}
                 onChange={handleBankAccountFormChange}
                 placeholder='Nama Pemilik Rekening'
                 className='h-9 text-xs'
@@ -398,9 +396,9 @@ export default function ManageBankAccounts({
                 Tautkan ke Cabang (Opsional)
               </Label>
               <Select
-                value={bankAccountForm.branchId || 'NONE'}
+                value={String(bankAccountForm.branch_id) || 'NONE'}
                 onValueChange={(value) =>
-                  handleBankAccountFormSelectChange('branchId', value)
+                  handleBankAccountFormSelectChange('branch_id', value)
                 }
                 disabled={loadingBranches}
               >
@@ -418,7 +416,11 @@ export default function ManageBankAccounts({
                     Global (Semua Cabang)
                   </SelectItem>
                   {branches.map((b) => (
-                    <SelectItem key={b.id} value={b.id} className='text-xs'>
+                    <SelectItem
+                      key={b.id}
+                      value={String(b.id)}
+                      className='text-xs'
+                    >
                       {b.name}
                     </SelectItem>
                   ))}
@@ -431,17 +433,17 @@ export default function ManageBankAccounts({
             </div>
             <div className='flex items-center space-x-2 pt-1'>
               <Switch
-                id='isActive'
-                name='isActive'
-                checked={bankAccountForm.isActive}
+                id='is_active'
+                name='is_active'
+                checked={bankAccountForm.is_active}
                 onCheckedChange={(checked) =>
                   setBankAccountForm((prev) => ({
                     ...prev,
-                    isActive: checked,
+                    is_active: checked,
                   }))
                 }
               />
-              <Label htmlFor='isActive' className='text-xs'>
+              <Label htmlFor='is_active' className='text-xs'>
                 Aktifkan Rekening Ini
               </Label>
             </div>

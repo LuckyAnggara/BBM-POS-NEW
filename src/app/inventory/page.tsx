@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -71,19 +71,25 @@ import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
 import type {
-  InventoryItem,
-  InventoryCategory,
-  InventoryItemInput,
-  InventoryCategoryInput,
-} from '@/lib/appwrite/inventory'
+  Product,
+  Category,
+  ProductInput,
+  CategoryInput,
+} from '@/lib/types'
 import {
-  addInventoryItem,
-  getInventoryItems,
-  deleteInventoryItem,
-  addInventoryCategory,
-  getInventoryCategories,
-  deleteInventoryCategory,
-} from '@/lib/appwrite/inventory'
+  createProduct,
+  getProductById,
+  updateProduct,
+  listProducts,
+  deleteProduct,
+} from '@/lib/laravel/product'
+
+import {
+  createCategory,
+  updateCategory,
+  listCategories,
+  deleteCategory,
+} from '@/lib/laravel/category'
 
 import {
   exportInventoryToCSV,
@@ -106,6 +112,10 @@ import {
 
 const categoryFormSchema = z.object({
   name: z.string().min(2, { message: 'Nama kategori minimal 2 karakter.' }),
+  description: z
+    .string()
+    .max(100, { message: 'Deskripsi maksimal 100 karakter.' })
+    .optional(),
 })
 type CategoryFormValues = z.infer<typeof categoryFormSchema>
 type ViewMode = 'card' | 'table'
@@ -115,13 +125,13 @@ const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
 export default function InventoryPage() {
   const router = useRouter()
   const { userData } = useAuth()
-  const { selectedBranch, loadingBranches } = useBranch()
+  const { selectedBranch, isLoadingBranches } = useBranches()
 
   const [viewMode, setViewMode] = useState<ViewMode>('table')
 
-  const [items, setItems] = useState<InventoryItem[]>([])
+  const [items, setItems] = useState<Product[]>([])
   const [totalItems, setTotalItems] = useState(0)
-  const [categories, setCategories] = useState<InventoryCategory[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [loadingItems, setLoadingItems] = useState(true)
   const [loadingCategories, setLoadingCategories] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -130,7 +140,7 @@ export default function InventoryPage() {
   )
   const totalPages = Math.ceil(totalItems / itemsPerPage)
 
-  const debouncedSearchTerm = useDebounce(searchTerm, 500)
+  const debouncedSearchTerm = useDebounce(searchTerm, 1000)
 
   const [currentPage, setCurrentPage] = useState(1)
   const [hasNextPage, setHasNextPage] = useState(false)
@@ -158,9 +168,7 @@ export default function InventoryPage() {
     async function loadCategories() {
       if (selectedBranch) {
         setLoadingCategories(true)
-        const fetchedCategoriesResult = await getInventoryCategories(
-          selectedBranch.id
-        )
+        const fetchedCategoriesResult = await listCategories(selectedBranch.id)
         setCategories(fetchedCategoriesResult)
         setLoadingCategories(false)
       } else {
@@ -182,15 +190,15 @@ export default function InventoryPage() {
       setLoadingItems(true)
 
       const options = {
+        branchId: selectedBranch.id,
         limit: itemsPerPage,
         searchTerm: currentSearchTerm || undefined,
-        page: page, // Kirim nomor halaman
+        page: page || 1,
       }
 
       // Panggil fungsi API yang baru
-      const result = await getInventoryItems(selectedBranch.id, options)
-
-      setItems(result.items)
+      const result = await listProducts(options)
+      setItems(result.data)
       setTotalItems(result.total) // Simpan total item
       setLoadingItems(false)
     },
@@ -219,33 +227,34 @@ export default function InventoryPage() {
   }, [currentPage, debouncedSearchTerm, selectedBranch, fetchData]) // Sertakan semua dependensi relevan
 
   // --- New function for duplicating an item ---
-  const handleDuplicateItem = async (item: InventoryItem) => {
+  const handleDuplicateItem = async (item: Product) => {
     if (!selectedBranch) {
       toast.error('Error', { description: 'Cabang tidak valid.' })
       return
     }
 
     // Find the category name from the fetched categories
-    const category = categories.find((cat) => cat.id === item.categoryId)
+    const category = categories.find((cat) => cat.id === item.category_id)
     if (!category) {
       toast.error('Error', { description: 'Kategori produk tidak ditemukan.' })
       return
     }
 
-    const duplicatedItemData: InventoryItemInput = {
+    const duplicatedItemData: ProductInput = {
       name: `${item.name} (Copy)`,
       sku: '', // Let Appwrite generate a new SKU
-      categoryId: item.categoryId,
-      branchId: selectedBranch.id,
+      category_id: item.category_id,
+      category_name: item.category_name,
+      branch_id: selectedBranch.id,
       quantity: item.quantity, // Copy current quantity
       price: item.price,
-      costPrice: item.costPrice || 0,
-      imageUrl: item.imageUrl || '',
-      imageHint: item.imageHint || '',
+      cost_price: item.cost_price || 0,
+      image_url: item.image_url || '',
+      image_hint: item.image_hint || '',
     }
 
     try {
-      const result = await addInventoryItem(duplicatedItemData, category.name)
+      const result = await createProduct(duplicatedItemData)
 
       if (result && 'error' in result) {
         toast.error('Gagal Duplikasi Produk', {
@@ -282,8 +291,8 @@ export default function InventoryPage() {
     }
   }, [selectedBranch])
 
-  const handleDeleteItem = async (itemId: string, itemName: string) => {
-    const result = await deleteInventoryItem(itemId)
+  const handleDeleteItem = async (itemId: number, itemName: string) => {
+    const result = await deleteProduct(itemId)
     if (result && 'error' in result) {
       toast.error('Gagal Menghapus', {
         description: result.error,
@@ -293,7 +302,7 @@ export default function InventoryPage() {
         description: `${itemName} telah dihapus dari inventaris.`,
       })
 
-      await fetchData(1)
+      await fetchData(1, debouncedSearchTerm)
     }
   }
 
@@ -301,11 +310,12 @@ export default function InventoryPage() {
     values
   ) => {
     if (!selectedBranch) return
-    const categoryData: InventoryCategoryInput = {
+    const categoryData: CategoryInput = {
       name: values.name,
-      branchId: selectedBranch.id,
+      branch_id: selectedBranch.id,
+      description: values.description ? values.description : null,
     }
-    const result = await addInventoryCategory(categoryData)
+    const result = await createCategory(categoryData)
     if (result && 'error' in result) {
       toast.error('Gagal Menambah Kategori', {
         description: result.error,
@@ -315,7 +325,7 @@ export default function InventoryPage() {
         description: `Kategori "${values.name}" telah ditambahkan.`,
       })
       categoryForm.reset()
-      const fetchedCategories = await getInventoryCategories(selectedBranch.id)
+      const fetchedCategories = await listCategories(selectedBranch.id)
       setCategories(fetchedCategories)
     }
   }
@@ -334,11 +344,11 @@ export default function InventoryPage() {
   }
 
   const handleDeleteCategory = async (
-    categoryId: string,
+    category_id: number,
     categoryName: string
   ) => {
     if (!selectedBranch) return
-    const result = await deleteInventoryCategory(categoryId)
+    const result = await deleteCategory(category_id)
     if (result && 'error' in result) {
       toast.error('Gagal Hapus Kategori', {
         description: result.error,
@@ -347,7 +357,7 @@ export default function InventoryPage() {
       toast.success('Kategori Dihapus', {
         description: `Kategori "${categoryName}" telah dihapus.`,
       })
-      const fetchedCategories = await getInventoryCategories(selectedBranch.id)
+      const fetchedCategories = await listCategories(selectedBranch.id)
       setCategories(fetchedCategories)
     }
   }
@@ -445,23 +455,23 @@ export default function InventoryPage() {
     await fetchData(currentPage, debouncedSearchTerm)
   }
 
-  const displayedItems = useMemo(() => {
-    if (!searchTerm.trim()) {
-      return items
-    }
-    const lowerSearchTerm = searchTerm.toLowerCase()
-    return items.filter(
-      (item) =>
-        item.name.toLowerCase().includes(lowerSearchTerm) ||
-        (item.sku && item.sku.toLowerCase().includes(lowerSearchTerm)) ||
-        categories
-          .find((c) => c.id === item.categoryId)
-          ?.name.toLowerCase()
-          .includes(lowerSearchTerm)
-    )
-  }, [items, searchTerm, categories])
+  // const items = useMemo(() => {
+  //   if (!searchTerm.trim()) {
+  //     return items
+  //   }
+  //   const lowerSearchTerm = searchTerm.toLowerCase()
+  //   return items.filter(
+  //     (item) =>
+  //       item.name.toLowerCase().includes(lowerSearchTerm) ||
+  //       (item.sku && item.sku.toLowerCase().includes(lowerSearchTerm)) ||
+  //       categories
+  //         .find((c) => c.id === item.category_id)
+  //         ?.name.toLowerCase()
+  //         .includes(lowerSearchTerm)
+  //   )
+  // }, [items, searchTerm, categories])
 
-  if (loadingBranches && !selectedBranch) {
+  if (isLoadingBranches && !selectedBranch) {
     return (
       <MainLayout>
         <div className='flex h-full items-center justify-center'>
@@ -606,7 +616,7 @@ export default function InventoryPage() {
                 <Skeleton key={i} className='h-10 w-full' />
               ))}
             </div>
-          ) : displayedItems.length === 0 && searchTerm ? (
+          ) : items.length === 0 && searchTerm ? (
             <div className='border rounded-lg shadow-sm overflow-hidden p-10 text-center'>
               <p className='text-sm text-muted-foreground'>
                 Tidak ada produk yang cocok dengan pencarian Anda pada halaman
@@ -639,7 +649,7 @@ export default function InventoryPage() {
               <div className='border rounded-lg shadow-sm overflow-hidden'>
                 <Table>
                   <TableCaption className='text-xs'>
-                    Menampilkan {displayedItems.length} dari {totalItems}
+                    Menampilkan {items.length} dari {totalItems}
                   </TableCaption>
                   <TableHeader>
                     <TableRow>
@@ -668,12 +678,12 @@ export default function InventoryPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {displayedItems.map((product) => (
+                    {items.map((product) => (
                       <TableRow key={product.id}>
                         <TableCell className='hidden sm:table-cell py-1.5 px-2'>
                           <Image
                             src={
-                              product.imageUrl ||
+                              product.image_url ||
                               `https://placehold.co/64x64.png`
                             }
                             alt={product.name}
@@ -681,7 +691,7 @@ export default function InventoryPage() {
                             height={32}
                             className='rounded object-cover h-8 w-8'
                             data-ai-hint={
-                              product.imageHint ||
+                              product.image_hint ||
                               product.name
                                 .split(' ')
                                 .slice(0, 2)
@@ -701,7 +711,7 @@ export default function InventoryPage() {
                           {product.sku || '-'}
                         </TableCell>
                         <TableCell className='hidden lg:table-cell py-1.5 px-2 text-xs'>
-                          {categories.find((c) => c.id === product.categoryId)
+                          {categories.find((c) => c.id === product.category_id)
                             ?.name || 'N/A'}
                         </TableCell>
                         <TableCell className='text-right py-1.5 px-2 text-xs'>
@@ -713,7 +723,7 @@ export default function InventoryPage() {
                         </TableCell>
                         <TableCell className='text-right hidden sm:table-cell py-1.5 px-2 text-xs'>
                           {selectedBranch?.currency}{' '}
-                          {(product.costPrice || 0).toLocaleString('id-ID')}
+                          {(product.cost_price || 0).toLocaleString('id-ID')}
                         </TableCell>
                         <TableCell className='text-right py-1.5 px-2'>
                           <DropdownMenu>

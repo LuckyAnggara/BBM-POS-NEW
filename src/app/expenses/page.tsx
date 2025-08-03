@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -94,7 +94,7 @@ type ExpenseFormValues = z.infer<typeof expenseFormSchema>
 export default function ExpensesPage() {
   const { userData, currentUser } = useAuth()
 
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
 
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [loadingExpenses, setLoadingExpenses] = useState(true)

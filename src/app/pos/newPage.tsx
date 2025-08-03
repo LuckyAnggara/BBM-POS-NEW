@@ -21,7 +21,7 @@ import { EndShiftDialog } from '@/components/pos/EndShiftDialog'
 // Other imports from original file...
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { useAuth } from '@/contexts/auth-context'
 import { toast } from 'sonner'
 import { getInventoryItems } from '@/lib/appwrite/inventory'
@@ -46,7 +46,7 @@ import { CartItem } from '@/lib/appwrite/types'
 export default function POSPage() {
   // -- GANTI BLOK STATE ANDA DENGAN YANG INI --
   // Ambil State dari Context
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   const { userData, currentUser } = useAuth()
   const router = useRouter()
   // General UI State
@@ -60,8 +60,6 @@ export default function POSPage() {
     expectedCash: number
     totalSalesByPaymentMethod: Record<PaymentMethod, number>
   } | null>(null)
-
-
 
   // Bank & Transfer State
   const [availableBankAccounts, setAvailableBankAccounts] = useState<
@@ -112,8 +110,6 @@ export default function POSPage() {
 
   // -- AKHIR DARI BLOK STATE --
 
-
-
   // =================================================================
   // 3. FUNGSI DAN EVENT HANDLER (didefinisikan dengan useCallback)
   // =================================================================
@@ -121,7 +117,6 @@ export default function POSPage() {
   /**
    * Mengambil data pelanggan dan rekening bank untuk cabang yang dipilih.
    */
-
 
   /**
    * Mengambil riwayat transaksi untuk shift yang sedang aktif.
@@ -676,8 +671,6 @@ export default function POSPage() {
           isEndingShift={isEndingShift}
         />
         {/* ... other dialog components */}
-
-        
       </MainLayout>
     </ProtectedRoute>
   )

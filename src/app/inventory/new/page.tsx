@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -56,7 +56,7 @@ type ItemFormValues = z.infer<typeof itemFormSchema>
 
 export default function AddInventoryPage() {
   const router = useRouter()
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   const [categories, setCategories] = React.useState<InventoryCategory[]>([])
   const [loadingCategories, setLoadingCategories] = React.useState(true)
 

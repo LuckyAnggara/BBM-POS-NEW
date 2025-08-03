@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import MainLayout from '@/components/layout/main-layout'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import {
   Card,
   CardContent,
@@ -103,8 +103,8 @@ const chartConfig = {
 type RangePreset = 'today' | 'thisWeek' | 'thisMonth'
 
 export default function DashboardPage() {
-  const { selectedBranch } = useBranch()
-  const { currentUser, userData, loadingAuth, loadingUserData } = useAuth()
+  const { selectedBranch } = useBranches()
+  const { currentUser, userData, isLoading, isLoadingUserData } = useAuth()
 
   const [selectedRangePreset, setSelectedRangePreset] =
     useState<RangePreset>('thisMonth')
@@ -133,7 +133,7 @@ export default function DashboardPage() {
   const fetchActiveShift = useCallback(async () => {
     if (currentUser && selectedBranch) {
       setLoadingShift(true)
-      const shift = await getActiveShift(currentUser.$id, selectedBranch.id)
+      const shift = await getActiveShift(currentUser.id, selectedBranch.id)
       setActiveShiftSummary(shift)
       setLoadingShift(false)
     }
@@ -144,10 +144,10 @@ export default function DashboardPage() {
   }, [fetchActiveShift])
 
   const isCashierWithoutBranch =
-    !loadingAuth &&
-    !loadingUserData &&
+    !isLoading &&
+    !isLoadingUserData &&
     userData?.role === 'cashier' &&
-    !userData.branchId
+    !userData.branch_id
 
   const dashboardTitle = useMemo(() => {
     if (isCashierWithoutBranch) {
@@ -263,7 +263,7 @@ export default function DashboardPage() {
           },
         }),
         getExpenses(selectedBranch.id, { startDate: start, endDate: end }),
-        getActiveShift(currentUser.$id, selectedBranch.id),
+        getActiveShift(currentUser.id, selectedBranch.id),
       ])
 
       let grossRevenueBeforeReturns = 0

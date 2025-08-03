@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -67,7 +67,7 @@ type CustomerFormValues = z.infer<typeof customerFormSchema>
 
 export default function CustomersPage() {
   const { userData } = useAuth()
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loadingCustomers, setLoadingCustomers] = useState(true)

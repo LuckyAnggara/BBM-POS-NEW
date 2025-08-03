@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { useDebounce } from '@uidotdev/usehooks'
 import { getCustomers, Customer } from '@/lib/appwrite/customers'
 import {
@@ -26,7 +26,7 @@ export const ScanCustomerDialog = ({
   onOpenChange,
   onCustomerSelect,
 }: ScanCustomerDialogProps) => {
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   const [searchTerm, setSearchTerm] = useState('')
   const debouncedSearch = useDebounce(searchTerm, 300)
   const [customers, setCustomers] = useState<Customer[]>([])

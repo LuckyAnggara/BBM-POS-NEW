@@ -34,7 +34,7 @@ import {
 } from '@/lib/appwrite/inventory'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { useDebounce } from '@uidotdev/usehooks'
 
 const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
@@ -53,7 +53,7 @@ export function ProductDisplay({
   onAddToCart,
 }: ProductDisplayProps) {
   const { userData, currentUser } = useAuth()
-  const { selectedBranch, loadingBranches } = useBranch()
+  const { selectedBranch, loadingBranches } = useBranches()
   const [items, setItems] = useState<InventoryItem[]>([])
   const [loadingItems, setLoadingItems] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')

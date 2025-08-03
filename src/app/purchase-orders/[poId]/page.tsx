@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -177,7 +177,7 @@ export default function PurchaseOrderDetailPage() {
   const poId = params.poId as string
 
   const { currentUser } = useAuth()
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
 
   const [purchaseOrder, setPurchaseOrder] = useState<PurchaseOrder | null>(null)
   const [loadingPO, setLoadingPO] = useState(true)

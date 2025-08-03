@@ -1,5 +1,5 @@
 import { isValid, parseISO, format } from 'date-fns'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 
 export const formatDate = (isoString?: string): string => {
   // Jika string tidak ada atau kosong, kembalikan 'N/A'
@@ -32,6 +32,6 @@ export const formatDateTwo = (
 }
 
 export const formatCurrency = (amount: number) => {
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString('id-ID')}`
 }

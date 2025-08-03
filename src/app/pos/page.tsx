@@ -1,7 +1,7 @@
 'use client'
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import MainLayout from '@/components/layout/main-layout'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -154,7 +154,7 @@ const COMMON_BANKS = [
 ]
 
 export default function POSPage() {
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
   const { userData, currentUser } = useAuth()
   const router = useRouter()
 

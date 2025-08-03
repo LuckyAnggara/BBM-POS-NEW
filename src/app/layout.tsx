@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import { ReactNode } from 'react'
 import { BranchProvider } from '@/contexts/branch-context'
 import { AuthProvider } from '@/contexts/auth-context' // Import AuthProvider
 import { ThemeProvider } from '@/contexts/theme-context'
@@ -13,17 +14,13 @@ export const metadata: Metadata = {
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.Node
+  children: ReactNode
 }>) {
   return (
     <html lang='en' suppressHydrationWarning>
       <head>
         <link rel='preconnect' href='https://fonts.googleapis.com' />
-        <link
-          rel='preconnect'
-          href='https://fonts.gstatic.com'
-          crossOrigin='true'
-        />
+        <link rel='preconnect' href='https://fonts.gstatic.com' />
         <link
           href='https://fonts.googleapis.com/css2?family=Inter&display=swap'
           rel='stylesheet'

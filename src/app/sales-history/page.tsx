@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 
 import {
   apiDeletePOSTransaction,
@@ -105,7 +105,7 @@ import { formatCurrency, formatDate } from '@/lib/helper'
 
 export default function SalesHistoryPage() {
   const { currentUser, userData } = useAuth()
-  const { selectedBranch } = useBranch()
+  const { selectedBranch } = useBranches()
 
   const [transactions, setTransactions] = useState<TransactionDocument[]>([])
   const [loading, setLoading] = useState(true) // PERBAIKAN: Default ke true untuk loading awal

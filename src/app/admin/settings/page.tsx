@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Branch } from '@/lib/appwrite/types'
 import { toast } from 'sonner'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
@@ -17,23 +17,29 @@ import { AlertCircleIcon, CheckCircle2Icon, PopcornIcon } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 export default function AdminSettingsPage() {
-  const { currentUser, userData, loadingAuth } = useAuth()
+  const {
+    currentUser,
+    userData,
+    isLoadingUserData,
+    isLoading: isLoadingAuth,
+  } = useAuth()
   const {
     branches,
-    loadingBranches,
+    isLoadingBranches: loadingBranches,
     refreshBranches,
     selectedBranch: adminSelectedBranch,
-    setSelectedBranchId: setAdminSelectedBranchId,
-  } = useBranch()
+    getBranchById: setAdminSelectedBranchId,
+  } = useBranches()
   const router = useRouter()
   const [activeTab, setActiveTab] = useState('manage-branches')
 
-  // useEffect(() => {
-  //   if (!loadingAuth && userData?.role !== 'admin') {
-  //     router.push('/dashboard')
-  //   }
-  // }, [userData])
-  if (loadingAuth) {
+  useEffect(() => {
+    if (!isLoadingAuth && userData?.role !== 'admin') {
+      router.push('/dashboard')
+    }
+  }, [userData])
+
+  if (isLoadingAuth) {
     return (
       <div className='flex h-screen items-center justify-center'>
         Memuat data admin...

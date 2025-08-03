@@ -32,62 +32,62 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { useAuth } from '@/contexts/auth-context'
-import { useBranch } from '@/contexts/branch-context'
+import { useBranches } from '@/contexts/branch-context'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useMemo } from 'react'
 
 export function NavUser() {
   const { isMobile } = useSidebar()
-  const { userData, signOut, loadingAuth, loadingUserData } = useAuth()
+  const { userData, logout, isLoading, isLoadingUserData } = useAuth()
 
   const handleLogout = async () => {
-    await signOut()
+    logout()
   }
 
-  const { branches, selectedBranch, setSelectedBranchId, loadingBranches } =
-    useBranch()
+  const { branches, selectedBranch, getBranchById, isLoadingBranches } =
+    useBranches()
 
   const userDisplayName = userData?.name || 'Pengguna'
   const userDisplayRole = userData?.role
     ? userData.role.charAt(0).toUpperCase() + userData.role.slice(1)
-    : loadingBranches
+    : isLoadingBranches
     ? ''
     : 'N/A'
   const userAvatar =
-    userData?.avatarUrl ||
+    userData?.avatar_url ||
     `https://placehold.co/40x40.png?text=${
       userDisplayName?.substring(0, 1) || 'BW'
     }`
 
   const assignedBranchName = useMemo(() => {
-    if (loadingBranches || !userData) return null
+    if (isLoadingBranches || !userData) return null
     if (userData.role === 'admin') return null
-    if (!userData.branchId) return 'Belum ada cabang'
-    const foundBranch = branches.find((b) => b.id === userData.branchId)
+    if (!userData.branch_id) return 'Belum ada cabang'
+    const foundBranch = branches.find((b) => b.id === userData.branch_id)
     return foundBranch?.name || 'ID Cabang tidak valid'
-  }, [userData, branches, loadingBranches])
+  }, [userData, branches, isLoadingBranches])
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        {loadingBranches ? (
+        {isLoadingBranches ? (
           <Skeleton className='h-9 w-full rounded-md' />
         ) : userData?.role === 'admin' ? (
           branches.length > 0 && (
             <Select
-              value={selectedBranch?.id || ''}
+              value={String(selectedBranch?.id || '')}
               onValueChange={(branchId) => {
-                setSelectedBranchId(branchId)
+                getBranchById(branchId)
               }}
               disabled={
-                loadingBranches || (!selectedBranch && branches.length === 0)
+                isLoadingBranches || (!selectedBranch && branches.length === 0)
               }
             >
               <SelectTrigger className='h-9 text-xs rounded-md w-full justify-between bg-sidebar-accent hover:bg-sidebar-accent/90 text-sidebar-accent-foreground'>
                 <SelectValue
                   placeholder={
-                    loadingBranches ? 'Memuat cabang...' : 'Pilih Cabang'
+                    isLoadingBranches ? 'Memuat cabang...' : 'Pilih Cabang'
                   }
                 />
               </SelectTrigger>
@@ -95,7 +95,7 @@ export function NavUser() {
                 {branches.map((branch) => (
                   <SelectItem
                     key={branch.id}
-                    value={branch.id}
+                    value={String(branch.id)}
                     className='text-xs'
                   >
                     {branch.name}
@@ -106,7 +106,7 @@ export function NavUser() {
           )
         ) : (
           <div className='h-9 px-3 py-2 text-xs rounded-md w-full bg-sidebar-accent/50 text-sidebar-foreground/80 text-left truncate flex items-center'>
-            {loadingBranches ? (
+            {isLoadingBranches ? (
               <Skeleton className='h-4 w-24' />
             ) : (
               assignedBranchName || 'Memuat...'

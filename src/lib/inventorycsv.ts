@@ -1,21 +1,10 @@
 import { format } from 'date-fns'
 import { toast } from 'sonner'
-import type {
-  InventoryItem,
-  InventoryCategory,
-  InventoryItemInput,
-} from '@/lib/appwrite/inventory'
-import { addInventoryItem } from '@/lib/appwrite/inventory'
-
-// Tipe Branch didefinisikan di sini untuk digunakan dalam fungsi.
-// Idealnya, ini bisa diekspor dari context jika digunakan di banyak tempat.
-interface Branch {
-  id: string
-  name: string
-}
+import type { Product, Category, ProductInput, Branch } from '@/lib/types'
+import { createProduct } from '@/lib/laravel/product'
 
 // --- Type Definitions ---
-export interface ParsedCsvItem extends InventoryItemInput {
+export interface ParsedCsvItem extends ProductInput {
   isDuplicateSku?: boolean
   categoryNameForPreview?: string
   isCategoryInvalid?: boolean
@@ -37,7 +26,7 @@ const escapeCSVField = (field: any): string => {
 }
 
 export const exportInventoryToCSV = (
-  items: InventoryItem[],
+  items: Product[],
   selectedBranch: Branch | null
 ) => {
   if (!items || items.length === 0) {
@@ -51,13 +40,13 @@ export const exportInventoryToCSV = (
     'id',
     'name',
     'sku',
-    'categoryId',
-    'categoryName',
+    'category_id',
+    'category_name',
     'quantity',
     'price',
-    'costPrice',
-    'imageUrl',
-    'imageHint',
+    'cost_price',
+    'image_url',
+    'image_hint',
   ]
   const csvRows = [headers.join(',')]
 
@@ -87,7 +76,7 @@ export const exportInventoryToCSV = (
 // --- Template Download Logic ---
 
 export const downloadInventoryTemplateCSV = (
-  categories: InventoryCategory[],
+  categories: Category[],
   selectedBranch: Branch | null
 ) => {
   if (!selectedBranch) {
@@ -99,12 +88,12 @@ export const downloadInventoryTemplateCSV = (
   const headers = [
     'name',
     'sku',
-    'categoryId',
+    'category_id',
     'quantity',
     'price',
-    'costPrice',
-    'imageUrl',
-    'imageHint',
+    'cost_price',
+    'image_url',
+    'image_hint',
   ]
   let csvString = ''
 
@@ -114,22 +103,22 @@ export const downloadInventoryTemplateCSV = (
   csvString +=
     "# 2. 'sku': Stock Keeping Unit (Opsional, akan dibuat otomatis jika kosong).\n"
   csvString +=
-    "# 3. 'categoryId': ID Kategori dari daftar di bawah (Wajib diisi).\n"
+    "# 3. 'category_id': ID Kategori dari daftar di bawah (Wajib diisi).\n"
   csvString += "# 4. 'quantity': Jumlah stok awal (Wajib, angka >= 0).\n"
   csvString += "# 5. 'price': Harga Jual Satuan (Wajib, angka >= 0).\n"
   csvString +=
-    "# 6. 'costPrice': Harga Pokok Satuan (Opsional, angka >= 0, default 0).\n"
+    "# 6. 'cost_price': Harga Pokok Satuan (Opsional, angka >= 0, default 0).\n"
   csvString +=
-    "# 7. 'imageUrl': URL Gambar Produk (Opsional, harus URL valid).\n"
+    "# 7. 'image_url': URL Gambar Produk (Opsional, harus URL valid).\n"
   csvString +=
-    "# 8. 'imageHint': Petunjuk untuk placeholder gambar (Opsional, 1-2 kata, contoh: 'biji kopi').\n"
+    "# 8. 'image_hint': Petunjuk untuk placeholder gambar (Opsional, 1-2 kata, contoh: 'biji kopi').\n"
   csvString +=
     '#--------------------------------------------------------------------------------------\n'
   csvString +=
     "# DAFTAR ID KATEGORI YANG TERSEDIA UNTUK CABANG INI (Gunakan 'categoryId' dari sini):\n"
   if (categories.length > 0) {
     categories.forEach((cat) => {
-      csvString += `# categoryId: ${cat.id}, Nama Kategori: ${cat.name}\n`
+      csvString += `# category_id: ${cat.id}, Nama Kategori: ${cat.name}\n`
     })
   } else {
     csvString +=
@@ -162,8 +151,8 @@ export const downloadInventoryTemplateCSV = (
 
 export const parseInventoryCSV = (
   csvContent: string,
-  existingItems: InventoryItem[],
-  allCategories: InventoryCategory[],
+  existingItems: Product[],
+  allCategories: Category[],
   selectedBranchId: string
 ): { data: ParsedCsvItem[]; invalidCategoryCount: number; error?: string } => {
   const lines = csvContent
@@ -181,7 +170,7 @@ export const parseInventoryCSV = (
 
   const headersLine = lines[0].toLowerCase()
   const headers = headersLine.split(',').map((h) => h.trim())
-  const requiredHeaders = ['name', 'categoryid', 'quantity', 'price']
+  const requiredHeaders = ['name', 'category_id', 'quantity', 'price']
   const missingHeaders = requiredHeaders.filter((rh) => !headers.includes(rh))
 
   if (missingHeaders.length > 0) {
@@ -195,13 +184,13 @@ export const parseInventoryCSV = (
   }
 
   const nameIndex = headers.indexOf('name')
-  const categoryIdIndex = headers.indexOf('categoryid')
+  const categoryIdIndex = headers.indexOf('category_id')
   const quantityIndex = headers.indexOf('quantity')
   const priceIndex = headers.indexOf('price')
   const skuIndex = headers.indexOf('sku')
-  const costPriceIndex = headers.indexOf('costprice')
-  const imageUrlIndex = headers.indexOf('imageurl')
-  const imageHintIndex = headers.indexOf('imagehint')
+  const costPriceIndex = headers.indexOf('cost_price')
+  const imageUrlIndex = headers.indexOf('image_url')
+  const imageHintIndex = headers.indexOf('image_hint')
 
   const data: ParsedCsvItem[] = []
   let invalidCategoryCount = 0
@@ -238,7 +227,7 @@ export const parseInventoryCSV = (
       sku.trim() !== '' &&
       existingItems.some((existingItem) => existingItem.sku === sku)
 
-    const category = allCategories.find((cat) => cat.id === categoryId)
+    const category = allCategories.find((cat) => cat.id === Number(categoryId))
     const isCategoryInvalid = !category
     const categoryNameForPreview = category
       ? category.name
@@ -248,19 +237,20 @@ export const parseInventoryCSV = (
     }
 
     data.push({
-      branchId: selectedBranchId,
+      branch_id: selectedBranchId,
       name,
       sku,
-      categoryId,
+      category_id: Number(categoryId),
+      category_name: categoryNameForPreview,
       quantity,
       price,
-      costPrice:
+      cost_price:
         costPriceIndex > -1 && currentline[costPriceIndex]?.trim()
           ? parseFloat(currentline[costPriceIndex].trim())
           : 0,
-      imageUrl:
+      image_url:
         imageUrlIndex > -1 ? currentline[imageUrlIndex]?.trim() : undefined,
-      imageHint:
+      image_hint:
         imageHintIndex > -1 ? currentline[imageHintIndex]?.trim() : undefined,
       isDuplicateSku,
       categoryNameForPreview,
@@ -282,7 +272,7 @@ export const parseInventoryCSV = (
 
 export const batchImportInventory = async (
   parsedData: ParsedCsvItem[],
-  allCategories: InventoryCategory[]
+  allCategories: Category[]
 ): Promise<{
   successCount: number
   errorCount: number
@@ -299,16 +289,16 @@ export const batchImportInventory = async (
       if (itemData.isCategoryInvalid) {
         skippedInvalidCategoryCount++
         throw new Error(
-          `Kategori ID '${itemData.categoryId}' tidak valid untuk produk '${itemData.name}'. Item dilewati.`
+          `Kategori ID '${itemData.category_id}' tidak valid untuk produk '${itemData.name}'. Item dilewati.`
         )
       }
       const selectedCategory = allCategories.find(
-        (c) => c.id === itemData.categoryId
+        (c) => c.id === itemData.category_id
       )
       if (!selectedCategory) {
         skippedInvalidCategoryCount++
         throw new Error(
-          `Kategori dengan ID '${itemData.categoryId}' untuk produk '${itemData.name}' tidak ditemukan. Item dilewati.`
+          `Kategori dengan ID '${itemData.category_id}' untuk produk '${itemData.name}' tidak ditemukan. Item dilewati.`
         )
       }
       const {
@@ -318,7 +308,7 @@ export const batchImportInventory = async (
         ...actualItemData
       } = itemData
 
-      return addInventoryItem(actualItemData, selectedCategory.name)
+      return createProduct(actualItemData)
     })
   )
 

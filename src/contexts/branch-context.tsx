@@ -1,134 +1,169 @@
-// src/contexts/branch-context.tsx
-
 'use client'
 
 import React, {
   createContext,
   useContext,
   useState,
-  useEffect,
   ReactNode,
   useCallback,
+  useEffect,
 } from 'react'
+import api from '@/lib/api' // Menggunakan API client kita
+import { toast } from 'sonner'
+import { Branch } from '@/lib/types'
 import { useAuth } from './auth-context'
-// Ganti impor ke fungsi Appwrite yang baru
-import { listBranches, getBranchById } from '@/lib/appwrite/branches'
-// Pastikan path ke tipe data Branch sudah benar
-import type { Branch } from '@/lib/appwrite/types'
 
+// Tipe data untuk Context
 interface BranchContextType {
   branches: Branch[]
+  isLoadingBranches: boolean
+  isLoadingBranch: boolean
+  fetchBranches: () => Promise<void>
+  getBranchById: (id: string) => Promise<Branch | null>
   selectedBranch: Branch | null
-  setSelectedBranchId: (branchId: string | null) => void
-  loadingBranches: boolean
+  createBranch: (data: Omit<Branch, 'id'>) => Promise<void>
+  updateBranch: (id: string, data: Partial<Branch>) => Promise<void>
+  deleteBranch: (id: string) => Promise<void>
   refreshBranches: () => void
 }
 
 const BranchContext = createContext<BranchContextType | undefined>(undefined)
 
 export const BranchProvider = ({ children }: { children: ReactNode }) => {
-  const { userData, loadingAuth: authLoading } = useAuth() // Ambil status loadingBranches dari auth
   const [branches, setBranches] = useState<Branch[]>([])
+  const [isLoadingBranches, setIsLoadingBranches] = useState(true)
+  const [isLoadingBranch, setIsLoadingBranch] = useState(false)
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null)
-  const [loadingBranches, setLoadingBranches] = useState(true)
-
-  const fetchAndSetBranches = useCallback(async () => {
-    if (!userData) return // Jangan lakukan apa-apa jika tidak ada data user
-
-    setLoadingBranches(true)
+  const { userData, isLoading: isLoadingUser } = useAuth() // Ambil status loadingBranches dari auth
+  // Fungsi untuk mengambil semua data cabang dari backend
+  const fetchBranches = useCallback(async () => {
+    setIsLoadingBranches(true)
     try {
-      const fetchedBranches = await listBranches() // Panggil fungsi Appwrite
-      setBranches(fetchedBranches)
+      const response = await api.get('/api/branches') // Ingat, pakai '/api'
+      setBranches(response.data)
 
-      if (fetchedBranches.length > 0) {
-        const storedBranchId = localStorage.getItem('selectedBranchId')
-        const userBranchId = userData?.branchId
-
-        let branchIdToSelect: string | null = null
-
-        // Prioritas 1: Branch yang tersimpan di localStorage (jika masih valid)
-        if (
-          storedBranchId &&
-          fetchedBranches.some((b) => b.id === storedBranchId)
-        ) {
-          branchIdToSelect = storedBranchId
-        }
-        // Prioritas 2: Branch bawaan dari data user
-        else if (
-          userBranchId &&
-          fetchedBranches.some((b) => b.id === userBranchId)
-        ) {
-          branchIdToSelect = userBranchId
-        }
-        // Prioritas 3: Branch pertama dari daftar
-        else {
-          branchIdToSelect = fetchedBranches[0].id
-        }
-
-        if (branchIdToSelect) {
-          const branchDetails = await getBranchById(branchIdToSelect)
-          setSelectedBranch(branchDetails)
-          localStorage.setItem('selectedBranchId', branchIdToSelect)
-        }
-      } else {
-        // Jika tidak ada cabang sama sekali
-        setSelectedBranch(null)
-        localStorage.removeItem('selectedBranchId')
+      if (userData?.branch_id) {
+        const foundBranch = response.data.find(
+          (branch: Branch) => branch.id === userData.branch_id
+        )
+        setSelectedBranch(foundBranch || null)
       }
     } catch (error) {
       console.error('Failed to fetch branches:', error)
-      setBranches([]) // Kosongkan jika ada error
+      toast.error('Failed to load branches.')
     } finally {
-      setLoadingBranches(false)
+      setIsLoadingBranches(false)
     }
-  }, [userData]) // useCallback bergantung pada userData
+  }, [userData])
 
   useEffect(() => {
     // Hanya fetch jika proses auth selesai dan ada data user
-    if (!authLoading && userData) {
-      fetchAndSetBranches()
-    } else if (!authLoading && !userData) {
+    if (!isLoadingUser && userData) {
+      fetchBranches()
+    } else if (!isLoadingUser && !userData) {
       // Jika proses auth selesai tapi tidak ada user, hentikan loadingBranches
-      setLoadingBranches(false)
+      setIsLoadingBranches(false)
     }
-  }, [userData, authLoading, fetchAndSetBranches])
+  }, [userData, isLoadingUser, fetchBranches])
 
-  const setSelectedBranchId = (branchId: string | null) => {
-    if (branchId) {
-      const branch = branches.find((b) => b.id === branchId)
-      if (branch) {
-        console.log('Selected branch:', branch)
-        localStorage.setItem('selectedBranchId', branch.id)
-        setSelectedBranch(branch)
-      }
-    } else {
+  // Fungsi untuk mengambil satu cabang berdasarkan ID
+  const getBranchById = async (id: number): Promise<Branch | null> => {
+    setIsLoadingBranch(true)
+    try {
+      const response = await api.get(`/api/branches/${id}`)
+      setSelectedBranch(response.data)
+      return response.data
+    } catch (error) {
       setSelectedBranch(null)
-      localStorage.removeItem('selectedBranchId')
+      return null
+    } finally {
+      setIsLoadingBranch(false)
+    }
+  }
+
+  // Fungsi untuk membuat cabang baru
+  const createBranch = async (data: Omit<Branch, 'id'>) => {
+    setIsLoadingBranch(true)
+    try {
+      await api.post('/api/branches', data)
+      toast.success('Branch created successfully!')
+      await fetchBranches() // Muat ulang data setelah berhasil
+    } catch (error: any) {
+      console.error('Failed to create branch:', error)
+      const errorMessage =
+        error.response?.data?.message || 'Failed to create branch.'
+      toast.error(errorMessage)
+      throw new Error(errorMessage)
+    } finally {
+      setIsLoadingBranch(false)
+    }
+  }
+
+  // Fungsi untuk memperbarui data cabang
+  const updateBranch = async (id: string, data: Partial<Branch>) => {
+    setIsLoadingBranches(true)
+    try {
+      await api.put(`/api/branches/${id}`, data)
+      toast.success('Branch updated successfully!')
+      await fetchBranches() // Muat ulang data setelah berhasil
+    } catch (error: any) {
+      console.error(`Failed to update branch ${id}:`, error)
+      const errorMessage =
+        error.response?.data?.message || 'Failed to update branch.'
+      toast.error(errorMessage)
+      throw new Error(errorMessage)
+    } finally {
+      setIsLoadingBranches(false)
+    }
+  }
+
+  // Fungsi untuk menghapus cabang
+  const deleteBranch = async (id: number) => {
+    setIsLoadingBranches(true)
+    try {
+      await api.delete(`/api/branches/${id}`)
+      toast.success('Branch deleted successfully!')
+      setBranches((prev) => prev.filter((branch) => branch.id !== id)) // Hapus dari state
+    } catch (error: any) {
+      console.error(`Failed to delete branch ${id}:`, error)
+      const errorMessage =
+        error.response?.data?.message || 'Failed to delete branch.'
+      toast.error(errorMessage)
+      throw new Error(errorMessage)
+    } finally {
+      setIsLoadingBranches(false)
     }
   }
 
   const refreshBranches = () => {
-    fetchAndSetBranches()
+    fetchBranches()
   }
 
-  const value = {
+  const contextValue = {
     branches,
+    isLoadingBranches,
+    isLoadingBranch,
     selectedBranch,
-    setSelectedBranch,
-    setSelectedBranchId,
-    loadingBranches,
+    fetchBranches,
     refreshBranches,
+    getBranchById,
+    createBranch,
+    updateBranch,
+    deleteBranch,
   }
 
   return (
-    <BranchContext.Provider value={value}>{children}</BranchContext.Provider>
+    <BranchContext.Provider value={contextValue}>
+      {children}
+    </BranchContext.Provider>
   )
 }
 
-export const useBranch = () => {
+// Custom hook untuk menggunakan context
+export const useBranches = () => {
   const context = useContext(BranchContext)
   if (context === undefined) {
-    throw new Error('useBranch must be used within a BranchProvider')
+    throw new Error('useBranches must be used within a BranchProvider')
   }
   return context
 }
