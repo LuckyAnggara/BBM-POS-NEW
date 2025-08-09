@@ -37,23 +37,36 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { PlusCircle, Search, FilePenLine, Trash2 } from 'lucide-react'
+import {
+  PlusCircle,
+  Search,
+  FilePenLine,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react'
 import { useForm, type SubmitHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { Supplier, SupplierInput } from '@/lib/appwrite/suppliers' // Updated import
 import {
-  addSupplier,
-  getSuppliers,
+  ITEMS_PER_PAGE_OPTIONS,
+  type Supplier,
+  type SupplierInput,
+} from '@/lib/types' // Updated import
+import {
+  createSupplier,
+  getSupplierById,
+  listSuppliers,
   updateSupplier,
   deleteSupplier,
-} from '@/lib/appwrite/suppliers' // Updated import
+} from '@/lib/laravel/suppliers' // Updated import
+import { useDebounce } from '@uidotdev/usehooks'
 
 const supplierFormSchema = z.object({
   name: z.string().min(2, { message: 'Nama pemasok minimal 2 karakter.' }),
-  contactPerson: z.string().optional(),
+  contact_person: z.string().optional(),
   email: z
     .string()
     .email({ message: 'Format email tidak valid.' })
@@ -67,7 +80,6 @@ const supplierFormSchema = z.object({
 type SupplierFormValues = z.infer<typeof supplierFormSchema>
 
 export default function SuppliersPage() {
-  const { userData } = useAuth()
   const { selectedBranch } = useBranches()
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -78,12 +90,22 @@ export default function SuppliersPage() {
     null
   )
   const [searchTerm, setSearchTerm] = useState('')
+  const [totalItems, setTotalItems] = useState(0)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(
+    ITEMS_PER_PAGE_OPTIONS[0]
+  )
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
+
+  const debouncedSearchTerm = useDebounce(searchTerm, 1000)
+
+  const [currentPage, setCurrentPage] = useState(1)
+  const [hasNextPage, setHasNextPage] = useState(false)
 
   const supplierForm = useForm<SupplierFormValues>({
     resolver: zodResolver(supplierFormSchema),
     defaultValues: {
       name: '',
-      contactPerson: '',
+      contact_person: '',
       email: '',
       phone: '',
       address: '',
@@ -91,28 +113,60 @@ export default function SuppliersPage() {
     },
   })
 
-  const fetchSuppliers = useCallback(async () => {
+  const fetchSuppliers = useCallback(
+    async (page: number, currentSearchTerm: string) => {
+      if (!selectedBranch) {
+        setSuppliers([])
+        setLoadingSuppliers(false)
+        return
+      }
+      setLoadingSuppliers(true)
+      const result = await listSuppliers({
+        branchId: selectedBranch.id,
+        limit: itemsPerPage,
+        searchTerm: currentSearchTerm || undefined,
+        page: page || 1,
+      })
+      setSuppliers(result.data)
+      setLoadingSuppliers(false)
+    },
+    [selectedBranch]
+  )
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [selectedBranch, itemsPerPage, debouncedSearchTerm])
+
+  useEffect(() => {
     if (!selectedBranch) {
       setSuppliers([])
       setLoadingSuppliers(false)
-      return
+      setHasNextPage(false) // Sesuaikan dengan mode paginasi Anda
+      return // Hentikan eksekusi lebih lanjut
     }
-    setLoadingSuppliers(true)
-    const result = await getSuppliers(selectedBranch.id)
-    setSuppliers(result.suppliers)
-    setLoadingSuppliers(false)
-  }, [selectedBranch])
 
-  useEffect(() => {
-    fetchSuppliers()
-  }, [fetchSuppliers])
+    fetchSuppliers(currentPage, debouncedSearchTerm)
+  }, [currentPage, debouncedSearchTerm, selectedBranch, fetchSuppliers]) // Sertakan semua dependensi relevan
+
+  const handleNextPage = () => {
+    // Cek jika halaman saat ini belum mencapai halaman terakhir
+    if (currentPage < totalPages) {
+      setCurrentPage((prevPage) => prevPage + 1)
+    }
+  }
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage((prevPage) => prevPage - 1)
+    }
+  }
 
   const handleOpenDialog = (supplier: Supplier | null = null) => {
     setEditingSupplier(supplier)
     if (supplier) {
       supplierForm.reset({
         name: supplier.name,
-        contactPerson: supplier.contactPerson || '',
+        contact_person: supplier.contact_person || '',
         email: supplier.email || '',
         phone: supplier.phone || '',
         address: supplier.address || '',
@@ -121,7 +175,7 @@ export default function SuppliersPage() {
     } else {
       supplierForm.reset({
         name: '',
-        contactPerson: '',
+        contact_person: '',
         email: '',
         phone: '',
         address: '',
@@ -143,47 +197,70 @@ export default function SuppliersPage() {
 
     const supplierData: SupplierInput = {
       ...values,
-      branchId: selectedBranch.id,
+      branch_id: selectedBranch.id,
     }
 
-    let result
-    if (editingSupplier) {
-      result = await updateSupplier(editingSupplier.id, supplierData)
-    } else {
-      result = await addSupplier(supplierData)
-    }
+    try {
+      let result
+      if (editingSupplier) {
+        result = await updateSupplier(editingSupplier.id, supplierData)
+      } else {
+        result = await createSupplier(supplierData)
+      }
 
-    if (result && 'error' in result) {
-      toast.success(editingSupplier ? 'Gagal Memperbarui' : 'Gagal Menambah', {
-        description: result.error,
-      })
-    } else {
-      toast.success(
-        editingSupplier ? 'Pemasok Diperbarui' : 'Pemasok Ditambahkan'
+      toast.info(
+        editingSupplier ? 'Pelanggan Diperbarui' : 'Pelanggan Ditambahkan'
       )
       setIsDialogOpen(false)
-      await fetchSuppliers()
+      await fetchSuppliers(1, debouncedSearchTerm)
+    } catch (error: any) {
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error(editingSupplier ? 'Gagal Memperbarui' : 'Gagal Menambah', {
+        description: errorMessage,
+      })
     }
   }
 
   const handleDeleteSupplier = async () => {
     if (!supplierToDelete) return
-    const result = await deleteSupplier(supplierToDelete.id)
-    if (result && 'error' in result) {
+    try {
+      const result = await deleteSupplier(supplierToDelete.id)
+      toast.success(`Pemasok ${supplierToDelete.name} Dihapus`)
+      await fetchSuppliers(1, debouncedSearchTerm)
+    } catch (error: any) {
+      console.error('Gagal menghapus supplier:', error)
+
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
       toast.error('Gagal Menghapus', {
-        description: result.error,
+        description: errorMessage,
       })
-    } else {
-      toast.success('Pemasok Dihapus')
-      await fetchSuppliers()
+    } finally {
+      setSupplierToDelete(null)
     }
-    setSupplierToDelete(null)
   }
 
   const filteredSuppliers = suppliers.filter(
     (supplier) =>
       supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      supplier.contactPerson
+      supplier.contact_person
         ?.toLowerCase()
         .includes(searchTerm.toLowerCase()) ||
       supplier.email?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -253,97 +330,121 @@ export default function SuppliersPage() {
               </Button>
             </div>
           ) : (
-            <div className='border rounded-lg shadow-sm overflow-hidden'>
-              <Table>
-                <TableCaption className='text-xs'>
-                  Daftar pemasok untuk{' '}
-                  {selectedBranch?.name || 'cabang terpilih'}.
-                </TableCaption>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className='text-xs'>Nama Pemasok</TableHead>
-                    <TableHead className='text-xs hidden sm:table-cell'>
-                      Kontak Person
-                    </TableHead>
-                    <TableHead className='text-xs hidden md:table-cell'>
-                      Email
-                    </TableHead>
-                    <TableHead className='text-xs hidden md:table-cell'>
-                      Telepon
-                    </TableHead>
-                    <TableHead className='text-right text-xs'>Aksi</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredSuppliers.map((supplier) => (
-                    <TableRow key={supplier.id}>
-                      <TableCell className='py-2 text-xs font-medium'>
-                        {supplier.name}
-                      </TableCell>
-                      <TableCell className='py-2 text-xs hidden sm:table-cell'>
-                        {supplier.contactPerson || '-'}
-                      </TableCell>
-                      <TableCell className='py-2 text-xs hidden md:table-cell'>
-                        {supplier.email || '-'}
-                      </TableCell>
-                      <TableCell className='py-2 text-xs hidden md:table-cell'>
-                        {supplier.phone || '-'}
-                      </TableCell>
-                      <TableCell className='text-right py-2'>
-                        <Button
-                          variant='ghost'
-                          size='icon'
-                          className='h-7 w-7'
-                          onClick={() => handleOpenDialog(supplier)}
-                        >
-                          <FilePenLine className='h-3.5 w-3.5' />
-                          <span className='sr-only'>Edit</span>
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant='ghost'
-                              size='icon'
-                              className='h-7 w-7 text-destructive hover:text-destructive/80'
-                              onClick={() => setSupplierToDelete(supplier)}
-                            >
-                              <Trash2 className='h-3.5 w-3.5' />
-                              <span className='sr-only'>Hapus</span>
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Apakah Anda yakin?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription className='text-xs'>
-                                Tindakan ini akan menghapus pemasok "
-                                {supplierToDelete?.name}". Ini tidak dapat
-                                dibatalkan.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel
-                                className='text-xs h-8'
-                                onClick={() => setSupplierToDelete(null)}
-                              >
-                                Batal
-                              </AlertDialogCancel>
-                              <AlertDialogAction
-                                className='text-xs h-8 bg-destructive hover:bg-destructive/90'
-                                onClick={handleDeleteSupplier}
-                              >
-                                Ya, Hapus
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </TableCell>
+            <>
+              <div className='border rounded-lg shadow-sm overflow-hidden'>
+                <Table>
+                  <TableCaption className='text-xs'>
+                    Menampilkan {suppliers.length} dari {totalItems}
+                  </TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className='text-xs'>Nama Pemasok</TableHead>
+                      <TableHead className='text-xs hidden sm:table-cell'>
+                        Kontak Person
+                      </TableHead>
+                      <TableHead className='text-xs hidden md:table-cell'>
+                        Email
+                      </TableHead>
+                      <TableHead className='text-xs hidden md:table-cell'>
+                        Telepon
+                      </TableHead>
+                      <TableHead className='text-right text-xs'>Aksi</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredSuppliers.map((supplier) => (
+                      <TableRow key={supplier.id}>
+                        <TableCell className='py-2 text-xs font-medium'>
+                          {supplier.name}
+                        </TableCell>
+                        <TableCell className='py-2 text-xs hidden sm:table-cell'>
+                          {supplier.contact_person || '-'}
+                        </TableCell>
+                        <TableCell className='py-2 text-xs hidden md:table-cell'>
+                          {supplier.email || '-'}
+                        </TableCell>
+                        <TableCell className='py-2 text-xs hidden md:table-cell'>
+                          {supplier.phone || '-'}
+                        </TableCell>
+                        <TableCell className='text-right py-2'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7'
+                            onClick={() => handleOpenDialog(supplier)}
+                          >
+                            <FilePenLine className='h-3.5 w-3.5' />
+                            <span className='sr-only'>Edit</span>
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                className='h-7 w-7 text-destructive hover:text-destructive/80'
+                                onClick={() => setSupplierToDelete(supplier)}
+                              >
+                                <Trash2 className='h-3.5 w-3.5' />
+                                <span className='sr-only'>Hapus</span>
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>
+                                  Apakah Anda yakin?
+                                </AlertDialogTitle>
+                                <AlertDialogDescription className='text-xs'>
+                                  Tindakan ini akan menghapus pemasok "
+                                  {supplierToDelete?.name}". Ini tidak dapat
+                                  dibatalkan.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel
+                                  className='text-xs h-8'
+                                  onClick={() => setSupplierToDelete(null)}
+                                >
+                                  Batal
+                                </AlertDialogCancel>
+                                <AlertDialogAction
+                                  className='text-xs h-8 bg-destructive hover:bg-destructive/90'
+                                  onClick={handleDeleteSupplier}
+                                >
+                                  Ya, Hapus
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className='flex justify-between items-center pt-2'>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='text-xs h-8'
+                  onClick={handlePrevPage}
+                  disabled={currentPage <= 1 || loadingSuppliers}
+                >
+                  <ChevronLeft className='mr-1 h-4 w-4' /> Sebelumnya
+                </Button>
+                <span className='text-xs text-muted-foreground'>
+                  Halaman {currentPage} dari {totalPages}
+                </span>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='text-xs h-8'
+                  onClick={handleNextPage}
+                  disabled={currentPage >= totalPages || loadingSuppliers}
+                >
+                  Berikutnya <ChevronRight className='ml-1 h-4 w-4' />
+                </Button>
+              </div>
+            </>
           )}
         </div>
 
@@ -375,12 +476,12 @@ export default function SuppliersPage() {
                 )}
               </div>
               <div>
-                <Label htmlFor='contactPerson' className='text-xs'>
+                <Label htmlFor='contact_person' className='text-xs'>
                   Kontak Person
                 </Label>
                 <Input
-                  id='contactPerson'
-                  {...supplierForm.register('contactPerson')}
+                  id='contact_person'
+                  {...supplierForm.register('contact_person')}
                   className='h-9 text-xs mt-1'
                   placeholder='Nama kontak'
                 />

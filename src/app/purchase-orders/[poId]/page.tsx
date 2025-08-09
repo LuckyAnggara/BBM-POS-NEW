@@ -503,7 +503,7 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
-  const formatDate = (
+  const formatDateIntl = (
     dateInput: string | Date | undefined,
     includeTime = false
   ) => {
@@ -875,7 +875,7 @@ export default function PurchaseOrderDetailPage() {
                           Tanggal Pesan
                         </p>
                         <p className='font-semibold'>
-                          {formatDate(purchaseOrder.orderDate)}
+                          {formatDateIntl(purchaseOrder.orderDate)}
                         </p>
                       </div>
                     </div>
@@ -888,7 +888,7 @@ export default function PurchaseOrderDetailPage() {
                         </p>
                         <p className='font-semibold'>
                           {purchaseOrder.expectedDeliveryDate
-                            ? formatDate(purchaseOrder.expectedDeliveryDate)
+                            ? formatDateIntl(purchaseOrder.expectedDeliveryDate)
                             : '-'}
                         </p>
                       </div>
@@ -944,7 +944,9 @@ export default function PurchaseOrderDetailPage() {
                             </p>
                             <p className='font-semibold'>
                               {purchaseOrder.paymentDueDateOnPO
-                                ? formatDate(purchaseOrder.paymentDueDateOnPO)
+                                ? formatDateIntl(
+                                    purchaseOrder.paymentDueDateOnPO
+                                  )
                                 : '-'}
                             </p>
                           </div>
@@ -973,9 +975,12 @@ export default function PurchaseOrderDetailPage() {
                   )}
                   <Separator />
                   <div className='space-y-1 text-xs text-muted-foreground'>
-                    <p>Dibuat: {formatDate(purchaseOrder.$createdAt, true)}</p>
                     <p>
-                      Diperbarui: {formatDate(purchaseOrder.$updatedAt, true)}
+                      Dibuat: {formatDateIntl(purchaseOrder.$createdAt, true)}
+                    </p>
+                    <p>
+                      Diperbarui:{' '}
+                      {formatDateIntl(purchaseOrder.$updatedAt, true)}
                     </p>
                   </div>
                 </CardContent>
@@ -1057,7 +1062,7 @@ export default function PurchaseOrderDetailPage() {
                             <div>
                               <p>
                                 <strong>Tgl:</strong>{' '}
-                                {formatDate(pmt.paymentDate, true)} -{' '}
+                                {formatDateIntl(pmt.paymentDate, true)} -{' '}
                                 <strong>
                                   {formatCurrency(pmt.amountPaid)}
                                 </strong>{' '}

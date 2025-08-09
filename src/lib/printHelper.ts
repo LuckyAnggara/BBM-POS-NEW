@@ -1,6 +1,6 @@
 // Definisikan tipe data untuk transaksi agar kode lebih aman dan mudah dibaca
 
-import { Branch, TransactionViewModel } from './appwrite/types'
+import { Branch, Sale, SaleDetail } from './types'
 import { toast } from 'sonner'
 
 export interface TransactionItem {
@@ -36,33 +36,33 @@ export const handlePrint = async ({
 }: {
   printerType: PrinterType
   branch: Branch
-  transaction: TransactionViewModel
+  transaction: Sale
 }) => {
   const testData = {
     printMode: printerType === '58mm' ? '58mm' : 'dot-matrix',
     data: {
       branchName: branch.name || 'null',
       branchAddress: branch.address || 'null',
-      branchPhone: branch.phoneNumber || 'null',
-      invoiceNumber: transaction.transactionNumber || 'null',
-      transactionDate: transaction.$createdAt.toString(),
-      cashierName: transaction.user.name || 'Kasir 01',
+      branchPhone: branch.phone || 'null',
+      invoiceNumber: transaction.transaction_number || 'null',
+      transactionDate: transaction.created_at.toString(),
+      cashierName: transaction.user_name || 'Kasir 01',
       customerName: transaction.customer?.name || 'Pelanggan Umum',
-      items: transaction.items.map((item) => ({
-        name: item.productName,
+      items: (transaction.sale_details ?? []).map((item) => ({
+        name: item.product_name,
         quantity: item.quantity,
-        price: item.priceAtSale,
+        price: item.price_at_sale,
         total: item.subtotal,
       })),
       subtotal: transaction.subtotal,
-      taxAmount: transaction.taxAmount,
-      totalAmount: transaction.totalAmount,
-      paymentMethod: transaction.paymentMethod,
-      amountPaid: transaction.amountPaid,
-      changeGiven: transaction.changeGiven,
+      taxAmount: transaction.tax_amount,
+      totalAmount: transaction.total_amount,
+      paymentMethod: transaction.payment_method,
+      amountPaid: transaction.amount_paid,
+      changeGiven: transaction.change_given,
     },
   }
-  const port = branch.printerPort || '3000'
+  const port = branch.printer_port || '3000'
   const url = `http://localhost:${port}/print` // Endpoint yang benar
 
   try {

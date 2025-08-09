@@ -1,14 +1,32 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranches } from '@/contexts/branch-context'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+
+import {
+  approveSaleAction,
+  listSalesRequest,
+  rejectSaleAction,
+} from '@/lib/laravel/saleService' // Updated import
+
+// import {
+//   createDeletionRequest,
+//   type TransactionDeletionRequestInput,
+// } from '@/lib/appwrite/deletionRequests'
+import { startOfMonth, endOfMonth, endOfDay, set } from 'date-fns'
+import {
+  ITEMS_PER_PAGE_OPTIONS,
+  Sale,
+  SaleRequestActionPayload,
+  SaleStatus,
+  SaleActionParams,
+  AdminRequestActionPayload,
+  ADMIN_REQUEST_SALES_STATUS,
+  Branch,
+} from '@/lib/types'
 import {
   Table,
   TableBody,
@@ -16,633 +34,783 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableCaption,
 } from '@/components/ui/table'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Printer,
+  RotateCcw,
+  CheckCircle,
+  XCircle,
+  Trash2,
+  CalendarIcon,
+  Search,
+  FilterX,
+  MoreHorizontal,
+  Send,
+  ChevronLeft,
+  ChevronRight,
+  CheckCircle2,
+  X,
+} from 'lucide-react'
+import Link from 'next/link'
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
-  CardDescription,
 } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
 import {
-  Eye,
-  CheckSquare,
-  XSquare,
-  RefreshCw,
-  Search,
-  MoreHorizontal,
-  Send,
-  Info,
-} from 'lucide-react'
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogFooter,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogClose,
+  DialogDescription,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import { Calendar } from '@/components/ui/calendar'
+import { format, isValid, parseISO } from 'date-fns'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useToast } from '@/hooks/use-toast'
 import {
-  getPendingDeletionRequestsByBranch,
-  approveDeletionRequest,
-  rejectDeletionRequest,
-  type TransactionDeletionRequest, // This type should now expect string dates
-} from '@/lib/firebase/deletionRequests'
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
+import { useDebounce } from '@uidotdev/usehooks'
 import {
-  format as formatDateFn,
-  isValid as isValidDate,
-  parseISO,
-} from 'date-fns'
-import { id as localeID } from 'date-fns/locale'
-import { Badge } from '@/components/ui/badge'
-import { Timestamp } from 'firebase/firestore' // Keep for type hints if needed locally, but data will be string
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle as DialogModalTitle,
-  DialogDescription as DialogModalDescription,
-  DialogFooter as DialogModalFooter,
-  DialogClose,
-} from '@/components/ui/dialog'
-import { cn } from '@/lib/utils'
+  formatCurrency,
+  formatDateIntl,
+  formatDateIntlIntl,
+} from '@/lib/helper'
 
-export default function DeletionRequestsPage() {
-  const { userData, currentUser } = useAuth()
-  const { selectedBranch } = useBranches()
-  const { toast } = useToast()
+export default function SalesHistoryPage() {
+  const { currentUser, userData } = useAuth()
 
-  const [requests, setRequests] = useState<TransactionDeletionRequest[]>([])
-  const [filteredRequests, setFilteredRequests] = useState<
-    TransactionDeletionRequest[]
-  >([])
-  const [loadingRequests, setLoadingRequests] = useState(true)
+  const [transactions, setTransactions] = useState<Sale[]>([])
+  const [loading, setLoading] = useState(true) // PERBAIKAN: Default ke true untuk loading awal
+  const [startDate, setStartDate] = useState<Date | undefined>(
+    startOfMonth(new Date())
+  )
+  const [statusTransaction, setStatusTransaction] = useState('all')
+  const { branches } = useBranches()
+  const [currentBranchId, setCurrentBranchId] = useState<string | undefined>(
+    'all'
+  )
+  const [endDate, setEndDate] = useState<Date | undefined>(endOfDay(new Date()))
   const [searchTerm, setSearchTerm] = useState('')
+  const [itemsPerPage, setItemsPerPage] = useState<number>(
+    ITEMS_PER_PAGE_OPTIONS[0]
+  )
+  const [totalItems, setTotalItems] = useState(0)
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
 
-  const [requestToProcess, setRequestToProcess] =
-    useState<TransactionDeletionRequest | null>(null)
-  const [isApproveDialogVisible, setIsApproveDialogVisible] = useState(false)
-  const [isRejectDialogVisible, setIsRejectDialogVisible] = useState(false)
-  const [adminPasswordInput, setAdminPasswordInput] = useState('')
-  const [adminRejectionReasonInput, setAdminRejectionReasonInput] = useState('')
-  const [processingAction, setProcessingAction] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [approveDialogOpen, setApproveDialogOpen] = useState(false)
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false)
 
-  const branchId = selectedBranch?.id
-  const branchName = selectedBranch?.name
-  const userRole = userData?.role
+  const [transactionInAction, setTransactionInAction] = useState<Sale | null>(
+    null
+  )
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [isloadingProcess, setIsloadingProcess] = useState(false)
 
-  const fetchRequests = useCallback(
-    async (currentBranchId: string, currentBranchName: string | undefined) => {
-      console.log(
-        `[DeletionRequestsPage] Fetching requests for branch ID: ${currentBranchId}, Branch Name: ${currentBranchName}`
-      )
-      setLoadingRequests(true)
-      try {
-        const fetchedRequestsData = await getPendingDeletionRequestsByBranch(
-          currentBranchId
-        )
-        console.log(
-          '[DeletionRequestsPage] Fetched Deletion Requests from Firestore:',
-          fetchedRequestsData
-        )
-        setRequests(fetchedRequestsData)
-        if (fetchedRequestsData.length === 0 && !loadingRequests) {
-          // Check loadingRequests to avoid premature toast
-          toast({
-            title: 'Tidak Ada Permintaan',
-            description: `Tidak ada permintaan hapus transaksi tertunda untuk cabang "${currentBranchName}".`,
-            variant: 'default',
-          })
-        }
-      } catch (error) {
-        console.error('Error fetching deletion requests', error)
-        toast({
-          title: 'Gagal Memuat',
-          description: 'Tidak dapat memuat daftar permintaan.',
-          variant: 'destructive',
-        })
-      } finally {
-        setLoadingRequests(false)
+  const [requestedDeletionIds, setRequestedDeletionIds] = useState<Set<number>>(
+    new Set()
+  )
+
+  const debouncedSearchTerm = useDebounce(searchTerm, 1000)
+
+  const fetchTransactions = useCallback(
+    async (page: number, currentSearchTerm: string) => {
+      if (!currentUser || !startDate || !endDate) {
+        setTransactions([])
+        setTotalItems(0)
+        return
+      }
+
+      if (endDate < startDate) {
+        toast.error('Rentang Tanggal Tidak Valid')
+        return
+      }
+      setLoading(true)
+
+      // PERBAIKAN 3: Format tanggal yang aman saat akan melakukan query
+      const finalStartDate = new Date(startDate)
+      finalStartDate.setHours(0, 0, 0, 0) // Set ke awal hari
+
+      const finalEndDate = new Date(endDate)
+      finalEndDate.setHours(23, 59, 59, 999) // Set ke akhir hari
+
+      const result = await listSalesRequest({
+        branchId: currentBranchId,
+        startDate: finalStartDate.toISOString(),
+        endDate: finalEndDate.toISOString(),
+        searchTerm: debouncedSearchTerm,
+        limit: itemsPerPage,
+        page: currentPage,
+        status: statusTransaction,
+      })
+
+      setTransactions(result.data)
+      setTotalItems(result.total)
+      setLoading(false)
+
+      if (
+        result.data.length === 0 &&
+        (debouncedSearchTerm || startDate || endDate)
+      ) {
+        // Hanya tampilkan toast jika user sedang melakukan filter/pencarian
+        toast.info('Tidak Ada Transaksi Ditemukan')
       }
     },
-    [toast]
-  ) // Removed loadingRequests from here
+    [
+      currentUser,
+      currentBranchId,
+      startDate,
+      endDate,
+      debouncedSearchTerm,
+      itemsPerPage,
+      currentPage,
+      statusTransaction,
+    ]
+  )
 
   useEffect(() => {
-    if (userRole === 'admin' && branchId && branchName) {
-      fetchRequests(branchId, branchName)
-    } else if (userRole === 'admin' && !branchId) {
-      setRequests([]) // Clear requests if no branch is selected
-      setFilteredRequests([])
-      setLoadingRequests(false) // Stop loading if no branch is selected
+    fetchTransactions(1, debouncedSearchTerm)
+  }, [fetchTransactions]) // Hanya perlu fetchTransactions sebagai dependensi
+
+  const handleNextPage = () => {
+    // Cek jika halaman saat ini belum mencapai halaman terakhir
+    if (currentPage < totalPages) {
+      setCurrentPage((prevPage) => prevPage + 1)
     }
-  }, [branchId, branchName, userRole, fetchRequests])
+  }
 
-  useEffect(() => {
-    if (!searchTerm.trim()) {
-      setFilteredRequests(requests)
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage((prevPage) => prevPage - 1)
+    }
+  }
+
+  const handleOpenDialog = (tx: Sale, type: 'approve' | 'reject') => {
+    setTransactionInAction(tx)
+    if (type === 'approve') {
+      setApproveDialogOpen(true)
+    } else {
+      setRejectDialogOpen(true)
+    }
+  }
+
+  const handleConfirmationRequest = async () => {
+    if (!transactionInAction || currentUser?.role !== 'admin') {
+      toast.error('Error', {
+        description: 'Data tidak lengkap untuk mengajukan permintaan.',
+      })
       return
     }
-    const lowerSearchTerm = searchTerm.toLowerCase()
-    const searchResults = requests.filter(
-      (req) =>
-        req.transactionInvoiceNumber.toLowerCase().includes(lowerSearchTerm) ||
-        req.requestedByUserName.toLowerCase().includes(lowerSearchTerm) ||
-        req.reason.toLowerCase().includes(lowerSearchTerm)
-    )
-    setFilteredRequests(searchResults)
-  }, [searchTerm, requests])
+    setIsloadingProcess(true)
 
-  const formatDate = (
-    timestampInput: string | Date | Timestamp | number | undefined,
-    withTime = true
-  ): string => {
-    if (!timestampInput) return 'N/A'
-
-    let dateToFormat: Date | null = null
-
-    if (timestampInput instanceof Timestamp) {
-      dateToFormat = timestampInput.toDate()
-    } else if (timestampInput instanceof Date) {
-      dateToFormat = timestampInput
-    } else if (typeof timestampInput === 'string') {
-      const parsedDate = parseISO(timestampInput)
-      if (isValidDate(parsedDate)) {
-        dateToFormat = parsedDate
-      } else {
-        const numericTimestamp = Number(timestampInput)
-        if (
-          !isNaN(numericTimestamp) &&
-          numericTimestamp > 0 &&
-          new Date(numericTimestamp).getFullYear() > 1970
-        ) {
-          // Basic check for valid timestamp numbers
-          dateToFormat = new Date(numericTimestamp)
+    try {
+      const result = await approveSaleAction(transactionInAction!.id)
+      setIsloadingProcess(false)
+      setApproveDialogOpen(false)
+      setTransactionInAction(null)
+      fetchTransactions(currentPage, debouncedSearchTerm)
+      toast.success(
+        `Transaksi berhasil ${
+          transactionInAction.status === 'pending_void' ? 'dihapus' : 'diretur'
+        }`,
+        {
+          description: `Transaksi berhasil ${
+            transactionInAction.status === 'pending_void'
+              ? 'dihapus'
+              : 'diretur'
+          }`,
         }
-      }
-    } else if (typeof timestampInput === 'number') {
-      if (timestampInput > 0 && new Date(timestampInput).getFullYear() > 1970) {
-        dateToFormat = new Date(timestampInput)
-      }
-    }
+      )
+    } catch (error: any) {
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
 
-    if (dateToFormat && isValidDate(dateToFormat)) {
-      return formatDateFn(
-        dateToFormat,
-        withTime ? 'dd MMM yy, HH:mm' : 'dd MMM yy',
-        { locale: localeID }
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error('Gagal memproses permintaan', {
+        description: errorMessage,
+      })
+    } finally {
+      setIsloadingProcess(false)
+    }
+  }
+  // Handler to reject sale request
+  const handleRejectRequest = async () => {
+    if (!transactionInAction || currentUser?.role !== 'admin') {
+      toast.error('Error', {
+        description: 'Data tidak lengkap untuk menolak permintaan.',
+      })
+      return
+    }
+    setIsloadingProcess(true)
+    try {
+      await rejectSaleAction(transactionInAction.id)
+      setRejectDialogOpen(false)
+      setTransactionInAction(null)
+      fetchTransactions(currentPage, debouncedSearchTerm)
+      toast.success('Permintaan transaksi berhasil ditolak', {
+        description: `Transaksi nomor ${transactionInAction.transaction_number} telah ditolak.`,
+      })
+    } catch (error: any) {
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+      toast.error('Gagal menolak permintaan', { description: errorMessage })
+    } finally {
+      setIsloadingProcess(false)
+    }
+  }
+
+  const getStatusChip = (status: SaleStatus) => {
+    if (status === 'returned') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> Diretur
+        </span>
       )
     }
-
-    console.warn(
-      '[DeletionRequestsPage] Invalid or unparseable date received in formatDate:',
-      timestampInput
-    )
-    return 'Tanggal Invalid'
-  }
-
-  const formatCurrency = (amount: number | undefined) => {
-    if (amount === undefined) return 'N/A'
-    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString(
-      'id-ID'
-    )}`
-  }
-
-  const handleOpenApproveDialog = (request: TransactionDeletionRequest) => {
-    setRequestToProcess(request)
-    setAdminPasswordInput('')
-    setIsApproveDialogVisible(true)
-  }
-
-  const handleOpenRejectDialog = (request: TransactionDeletionRequest) => {
-    setRequestToProcess(request)
-    setAdminRejectionReasonInput('')
-    setIsRejectDialogVisible(true)
-  }
-
-  const handleConfirmApproval = async () => {
-    if (!requestToProcess || !currentUser || !userData || !selectedBranch) {
-      toast({
-        title: 'Error',
-        description: 'Data tidak lengkap untuk memproses.',
-        variant: 'destructive',
-      })
-      return
+    if (status === 'voided') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> Dibatalkan
+        </span>
+      )
     }
-    if (!adminPasswordInput) {
-      toast({
-        title: 'Password Diperlukan',
-        description: 'Masukkan password hapus transaksi cabang.',
-        variant: 'destructive',
-      })
-      return
+    if (status === 'pending_return') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> Menunggu Retur
+        </span>
+      )
     }
-    setProcessingAction(true)
-    const result = await approveDeletionRequest(
-      requestToProcess.id,
-      currentUser.uid,
-      userData.name,
-      adminPasswordInput
-    )
-    setProcessingAction(false)
-    setIsApproveDialogVisible(false)
-
-    if (result.success) {
-      toast({
-        title: 'Permintaan Disetujui',
-        description: `Transaksi ${requestToProcess.transactionInvoiceNumber} telah dihapus.`,
-      })
-      if (branchId && branchName) fetchRequests(branchId, branchName)
-    } else {
-      toast({
-        title: 'Gagal Menyetujui',
-        description: result.error || 'Terjadi kesalahan.',
-        variant: 'destructive',
-      })
+    if (status === 'pending_void') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> MenungguDibatalkan
+        </span>
+      )
     }
-    setRequestToProcess(null)
-  }
-
-  const handleConfirmRejection = async () => {
-    if (!requestToProcess || !currentUser || !userData) {
-      toast({
-        title: 'Error',
-        description: 'Data tidak lengkap untuk memproses.',
-        variant: 'destructive',
-      })
-      return
-    }
-    setProcessingAction(true)
-    const result = await rejectDeletionRequest(
-      requestToProcess.id,
-      currentUser.uid,
-      userData.name,
-      adminRejectionReasonInput
-    )
-    setProcessingAction(false)
-    setIsRejectDialogVisible(false)
-
-    if (result.success) {
-      toast({
-        title: 'Permintaan Ditolak',
-        description: `Permintaan hapus untuk ${requestToProcess.transactionInvoiceNumber} telah ditolak.`,
-      })
-      if (branchId && branchName) fetchRequests(branchId, branchName)
-    } else {
-      toast({
-        title: 'Gagal Menolak',
-        description: result.error || 'Terjadi kesalahan.',
-        variant: 'destructive',
-      })
-    }
-    setRequestToProcess(null)
-  }
-
-  const getDeletionRequestStatusBadge = (
-    status: 'pending' | 'approved' | 'rejected' | undefined
-  ) => {
-    switch (status) {
-      case 'pending':
-        return (
-          <Badge
-            variant='outline'
-            className='text-xs border-yellow-500 text-yellow-600'
-          >
-            Tertunda
-          </Badge>
-        )
-      case 'approved':
-        return (
-          <Badge
-            variant='default'
-            className='text-xs bg-green-600 hover:bg-green-700'
-          >
-            Disetujui
-          </Badge>
-        )
-      case 'rejected':
-        return (
-          <Badge variant='destructive' className='text-xs'>
-            Ditolak
-          </Badge>
-        )
-      default:
-        return (
-          <Badge variant='secondary' className='text-xs'>
-            Tidak Diketahui
-          </Badge>
-        )
-    }
-  }
-
-  if (userData?.role !== 'admin') {
     return (
-      <ProtectedRoute>
-        <MainLayout>
-          <div className='p-4 text-center text-destructive'>
-            Hanya admin yang dapat mengakses halaman ini.
-          </div>
-        </MainLayout>
-      </ProtectedRoute>
+      <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700'>
+        <CheckCircle className='mr-1 h-3 w-3' /> Selesai
+      </span>
     )
   }
 
   return (
     <ProtectedRoute>
       <MainLayout>
-        <div className='space-y-6'>
-          <div className='flex flex-col sm:flex-row justify-between items-center gap-3'>
-            <h1 className='text-xl md:text-2xl font-semibold font-headline'>
-              Permintaan Hapus Transaksi{' '}
-              {selectedBranch ? `- ${selectedBranch.name}` : ''}
-            </h1>
-            <div className='flex items-center gap-2 w-full sm:w-auto'>
-              <div className='relative flex-grow sm:flex-grow-0'>
-                <Search className='absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground' />
-                <Input
-                  type='search'
-                  placeholder='Cari Inv/Pemohon/Alasan...'
-                  className='pl-8 w-full sm:w-56 rounded-md h-9 text-xs'
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  disabled={loadingRequests || !selectedBranch}
-                />
-              </div>
-              <Button
-                variant='outline'
-                size='sm'
-                className='text-xs h-9'
-                onClick={() => {
-                  if (branchId && branchName)
-                    fetchRequests(branchId, branchName)
-                }}
-                disabled={loadingRequests || !selectedBranch}
-              >
-                <RefreshCw
-                  className={`mr-1.5 h-3.5 w-3.5 ${
-                    loadingRequests ? 'animate-spin' : ''
-                  }`}
-                />{' '}
-                Segarkan
-              </Button>
-            </div>
-          </div>
+        <div className='space-y-4'>
+          <h1 className='text-xl md:text-2xl font-semibold font-headline'>
+            Daftar Permintaan Transaksi{' '}
+            {currentBranchId
+              ? `- ${
+                  currentBranchId !== 'all'
+                    ? `Cabang ${
+                        branches.find(
+                          (branch) => branch.id === Number(currentBranchId)
+                        )?.name
+                      }`
+                    : 'Semua Cabang'
+                }`
+              : 'Semua Cabang'}
+          </h1>
 
           <Card>
             <CardHeader>
               <CardTitle className='text-base font-semibold'>
-                Daftar Permintaan
+                Filter Transaksi
               </CardTitle>
               <CardDescription className='text-xs'>
-                Tinjau dan proses permintaan penghapusan transaksi dari kasir.
+                Pilih rentang tanggal dan cari untuk menampilkan transaksi.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {loadingRequests ? (
+              <div className='grid grid-cols-1 sm:flex flex-row space-x-4'>
                 <div className='space-y-2'>
-                  {[...Array(3)].map((_, i) => (
+                  <Label htmlFor='itemsPerPage' className='text-xs'>
+                    Tampilkan Data
+                  </Label>
+                  <Select
+                    value={itemsPerPage.toString()}
+                    onValueChange={(value) => {
+                      setItemsPerPage(Number(value))
+                    }}
+                  >
+                    <SelectTrigger className='h-9 text-xs w-24'>
+                      <SelectValue placeholder='Pilih jumlah' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ITEMS_PER_PAGE_OPTIONS.map((option) => (
+                        <SelectItem
+                          key={option}
+                          value={option.toString()}
+                          className='text-xs'
+                        >
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className='space-y-2'>
+                  <Label htmlFor='status' className='text-xs'>
+                    Status
+                  </Label>
+                  <Select
+                    value={statusTransaction}
+                    onValueChange={(value) => {
+                      setStatusTransaction(value)
+                    }}
+                  >
+                    <SelectTrigger className='h-9 text-xs w-32'>
+                      <SelectValue placeholder='Pilih status' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ADMIN_REQUEST_SALES_STATUS.map((option) => (
+                        <SelectItem
+                          key={option}
+                          value={option.toString()}
+                          className='text-xs'
+                        >
+                          {option.toUpperCase()}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className='space-y-2'>
+                  <Label htmlFor='status' className='text-xs'>
+                    Cabang
+                  </Label>
+                  <Select
+                    value={currentBranchId}
+                    onValueChange={(value) => {
+                      setCurrentBranchId(value)
+                    }}
+                  >
+                    <SelectTrigger className='h-9 text-xs w-48'>
+                      <SelectValue placeholder='Pilih cabang' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value='all' className='text-xs'>
+                        Semua Cabang
+                      </SelectItem>
+                      {branches.map((option) => (
+                        <SelectItem
+                          key={option.id}
+                          value={option.id.toString()}
+                          className='text-xs'
+                        >
+                          {option.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className='space-y-2 w-full'>
+                  <Label htmlFor='searchTerm' className='text-xs'>
+                    Cari Invoice/Pelanggan
+                  </Label>
+                  <Input
+                    id='searchTerm'
+                    placeholder='Nomor invoice atau nama...'
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className='h-9 text-xs'
+                  />
+                </div>
+                <div className='flex flex-col space-y-2 justify-end'>
+                  <Label className='text-xs'>Filter Tanggal</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant='outline' className='h-9 text-xs'>
+                        <FilterX className='mr-2 h-4 w-4' /> Filter
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className='w-[320px] lg:w-[500px] space-y-4 p-4'>
+                      <div className='grid grid-cols-1 sm:grid-cols-2 gap-4 items-start'></div>
+                      <div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
+                        <div className='space-y-2'>
+                          <Label htmlFor='startDate' className='text-xs'>
+                            Tanggal Mulai
+                          </Label>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant={'outline'}
+                                className={cn(
+                                  'w-full justify-start text-left font-normal h-9 text-xs',
+                                  !startDate && 'text-muted-foreground'
+                                )}
+                              >
+                                <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
+                                {startDate ? (
+                                  format(startDate, 'dd MMM yyyy')
+                                ) : (
+                                  <span>Pilih tanggal</span>
+                                )}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className='w-auto p-0'>
+                              <Calendar
+                                mode='single'
+                                selected={startDate}
+                                onSelect={setStartDate}
+                                initialFocus
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                        <div className='space-y-2'>
+                          <Label htmlFor='endDate' className='text-xs'>
+                            Tanggal Akhir
+                          </Label>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant={'outline'}
+                                className={cn(
+                                  'w-full justify-start text-left font-normal h-9 text-xs',
+                                  !endDate && 'text-muted-foreground'
+                                )}
+                                disabled={!startDate}
+                              >
+                                <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
+                                {endDate ? (
+                                  format(endDate, 'dd MMM yyyy')
+                                ) : (
+                                  <span>Pilih tanggal</span>
+                                )}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className='w-auto p-0'>
+                              <Calendar
+                                mode='single'
+                                selected={endDate}
+                                onSelect={setEndDate}
+                                initialFocus
+                                disabled={{ before: startDate }}
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className='flex flex-col space-y-2 justify-end'>
+                  <Button
+                    variant='outline'
+                    className='h-9 text-xs'
+                    onClick={() => {
+                      fetchTransactions(1, debouncedSearchTerm)
+                    }}
+                  >
+                    <RotateCcw
+                      className={`mr-2 h-3.5 w-3.5 ${
+                        loading ? 'animate-spin' : ''
+                      }`}
+                    />
+
+                    {/* 3. (Opsional) Ubah teks tombol untuk memberikan feedback yang lebih jelas */}
+                    {loading ? 'Memuat...' : 'Refresh Data'}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className='text-base font-semibold'>
+                Daftar Transaksi
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className='space-y-2'>
+                  {[...Array(5)].map((_, i) => (
                     <Skeleton key={i} className='h-10 w-full' />
                   ))}
                 </div>
-              ) : !selectedBranch ? (
-                <p className='text-sm text-muted-foreground text-center py-6'>
-                  Pilih cabang untuk melihat permintaan.
+              ) : !startDate || !endDate ? (
+                <p className='text-sm text-muted-foreground text-center py-8'>
+                  Silakan pilih rentang tanggal dan klik "Terapkan" untuk
+                  melihat riwayat penjualan.
                 </p>
-              ) : filteredRequests.length === 0 && searchTerm.trim() ? (
-                <p className='text-sm text-muted-foreground text-center py-6'>
-                  Tidak ada permintaan yang cocok dengan pencarian Anda.
+              ) : transactions.length === 0 && debouncedSearchTerm ? (
+                <p className='text-sm text-muted-foreground text-center py-8'>
+                  Tidak ada transaksi yang cocok dengan pencarian Anda untuk
+                  rentang tanggal yang dipilih.
                 </p>
-              ) : requests.length === 0 ? ( // Changed from filteredRequests to requests for initial "no data" message
-                <p className='text-sm text-muted-foreground text-center py-6'>
-                  Belum ada permintaan penghapusan transaksi untuk cabang "
-                  {branchName}".
-                </p>
-              ) : filteredRequests.length === 0 ? ( // If requests has data, but filtered is empty due to search
-                <p className='text-sm text-muted-foreground text-center py-6'>
-                  Tidak ada permintaan yang cocok dengan pencarian Anda.
+              ) : transactions.length === 0 ? (
+                <p className='text-sm text-muted-foreground text-center py-8'>
+                  Tidak ada riwayat penjualan dari tanggal{' '}
+                  {formatDateIntl(startDate.toISOString())} hingga{' '}
+                  {formatDateIntl(endDate.toISOString())}.
                 </p>
               ) : (
-                <div className='border rounded-md overflow-x-auto'>
-                  <Table>
-                    <TableCaption className='text-xs'>
-                      Permintaan penghapusan transaksi.
-                    </TableCaption>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className='text-xs'>No. Invoice</TableHead>
-                        <TableHead className='text-xs hidden md:table-cell'>
-                          Tgl. Transaksi
-                        </TableHead>
-                        <TableHead className='text-xs hidden lg:table-cell text-right'>
-                          Jumlah
-                        </TableHead>
-                        <TableHead className='text-xs'>Diminta Oleh</TableHead>
-                        <TableHead className='text-xs'>Alasan</TableHead>
-                        <TableHead className='text-xs hidden sm:table-cell'>
-                          Tgl. Permintaan
-                        </TableHead>
-                        <TableHead className='text-xs text-center'>
-                          Status Permintaan
-                        </TableHead>
-                        <TableHead className='text-xs text-center'>
-                          Aksi
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredRequests.map((req) => (
-                        <TableRow key={req.id}>
-                          <TableCell className='py-2 text-xs font-medium'>
-                            {req.transactionInvoiceNumber}
-                          </TableCell>
-                          <TableCell className='py-2 text-xs hidden md:table-cell'>
-                            {formatDate(req.transactionDate)}
-                          </TableCell>
-                          <TableCell className='py-2 text-xs hidden lg:table-cell text-right'>
-                            {formatCurrency(req.transactionTotalAmount)}
-                          </TableCell>
-                          <TableCell className='py-2 text-xs'>
-                            {req.requestedByUserName}
-                          </TableCell>
-                          <TableCell
-                            className='py-2 text-xs max-w-[150px] truncate'
-                            title={req.reason}
-                          >
-                            {req.reason}
-                          </TableCell>
-                          <TableCell className='py-2 text-xs hidden sm:table-cell'>
-                            {formatDate(req.requestTimestamp)}
-                          </TableCell>
-                          <TableCell className='text-center py-1.5'>
-                            {getDeletionRequestStatusBadge(req.status)}
-                          </TableCell>
-                          <TableCell className='text-center py-1.5'>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant='ghost'
-                                  size='icon'
-                                  className='h-7 w-7'
-                                  disabled={
-                                    processingAction || req.status !== 'pending'
-                                  }
-                                >
-                                  <MoreHorizontal className='h-4 w-4' />
-                                  <span className='sr-only'>Aksi</span>
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align='end'>
-                                <DropdownMenuItem
-                                  className='text-xs cursor-pointer'
-                                  onClick={() => handleOpenApproveDialog(req)}
-                                  disabled={
-                                    processingAction || req.status !== 'pending'
-                                  }
-                                >
-                                  <CheckSquare className='mr-2 h-3.5 w-3.5' />{' '}
-                                  Setujui
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className='text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
-                                  onClick={() => handleOpenRejectDialog(req)}
-                                  disabled={
-                                    processingAction || req.status !== 'pending'
-                                  }
-                                >
-                                  <XSquare className='mr-2 h-3.5 w-3.5' /> Tolak
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
+                <>
+                  <div className='border rounded-md overflow-x-auto'>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className='text-xs'>No. Invoice</TableHead>
+                          <TableHead className='text-xs'>Tanggal</TableHead>
+                          <TableHead className='text-xs hidden md:table-cell'>
+                            Pelanggan
+                          </TableHead>
+                          <TableHead className='text-xs hidden sm:table-cell'>
+                            Metode Bayar
+                          </TableHead>
+                          <TableHead className='text-xs text-right'>
+                            Total
+                          </TableHead>
+                          <TableHead className='text-xs text-center'>
+                            Status
+                          </TableHead>
+                          <TableHead className='text-xs text-center'>
+                            Aksi
+                          </TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                      </TableHeader>
+                      <TableBody>
+                        {transactions.map((tx) => (
+                          <TableRow
+                            key={tx.id}
+                            className={cn(
+                              tx.status === 'returned' &&
+                                'bg-muted/50 hover:bg-muted/60'
+                            )}
+                          >
+                            <TableCell className='text-xs font-medium py-2'>
+                              {tx.transaction_number || tx.id}
+                            </TableCell>
+                            <TableCell className='text-xs py-2'>
+                              {formatDateIntlIntl(tx.created_at)}
+                            </TableCell>
+                            <TableCell className='text-xs hidden md:table-cell py-2'>
+                              {tx.customer_name || '-'}
+                            </TableCell>
+                            <TableCell className='text-xs capitalize hidden sm:table-cell py-2'>
+                              {tx.payment_method}
+                            </TableCell>
+                            <TableCell className='text-xs text-right py-2'>
+                              {formatCurrency(tx.total_amount)}
+                            </TableCell>
+                            <TableCell className='text-xs text-center py-2'>
+                              {getStatusChip(tx.status)}
+                              {tx.status === 'returned' &&
+                                tx.returned_reason && (
+                                  <p
+                                    className='text-xs text-muted-foreground italic mt-0.5 max-w-[150px] truncate'
+                                    title={tx.returned_reason}
+                                  >
+                                    Alasan: {tx.returned_reason}
+                                  </p>
+                                )}
+                            </TableCell>
+                            <TableCell className='text-xs text-center py-2'>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                className='text-xs cursor-pointer text-green-700 focus:text-green-800 focus:bg-green-50 '
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  // 2. Tetap panggil fungsi Anda untuk membuka dialog
+                                  handleOpenDialog(tx, 'approve')
+                                }}
+                                disabled={requestedDeletionIds.has(tx.id)}
+                              >
+                                <CheckCircle2 className='mr-2 h-3.5 w-3.5' />
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                className='text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  // 2. Tetap panggil fungsi Anda untuk membuka dialog
+                                  handleOpenDialog(tx, 'reject')
+                                }}
+                                disabled={requestedDeletionIds.has(tx.id)}
+                              >
+                                <XCircle className='mr-2 h-3.5 w-3.5' />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className='flex justify-between items-center pt-2'>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      className='text-xs h-8'
+                      onClick={handlePrevPage}
+                      disabled={currentPage <= 1 || loading}
+                    >
+                      <ChevronLeft className='mr-1 h-4 w-4' /> Sebelumnya
+                    </Button>
+                    <span className='text-xs text-muted-foreground'>
+                      Halaman {currentPage} dari {totalPages}
+                    </span>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      className='text-xs h-8'
+                      onClick={handleNextPage}
+                      disabled={currentPage >= totalPages || loading}
+                    >
+                      Berikutnya <ChevronRight className='ml-1 h-4 w-4' />
+                    </Button>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>
         </div>
 
-        {/* Approve Dialog */}
-        <Dialog
-          open={isApproveDialogVisible}
-          onOpenChange={(open) => {
-            if (!open) setRequestToProcess(null)
-            setIsApproveDialogVisible(open)
-          }}
-        >
+        <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
           <DialogContent className='sm:max-w-md'>
             <DialogHeader>
-              <DialogModalTitle className='text-base'>
-                Setujui Penghapusan Transaksi
-              </DialogModalTitle>
-              <DialogModalDescription className='text-xs'>
-                Anda akan menyetujui penghapusan untuk Invoice:{' '}
-                <strong>{requestToProcess?.transactionInvoiceNumber}</strong>.
+              <DialogTitle className='text-base'>
+                Permintaan Persetujuan Transaksi untuk dilakukan{' '}
+                {transactionInAction?.status === 'pending_void'
+                  ? 'Penghapusan'
+                  : 'Retur'}
+              </DialogTitle>
+              <DialogDescription className='text-xs'>
+                Transaksi nomor{' '}
+                <strong>{transactionInAction?.transaction_number}</strong>{' '}
+                {transactionInAction?.status === 'pending_void'
+                  ? 'akan dihapus'
+                  : 'akan diretur'}{' '}
+                secara permanen. Stok akan dikembalikan jika transaksi belum
+                diretur. Tindakan ini tidak dapat dibatalkan.
                 <br />
-                Jumlah:{' '}
-                {formatCurrency(requestToProcess?.transactionTotalAmount)}
                 <br />
-                Alasan Permintaan: {requestToProcess?.reason}
-                <br />
-                Stok barang akan dikembalikan (jika berlaku).
-              </DialogModalDescription>
+                Alasan:
+                <blockquote className='mt-6 border-l-2 pl-6 italic'>
+                  {transactionInAction?.returned_reason || '-'}
+                </blockquote>
+              </DialogDescription>
             </DialogHeader>
-            <div className='py-2 space-y-2'>
-              <Label htmlFor='adminPasswordInput' className='text-xs'>
-                Password Hapus Transaksi Cabang Ini
-              </Label>
-              <Input
-                id='adminPasswordInput'
-                type='password'
-                value={adminPasswordInput}
-                onChange={(e) => setAdminPasswordInput(e.target.value)}
-                placeholder='Masukkan password cabang'
-                className='text-xs h-9'
-                disabled={processingAction}
-              />
-              <p className='text-xs text-muted-foreground'>
-                Password ini diatur oleh admin untuk cabang "
-                {selectedBranch?.name}".
-              </p>
-            </div>
-            <DialogModalFooter>
+
+            <DialogFooter>
               <DialogClose asChild>
-                <Button
-                  type='button'
-                  variant='outline'
-                  className='text-xs h-8'
-                  disabled={processingAction}
-                >
+                <Button type='button' variant='outline' className='text-xs h-8'>
                   Batal
                 </Button>
               </DialogClose>
               <Button
-                onClick={handleConfirmApproval}
+                onClick={handleConfirmationRequest}
                 className='text-xs h-8'
-                disabled={processingAction || !adminPasswordInput.trim()}
+                disabled={isloadingProcess}
               >
-                {processingAction ? 'Memproses...' : 'Ya, Setujui & Hapus'}
+                {isloadingProcess ? (
+                  'Mengirim...'
+                ) : (
+                  <>
+                    <CheckCircle className='mr-1.5 h-3.5 w-3.5' /> Approve
+                  </>
+                )}
               </Button>
-            </DialogModalFooter>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
-
-        {/* Reject Dialog */}
-        <Dialog
-          open={isRejectDialogVisible}
-          onOpenChange={(open) => {
-            if (!open) setRequestToProcess(null)
-            setIsRejectDialogVisible(open)
-          }}
-        >
+        {/* Reject Confirmation Dialog */}
+        <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
           <DialogContent className='sm:max-w-md'>
             <DialogHeader>
-              <DialogModalTitle className='text-base'>
-                Tolak Permintaan Penghapusan
-              </DialogModalTitle>
-              <DialogModalDescription className='text-xs'>
-                Anda akan menolak permintaan penghapusan untuk Invoice:{' '}
-                <strong>{requestToProcess?.transactionInvoiceNumber}</strong>.
+              <DialogTitle className='text-base'>
+                Tolak Permintaan Transaksi{' '}
+                {transactionInAction?.status === 'pending_void'
+                  ? 'Penghapusan'
+                  : 'Retur'}
+              </DialogTitle>
+              <DialogDescription className='text-xs'>
+                Transaksi nomor{' '}
+                <strong>{transactionInAction?.transaction_number}</strong> akan
+                ditolak secara permanen. Tindakan ini tidak dapat dibatalkan.
                 <br />
-                Alasan Permintaan Awal: {requestToProcess?.reason}
-              </DialogModalDescription>
+                <br />
+                Alasan Permintaan:
+                <blockquote className='mt-4 border-l-2 pl-6 italic'>
+                  {transactionInAction?.returned_reason || '-'}
+                </blockquote>
+              </DialogDescription>
             </DialogHeader>
-            <div className='py-2 space-y-2'>
-              <Label htmlFor='adminRejectionReasonInput' className='text-xs'>
-                Alasan Penolakan Admin (Opsional)
-              </Label>
-              <Textarea
-                id='adminRejectionReasonInput'
-                value={adminRejectionReasonInput}
-                onChange={(e) => setAdminRejectionReasonInput(e.target.value)}
-                placeholder='Jelaskan mengapa permintaan ditolak (jika perlu)'
-                className='text-xs min-h-[70px]'
-                disabled={processingAction}
-              />
-            </div>
-            <DialogModalFooter>
+            <DialogFooter>
               <DialogClose asChild>
-                <Button
-                  type='button'
-                  variant='outline'
-                  className='text-xs h-8'
-                  disabled={processingAction}
-                >
+                <Button type='button' variant='outline' className='text-xs h-8'>
                   Batal
                 </Button>
               </DialogClose>
               <Button
-                onClick={handleConfirmRejection}
-                variant='destructive'
+                onClick={handleRejectRequest}
                 className='text-xs h-8'
-                disabled={processingAction}
+                disabled={isloadingProcess}
               >
-                {processingAction ? 'Memproses...' : 'Ya, Tolak Permintaan'}
+                {isloadingProcess ? (
+                  'Memproses...'
+                ) : (
+                  <>
+                    <XCircle className='mr-1.5 h-3.5 w-3.5' /> Tolak
+                  </>
+                )}
               </Button>
-            </DialogModalFooter>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </MainLayout>

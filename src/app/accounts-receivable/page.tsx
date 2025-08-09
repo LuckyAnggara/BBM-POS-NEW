@@ -225,7 +225,7 @@ export default function AccountsReceivablePage() {
     }
   }
 
-  const formatDate = (
+  const formatDateIntl = (
     timestamp: Timestamp | undefined,
     includeTime = false
   ) => {
@@ -419,10 +419,12 @@ export default function AccountsReceivablePage() {
                         {tx.customerName || '-'}
                       </TableCell>
                       <TableCell className='py-2 text-xs'>
-                        {formatDate(tx.timestamp)}
+                        {formatDateIntl(tx.timestamp)}
                       </TableCell>
                       <TableCell className='py-2 text-xs hidden md:table-cell'>
-                        {tx.creditDueDate ? formatDate(tx.creditDueDate) : '-'}
+                        {tx.creditDueDate
+                          ? formatDateIntl(tx.creditDueDate)
+                          : '-'}
                       </TableCell>
                       <TableCell className='text-right py-2 text-xs'>
                         {formatCurrency(tx.totalAmount)}
@@ -625,7 +627,7 @@ export default function AccountsReceivablePage() {
                         <li key={idx} className='p-1.5 bg-muted/50 rounded-md'>
                           <p>
                             <strong>Tgl:</strong>{' '}
-                            {formatDate(pmt.paymentDate, true)} -{' '}
+                            {formatDateIntl(pmt.paymentDate, true)} -{' '}
                             <strong>{formatCurrency(pmt.amountPaid)}</strong> (
                             {pmt.paymentMethod})
                           </p>

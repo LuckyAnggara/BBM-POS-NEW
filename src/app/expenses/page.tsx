@@ -262,7 +262,7 @@ export default function ExpensesPage() {
     setIsFilterOpen(false)
   }
 
-  const formatDate = (dateInput: string | Date) => {
+  const formatDateIntl = (dateInput: string | Date) => {
     const date = typeof dateInput === 'string' ? parseISO(dateInput) : dateInput
     return format(date, 'dd MMM yyyy')
   }
@@ -467,7 +467,7 @@ export default function ExpensesPage() {
                   {expenses.map((expense) => (
                     <TableRow key={expense.id}>
                       <TableCell className='py-2 text-xs'>
-                        {formatDate(expense.date)}
+                        {formatDateIntl(expense.date)}
                       </TableCell>
                       <TableCell className='py-2 text-xs'>
                         {expense.category}

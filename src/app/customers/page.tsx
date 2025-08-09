@@ -37,19 +37,40 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { PlusCircle, Search, FilePenLine, Trash2 } from 'lucide-react'
+import {
+  PlusCircle,
+  Search,
+  FilePenLine,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react'
 import { useForm, type SubmitHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { Customer, CustomerInput } from '@/lib/appwrite/customers' // Updated import
 import {
-  addCustomer,
-  getCustomers,
+  ITEMS_PER_PAGE_OPTIONS,
+  type Customer,
+  type CustomerInput,
+} from '@/lib/types' // Updated import
+import {
+  createCustomer,
+  listCustomers,
+  getCustomerById,
   updateCustomer,
   deleteCustomer,
-} from '@/lib/appwrite/customers' // Updated import
+} from '@/lib/laravel/customers' // Updated import
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+
+import { useDebounce } from '@uidotdev/usehooks'
 
 const customerFormSchema = z.object({
   name: z.string().min(2, { message: 'Nama pelanggan minimal 2 karakter.' }),
@@ -66,9 +87,7 @@ const customerFormSchema = z.object({
 type CustomerFormValues = z.infer<typeof customerFormSchema>
 
 export default function CustomersPage() {
-  const { userData } = useAuth()
   const { selectedBranch } = useBranches()
-
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loadingCustomers, setLoadingCustomers] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -76,7 +95,17 @@ export default function CustomersPage() {
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(
     null
   )
+  const [totalItems, setTotalItems] = useState(0)
   const [searchTerm, setSearchTerm] = useState('')
+  const [itemsPerPage, setItemsPerPage] = useState<number>(
+    ITEMS_PER_PAGE_OPTIONS[0]
+  )
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
+
+  const debouncedSearchTerm = useDebounce(searchTerm, 1000)
+
+  const [currentPage, setCurrentPage] = useState(1)
+  const [hasNextPage, setHasNextPage] = useState(false)
 
   const customerForm = useForm<CustomerFormValues>({
     resolver: zodResolver(customerFormSchema),
@@ -89,21 +118,55 @@ export default function CustomersPage() {
     },
   })
 
-  const fetchCustomers = useCallback(async () => {
+  const fetchCustomers = useCallback(
+    async (page: number, currentSearchTerm: string) => {
+      if (!selectedBranch) {
+        setCustomers([])
+        setLoadingCustomers(false)
+        setTotalItems(0)
+        return
+      }
+      setLoadingCustomers(true)
+      const result = await listCustomers({
+        branchId: selectedBranch.id,
+        limit: itemsPerPage,
+        searchTerm: currentSearchTerm || undefined,
+        page: page || 1,
+      })
+      setCustomers(result.data)
+      setTotalItems(result.total)
+      setLoadingCustomers(false)
+    },
+    [selectedBranch, itemsPerPage]
+  )
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [selectedBranch, itemsPerPage, debouncedSearchTerm])
+
+  useEffect(() => {
     if (!selectedBranch) {
       setCustomers([])
       setLoadingCustomers(false)
-      return
+      setHasNextPage(false) // Sesuaikan dengan mode paginasi Anda
+      return // Hentikan eksekusi lebih lanjut
     }
-    setLoadingCustomers(true)
-    const result = await getCustomers(selectedBranch.id)
-    setCustomers(result.customers)
-    setLoadingCustomers(false)
-  }, [selectedBranch])
 
-  useEffect(() => {
-    fetchCustomers()
-  }, [fetchCustomers])
+    fetchCustomers(currentPage, debouncedSearchTerm)
+  }, [currentPage, debouncedSearchTerm, selectedBranch, fetchCustomers]) // Sertakan semua dependensi relevan
+
+  const handleNextPage = () => {
+    // Cek jika halaman saat ini belum mencapai halaman terakhir
+    if (currentPage < totalPages) {
+      setCurrentPage((prevPage) => prevPage + 1)
+    }
+  }
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage((prevPage) => prevPage - 1)
+    }
+  }
 
   const handleOpenDialog = (customer: Customer | null = null) => {
     setEditingCustomer(customer)
@@ -139,47 +202,65 @@ export default function CustomersPage() {
 
     const customerData: CustomerInput = {
       ...values,
-      branchId: selectedBranch.id,
+      branch_id: selectedBranch.id,
     }
 
-    let result
-    if (editingCustomer) {
-      result = await updateCustomer(editingCustomer.id, customerData)
-    } else {
-      result = await addCustomer(customerData)
-    }
+    try {
+      let result
+      if (editingCustomer) {
+        result = await updateCustomer(editingCustomer.id, customerData)
+      } else {
+        result = await createCustomer(customerData)
+      }
 
-    if (result && 'error' in result) {
-      toast.error(editingCustomer ? 'Gagal Memperbarui' : 'Gagal Menambah', {
-        description: result.error,
-      })
-    } else {
-      toast(editingCustomer ? 'Pelanggan Diperbarui' : 'Pelanggan Ditambahkan')
+      toast.info(
+        editingCustomer ? 'Pelanggan Diperbarui' : 'Pelanggan Ditambahkan'
+      )
       setIsDialogOpen(false)
-      await fetchCustomers()
+      await fetchCustomers(1, debouncedSearchTerm)
+    } catch (error: any) {
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error(editingCustomer ? 'Gagal Memperbarui' : 'Gagal Menambah', {
+        description: errorMessage,
+      })
     }
   }
 
   const handleDeleteCustomer = async () => {
     if (!customerToDelete) return
-    const result = await deleteCustomer(customerToDelete.id)
-    if (result && 'error' in result) {
-      toast.error('Gagal Menghapus', {
-        description: result.error,
-      })
-    } else {
-      toast.success('Pelanggan Dihapus')
-      await fetchCustomers()
-    }
-    setCustomerToDelete(null)
-  }
+    try {
+      const result = await deleteCustomer(customerToDelete.id)
+      toast.success(`Pelanggan ${customerToDelete.name} Dihapus`)
+      await fetchCustomers(1, debouncedSearchTerm)
+    } catch (error: any) {
+      console.error('Gagal menghapus pelanggan:', error)
 
-  const filteredCustomers = customers.filter(
-    (customer) =>
-      customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.phone?.includes(searchTerm)
-  )
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error('Gagal Menghapus', {
+        description: errorMessage,
+      })
+    } finally {
+      setCustomerToDelete(null)
+    }
+  }
 
   return (
     <ProtectedRoute>
@@ -202,6 +283,27 @@ export default function CustomersPage() {
                   disabled={!selectedBranch || loadingCustomers}
                 />
               </div>
+              <Select
+                value={itemsPerPage.toString()}
+                onValueChange={(value) => {
+                  setItemsPerPage(Number(value))
+                }}
+              >
+                <SelectTrigger className='h-9 text-xs rounded-md w-auto sm:w-[100px]'>
+                  <SelectValue placeholder='Tampil' />
+                </SelectTrigger>
+                <SelectContent>
+                  {ITEMS_PER_PAGE_OPTIONS.map((option) => (
+                    <SelectItem
+                      key={option}
+                      value={option.toString()}
+                      className='text-xs'
+                    >
+                      Tampil {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button
                 size='sm'
                 className='rounded-md text-xs'
@@ -225,7 +327,7 @@ export default function CustomersPage() {
                 Pilih cabang untuk mengelola data pelanggan.
               </p>
             </div>
-          ) : filteredCustomers.length === 0 && searchTerm ? (
+          ) : customers.length === 0 && searchTerm ? (
             <div className='border rounded-lg shadow-sm overflow-hidden p-10 text-center'>
               <p className='text-sm text-muted-foreground'>
                 Tidak ada pelanggan yang cocok dengan pencarian Anda.
@@ -246,100 +348,121 @@ export default function CustomersPage() {
               </Button>
             </div>
           ) : (
-            <div className='border rounded-lg shadow-sm overflow-hidden'>
-              <Table>
-                <TableCaption className='text-xs'>
-                  Daftar pelanggan untuk cabang{' '}
-                  {selectedBranch?.name || 'cabang terpilih'}.
-                </TableCaption>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className='text-xs'>Nama Pelanggan</TableHead>
-                    <TableHead className='text-xs hidden sm:table-cell'>
-                      Email
-                    </TableHead>
-                    <TableHead className='text-xs hidden md:table-cell'>
-                      Telepon
-                    </TableHead>
-                    <TableHead className='text-xs hidden lg:table-cell'>
-                      Alamat
-                    </TableHead>
-                    <TableHead className='text-right text-xs'>Aksi</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredCustomers.map((customer) => (
-                    <TableRow key={customer.id}>
-                      <TableCell className='py-2 text-xs font-medium'>
-                        {customer.name}
-                      </TableCell>
-                      <TableCell className='py-2 text-xs hidden sm:table-cell'>
-                        {customer.email || '-'}
-                      </TableCell>
-                      <TableCell className='py-2 text-xs hidden md:table-cell'>
-                        {customer.phone || '-'}
-                      </TableCell>
-                      <TableCell
-                        className='py-2 text-xs hidden lg:table-cell truncate max-w-xs'
-                        title={customer.address}
-                      >
-                        {customer.address || '-'}
-                      </TableCell>
-                      <TableCell className='text-right py-2'>
-                        <Button
-                          variant='ghost'
-                          size='icon'
-                          className='h-7 w-7'
-                          onClick={() => handleOpenDialog(customer)}
-                        >
-                          <FilePenLine className='h-3.5 w-3.5' />
-                          <span className='sr-only'>Edit</span>
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant='ghost'
-                              size='icon'
-                              className='h-7 w-7 text-destructive hover:text-destructive/80'
-                              onClick={() => setCustomerToDelete(customer)}
-                            >
-                              <Trash2 className='h-3.5 w-3.5' />
-                              <span className='sr-only'>Hapus</span>
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Apakah Anda yakin?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription className='text-xs'>
-                                Tindakan ini akan menghapus pelanggan "
-                                {customerToDelete?.name}". Ini tidak dapat
-                                dibatalkan.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel
-                                className='text-xs h-8'
-                                onClick={() => setCustomerToDelete(null)}
-                              >
-                                Batal
-                              </AlertDialogCancel>
-                              <AlertDialogAction
-                                className='text-xs h-8 dark:text-white bg-destructive hover:bg-destructive/90'
-                                onClick={handleDeleteCustomer}
-                              >
-                                Ya, Hapus
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </TableCell>
+            <>
+              <div className='border rounded-lg shadow-sm overflow-hidden'>
+                <Table>
+                  <TableCaption className='text-xs'>
+                    Menampilkan {customers.length} dari {totalItems}
+                  </TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className='text-xs'>Nama Pelanggan</TableHead>
+                      <TableHead className='text-xs hidden sm:table-cell'>
+                        Email
+                      </TableHead>
+                      <TableHead className='text-xs hidden md:table-cell'>
+                        Telepon
+                      </TableHead>
+                      <TableHead className='text-xs hidden lg:table-cell'>
+                        Alamat
+                      </TableHead>
+                      <TableHead className='text-right text-xs'>Aksi</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {customers.map((customer) => (
+                      <TableRow key={customer.id}>
+                        <TableCell className='py-2 text-xs font-medium'>
+                          {customer.name}
+                        </TableCell>
+                        <TableCell className='py-2 text-xs hidden sm:table-cell'>
+                          {customer.email || '-'}
+                        </TableCell>
+                        <TableCell className='py-2 text-xs hidden md:table-cell'>
+                          {customer.phone || '-'}
+                        </TableCell>
+                        <TableCell className='py-2 text-xs hidden lg:table-cell truncate max-w-xs'>
+                          {customer.address || '-'}
+                        </TableCell>
+                        <TableCell className='text-right py-2'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7'
+                            onClick={() => handleOpenDialog(customer)}
+                          >
+                            <FilePenLine className='h-3.5 w-3.5' />
+                            <span className='sr-only'>Edit</span>
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant='ghost'
+                                size='icon'
+                                className='h-7 w-7 text-destructive hover:text-destructive/80'
+                                onClick={() => setCustomerToDelete(customer)}
+                              >
+                                <Trash2 className='h-3.5 w-3.5' />
+                                <span className='sr-only'>Hapus</span>
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>
+                                  Apakah Anda yakin?
+                                </AlertDialogTitle>
+                                <AlertDialogDescription className='text-xs'>
+                                  Tindakan ini akan menghapus pelanggan "
+                                  {customerToDelete?.name}". Ini tidak dapat
+                                  dibatalkan.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel
+                                  className='text-xs h-8'
+                                  onClick={() => setCustomerToDelete(null)}
+                                >
+                                  Batal
+                                </AlertDialogCancel>
+                                <AlertDialogAction
+                                  className='text-xs h-8 dark:text-white bg-destructive hover:bg-destructive/90'
+                                  onClick={handleDeleteCustomer}
+                                >
+                                  Ya, Hapus
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className='flex justify-between items-center pt-2'>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='text-xs h-8'
+                  onClick={handlePrevPage}
+                  disabled={currentPage <= 1 || loadingCustomers}
+                >
+                  <ChevronLeft className='mr-1 h-4 w-4' /> Sebelumnya
+                </Button>
+                <span className='text-xs text-muted-foreground'>
+                  Halaman {currentPage} dari {totalPages}
+                </span>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='text-xs h-8'
+                  onClick={handleNextPage}
+                  disabled={currentPage >= totalPages || loadingCustomers}
+                >
+                  Berikutnya <ChevronRight className='ml-1 h-4 w-4' />
+                </Button>
+              </div>
+            </>
           )}
         </div>
 
@@ -411,7 +534,7 @@ export default function CustomersPage() {
               </div>
               <div>
                 <Label htmlFor='customerNotes' className='text-xs'>
-                  Catatan
+                  Catatan (Opsional)
                 </Label>
                 <Textarea
                   id='customerNotes'

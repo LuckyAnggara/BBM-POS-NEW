@@ -45,7 +45,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           const response = await api.get('/api/user')
           setUserData(response.data)
           setCurrentUser(response.data)
-          console.log('User data loaded:', response.data)
         } catch (error) {
           // Jika token tidak valid, hapus
           localStorage.removeItem('authToken')
@@ -78,7 +77,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUserData(userData)
       setCurrentUser(userData)
 
-      toast.success('Login successful!')
       router.push('/dashboard') // Arahkan ke dashboard setelah login
     } catch (error: any) {
       console.error('Login failed:', error)

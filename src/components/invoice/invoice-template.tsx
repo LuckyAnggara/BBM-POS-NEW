@@ -23,7 +23,7 @@ export default function InvoiceTemplate({
   branch,
 }: InvoiceTemplateProps) {
   // PERBAIKAN #1: Menggunakan date-fns untuk memformat ISO string dari Appwrite
-  const formatDate = (isoString?: string) => {
+  const formatDateIntl = (isoString?: string) => {
     if (!isoString) return 'N/A'
     const date = parseISO(isoString)
     if (!isValid(date)) return 'Tanggal tidak valid'
@@ -61,7 +61,7 @@ export default function InvoiceTemplate({
             </p>
             <p className='text-xs text-muted-foreground'>
               {/* Menggunakan fungsi format tanggal yang sudah diperbaiki */}
-              Tanggal: {formatDate(transaction.$createdAt)}
+              Tanggal: {formatDateIntl(transaction.$createdAt)}
             </p>
           </div>
         </div>

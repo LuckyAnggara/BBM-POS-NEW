@@ -26,20 +26,18 @@ import {
   FilterX,
   Filter,
 } from 'lucide-react'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
-import type {
-  PurchaseOrder,
-  PurchaseOrderStatus,
-  PurchaseOrderPaymentStatus,
-} from '@/lib/appwrite/purchaseOrders'
 import {
-  getPurchaseOrders,
-  updatePurchaseOrderStatus,
-} from '@/lib/appwrite/purchaseOrders'
+  type PurchaseOrder,
+  type PurchaseOrderStatus,
+  type PurchaseOrderPaymentStatus,
+  ITEMS_PER_PAGE_OPTIONS,
+} from '@/lib/types'
+import { listPurchaseOrders } from '@/lib/laravel/purchaseOrderService'
 import { format, isBefore, startOfDay } from 'date-fns'
 import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
+import { cn, formatCurrency } from '@/lib/utils'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -81,6 +79,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import Link from 'next/link'
+import { useDebounce } from '@uidotdev/usehooks'
+import { formatDateIntl } from '@/lib/helper'
 
 const ALL_PO_STATUSES: PurchaseOrderStatus[] = [
   'draft',
@@ -99,18 +99,16 @@ const ALL_PAYMENT_STATUSES: PurchaseOrderPaymentStatus[] = [
 export default function PurchaseOrdersPage() {
   const { currentUser } = useAuth()
   const { selectedBranch } = useBranches()
-  const { toast } = useToast()
 
-  const [allFetchedPOs, setAllFetchedPOs] = useState<PurchaseOrder[]>([])
-  const [filteredPOs, setFilteredPOs] = useState<PurchaseOrder[]>([])
-  const [loadingPOs, setLoadingPOs] = useState(true)
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([])
+  const [isLoading, setIsLoading] = useState(true)
 
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const [poToUpdate, setPoToUpdate] = useState<{
     id: string
     newStatus: PurchaseOrderStatus
-    poNumber: string
+    po_number: string
   } | null>(null)
 
   // Filter states
@@ -123,6 +121,13 @@ export default function PurchaseOrdersPage() {
     return new Date(today.getFullYear(), today.getMonth() + 1, 0)
   })
   const [searchTerm, setSearchTerm] = useState('')
+  const [itemsPerPage, setItemsPerPage] = useState<number>(
+    ITEMS_PER_PAGE_OPTIONS[0]
+  )
+  const [totalItems, setTotalItems] = useState(0)
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
+
+  const [currentPage, setCurrentPage] = useState(1)
   const [statusPoFilter, setStatusPoFilter] = useState<
     PurchaseOrderStatus | 'all'
   >('all')
@@ -130,137 +135,78 @@ export default function PurchaseOrdersPage() {
     PurchaseOrderPaymentStatus | 'all'
   >('all')
 
-  const fetchPurchaseOrdersWithDateFilters = useCallback(async () => {
-    if (!selectedBranch || !startDate || !endDate) {
-      // This case should ideally be handled by UI disabling apply button
-      // or by calling loadDefaultForBranch if no dates are set.
-      // For now, if called without dates, it implies an error or clears data.
-      setAllFetchedPOs([])
-      setFilteredPOs([])
-      setLoadingPOs(false)
-      return
-    }
-    setLoadingPOs(true)
-    try {
-      const fetchedPOs = await getPurchaseOrders({
-        branchId: selectedBranch.id,
-        options: {
-          startDate: startDate,
-          endDate: endDate,
-        },
-      })
-      setAllFetchedPOs(fetchedPOs.documents)
-      setLoadingPOs(false)
-      if (fetchedPOs.total === 0) {
-        toast({
-          title: 'Tidak Ada Pesanan',
-          description:
-            'Tidak ada pesanan pembelian ditemukan untuk filter tanggal yang dipilih.',
-          variant: 'default',
-        })
-      }
-    } catch (error) {
-      console.error('Error fetching purchase orders with date filters:', error)
-      toast({
-        title: 'Gagal Memuat Pesanan',
-        description: 'Terjadi kesalahan saat mengambil data pesanan pembelian.',
-        variant: 'destructive',
-      })
-      setLoadingPOs(false)
-    }
-  }, [selectedBranch, startDate, endDate, toast])
+  const debouncedSearchTerm = useDebounce(searchTerm, 1000)
 
-  const loadDefaultForBranch = useCallback(async (branchId: string) => {
-    if (!selectedBranch || !startDate || !endDate) {
-      setAllFetchedPOs([])
-      setFilteredPOs([])
-      setLoadingPOs(false)
-      return
-    }
-    setLoadingPOs(true)
-    const initialPOs = await getPurchaseOrders({
-      branchId: selectedBranch.id,
-      options: {
-        startDate: startDate,
-        endDate: endDate,
-      },
-    })
-    setAllFetchedPOs(initialPOs.documents)
-    setLoadingPOs(false)
-  }, [])
+  const fetchTransactions = useCallback(
+    async (page: number, currentSearchTerm: string) => {
+      if (!selectedBranch || !startDate || !endDate) {
+        setPurchaseOrders([])
+        setIsLoading(false)
+        return
+      }
+      setIsLoading(true)
+      try {
+        const options = {
+          branchId: selectedBranch.id,
+          limit: itemsPerPage,
+          search: currentSearchTerm || undefined,
+          start_date: startDate,
+          end_date: endDate,
+          page: page || 1,
+        }
+
+        const fetchedPOs = await listPurchaseOrders(options)
+        setPurchaseOrders(fetchedPOs.data)
+        setIsLoading(false)
+        if (fetchedPOs.total === 0) {
+          toast.info('Tidak Ada Pesanan', {
+            description:
+              'Tidak ada pesanan pembelian ditemukan untuk filter tanggal yang dipilih.',
+          })
+        }
+      } catch (error) {
+        console.error(
+          'Error fetching purchase orders with date filters:',
+          error
+        )
+        toast.error('Gagal Memuat Pesanan', {
+          description:
+            'Terjadi kesalahan saat mengambil data pesanan pembelian.',
+        })
+        setIsLoading(false)
+      }
+    },
+    [selectedBranch, startDate, endDate, toast]
+  )
 
   useEffect(() => {
     if (selectedBranch) {
       if (startDate && endDate) {
-        // If date filters are active, fetch using them
-        fetchPurchaseOrdersWithDateFilters()
-      } else {
-        // Otherwise, load default (e.g., on initial load or after clearing date filters)
-        loadDefaultForBranch(selectedBranch.id)
+        fetchTransactions(currentPage, debouncedSearchTerm)
       }
     } else {
-      // No branch selected, clear data
-      setAllFetchedPOs([])
-      setFilteredPOs([])
-      setLoadingPOs(false)
+      // No branch_id selected, clear data
+      setPurchaseOrders([])
+      setIsLoading(false)
     }
   }, [
     selectedBranch,
     startDate,
     endDate,
-    fetchPurchaseOrdersWithDateFilters,
-    loadDefaultForBranch,
+    fetchTransactions,
+    debouncedSearchTerm,
   ])
-
-  useEffect(() => {
-    let currentPOs = [...allFetchedPOs]
-
-    if (statusPoFilter !== 'all') {
-      currentPOs = currentPOs.filter((po) => po.status === statusPoFilter)
-    }
-
-    if (paymentStatusPoFilter !== 'all') {
-      currentPOs = currentPOs.filter((po) => {
-        if (paymentStatusPoFilter === 'overdue') {
-          return (
-            po.isCreditPurchase &&
-            po.paymentDueDateOnPO &&
-            isBefore(new Date(po.paymentDueDateOnPO), startOfDay(new Date())) &&
-            po.paymentStatusOnPO !== 'paid'
-          )
-        }
-        return (
-          po.isCreditPurchase && po.paymentStatusOnPO === paymentStatusPoFilter
-        )
-      })
-    }
-
-    if (searchTerm) {
-      const lowerSearchTerm = searchTerm.toLowerCase()
-      currentPOs = currentPOs.filter(
-        (po) =>
-          po.poNumber.toLowerCase().includes(lowerSearchTerm) ||
-          po.supplierName.toLowerCase().includes(lowerSearchTerm) ||
-          po.supplierInvoiceNumber?.toLowerCase().includes(lowerSearchTerm)
-      )
-    }
-    setFilteredPOs(currentPOs)
-  }, [allFetchedPOs, statusPoFilter, paymentStatusPoFilter, searchTerm])
 
   const handleApplyFilters = () => {
     if (!startDate || !endDate) {
-      toast({
-        title: 'Pilih Rentang Tanggal',
+      toast.error('Pilih Rentang Tanggal', {
         description:
           'Silakan pilih tanggal mulai dan akhir untuk filter tanggal.',
-        variant: 'destructive',
       })
       return
     }
-    // The useEffect dependent on startDate and endDate will trigger fetchPurchaseOrdersWithDateFilters
-    // No need to call it directly here if the state update is sufficient to trigger the effect.
-    // However, to ensure immediate fetch on apply, explicitly call it:
-    fetchPurchaseOrdersWithDateFilters()
+
+    fetchTransactions(currentPage, debouncedSearchTerm)
   }
 
   const handleClearFilters = () => {
@@ -280,25 +226,15 @@ export default function PurchaseOrdersPage() {
       newStatus: poToUpdate.newStatus,
     })
     if (result && 'error' in result) {
-      toast({
-        title: 'Gagal Update Status',
+      toast.error('Gagal Update Status', {
         description: result.error,
-        variant: 'destructive',
       })
     } else if (result) {
-      toast({
-        title: 'Status Diperbarui',
+      toast.success('Status Diperbarui', {
         description: `Status PO ${
-          poToUpdate.poNumber
+          poToUpdate.po_number
         } telah diubah menjadi ${getPOStatusText(poToUpdate.newStatus)}. `,
       })
-
-      setAllFetchedPOs((prevPOs) =>
-        prevPOs.map((po) => (po.$id === result.$id ? result : po))
-      )
-      setFilteredPOs((prevPOs) =>
-        prevPOs.map((po) => (po.$id === result.$id ? result : po))
-      )
     }
     setIsUpdatingStatus(false)
     setShowConfirmDialog(false)
@@ -306,33 +242,12 @@ export default function PurchaseOrdersPage() {
   }
 
   const openConfirmDialog = (
-    poId: string,
-    poNumber: string,
+    poId: number,
+    po_number: string,
     newStatus: PurchaseOrderStatus
   ) => {
-    setPoToUpdate({ id: poId, newStatus, poNumber })
+    // setPoToUpdate({ id: poId, newStatus, po_number })
     setShowConfirmDialog(true)
-  }
-
-  const formatDate = (
-    dateInput: string | Date | undefined,
-    includeTime = false
-  ) => {
-    if (!dateInput) return 'N/A'
-    try {
-      const date = new Date(dateInput)
-      return format(date, includeTime ? 'dd MMM yyyy, HH:mm' : 'dd MMM yyyy')
-    } catch (error) {
-      console.error('Invalid date format:', dateInput, error)
-      return 'Invalid Date'
-    }
-  }
-
-  const formatCurrency = (amount: number | undefined) => {
-    if (amount === undefined) return 'N/A'
-    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString(
-      'id-ID'
-    )}`
   }
 
   const getPOStatusBadgeVariant = (status: PurchaseOrderStatus) => {
@@ -370,8 +285,8 @@ export default function PurchaseOrdersPage() {
   }
 
   const getPaymentStatusBadgeVariant = (
-    status: PurchaseOrderPaymentStatus | undefined,
-    dueDateString?: string
+    status: PurchaseOrderPaymentStatus,
+    dueDateString?: string | null
   ) => {
     let variant: 'default' | 'secondary' | 'destructive' | 'outline' =
       'secondary'
@@ -397,7 +312,7 @@ export default function PurchaseOrdersPage() {
 
   const getPaymentStatusText = (
     status: PurchaseOrderPaymentStatus | undefined,
-    dueDateString?: string
+    dueDateString?: string | null
   ) => {
     if (!status) return 'N/A'
     let text = ''
@@ -594,7 +509,7 @@ export default function PurchaseOrdersPage() {
                     onClick={handleApplyFilters}
                     size='sm'
                     className='h-8 text-xs flex-grow'
-                    disabled={loadingPOs || !selectedBranch}
+                    disabled={isLoading || !selectedBranch}
                   >
                     <Filter className='mr-1.5 h-3.5 w-3.5' /> Terapkan
                   </Button>
@@ -603,7 +518,7 @@ export default function PurchaseOrdersPage() {
                     variant='outline'
                     size='sm'
                     className='h-8 text-xs flex-grow'
-                    disabled={loadingPOs || !selectedBranch}
+                    disabled={isLoading || !selectedBranch}
                   >
                     <FilterX className='mr-1.5 h-3.5 w-3.5' /> Reset
                   </Button>
@@ -612,7 +527,7 @@ export default function PurchaseOrdersPage() {
             </CardContent>
           </Card>
 
-          {loadingPOs ? (
+          {isLoading ? (
             <div className='space-y-2 border rounded-lg shadow-sm p-4'>
               <Skeleton className='h-10 w-full' />
               <Skeleton className='h-10 w-full' />
@@ -624,14 +539,14 @@ export default function PurchaseOrdersPage() {
                 Pilih cabang untuk mengelola pesanan pembelian.
               </p>
             </div>
-          ) : filteredPOs.length === 0 ? (
+          ) : purchaseOrders.length === 0 ? (
             <div className='border rounded-lg shadow-sm overflow-hidden p-10 text-center'>
               <p className='text-sm text-muted-foreground'>
-                {allFetchedPOs.length === 0 && !startDate && !endDate
+                {purchaseOrders.length === 0 && !startDate && !endDate
                   ? 'Belum ada pesanan pembelian untuk cabang ini.'
                   : 'Tidak ada pesanan pembelian yang cocok dengan filter Anda.'}
               </p>
-              {allFetchedPOs.length === 0 && !startDate && !endDate && (
+              {purchaseOrders.length === 0 && !startDate && !endDate && (
                 <Button size='sm' className='mt-4 text-xs' asChild>
                   <Link href='/purchase-orders/new'>
                     <PlusCircle className='mr-1.5 h-3.5 w-3.5' /> Buat Pesanan
@@ -670,19 +585,19 @@ export default function PurchaseOrdersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredPOs.map((po) => (
-                    <TableRow key={po.$id}>
+                  {purchaseOrders.map((po) => (
+                    <TableRow key={po.id}>
                       <TableCell className='py-2 text-xs font-medium'>
-                        {po.poNumber || po.$id.substring(0, 6).toUpperCase()}
+                        {po.po_number || po.id}
                       </TableCell>
                       <TableCell className='py-2 text-xs hidden sm:table-cell'>
-                        {po.supplierName}
+                        {po.supplier_name}
                       </TableCell>
                       <TableCell className='py-2 text-xs'>
-                        {formatDate(po.orderDate)}
+                        {formatDateIntl(po.order_date)}
                       </TableCell>
                       <TableCell className='py-2 text-xs hidden md:table-cell'>
-                        {po.isCreditPurchase ? 'Kredit' : 'Tunai'}
+                        {po.is_credit ? 'Kredit' : 'Tunai'}
                       </TableCell>
                       <TableCell className='py-2 text-xs text-center'>
                         <Badge
@@ -700,22 +615,22 @@ export default function PurchaseOrdersPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className='py-2 text-xs text-center hidden md:table-cell'>
-                        {po.isCreditPurchase ? (
+                        {po.is_credit ? (
                           <Badge
                             variant={getPaymentStatusBadgeVariant(
-                              po.paymentStatusOnPO,
-                              po.paymentDueDateOnPO
+                              po.payment_status,
+                              po?.payment_due_date
                             )}
                             className={cn(
-                              po.paymentStatusOnPO === 'paid' &&
+                              po.payment_status === 'paid' &&
                                 'bg-green-600 hover:bg-green-700 text-white',
-                              po.paymentStatusOnPO === 'partially_paid' &&
+                              po.payment_status === 'partially_paid' &&
                                 'border-yellow-500 text-yellow-600'
                             )}
                           >
                             {getPaymentStatusText(
-                              po.paymentStatusOnPO,
-                              po.paymentDueDateOnPO
+                              po.payment_status,
+                              po.payment_due_date
                             )}
                           </Badge>
                         ) : (
@@ -723,10 +638,10 @@ export default function PurchaseOrdersPage() {
                         )}
                       </TableCell>
                       <TableCell className='text-right py-2 text-xs'>
-                        {formatCurrency(po.totalAmount)}
+                        {formatCurrency(po.total_amount)}
                       </TableCell>
                       <TableCell className='text-center py-1.5 flex flex-row gap-2 items-center'>
-                        <Link href={`/purchase-orders/${po.$id}`}>
+                        <Link href={`/purchase-orders/${po.id}`}>
                           <Eye className='mr-2 h-3.5 w-3.5' />
                         </Link>
                         {po.status === 'draft' && (
@@ -735,7 +650,7 @@ export default function PurchaseOrdersPage() {
                             size='icon'
                             className='text-xs cursor-pointer h-7 w-7 '
                             onClick={() =>
-                              openConfirmDialog(po.$id, po.poNumber, 'ordered')
+                              openConfirmDialog(po.id, po.po_number, 'ordered')
                             }
                             disabled={isUpdatingStatus}
                           >
@@ -749,8 +664,8 @@ export default function PurchaseOrdersPage() {
                             className='h-7 w-7 text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
                             onClick={() =>
                               openConfirmDialog(
-                                po.$id,
-                                po.poNumber,
+                                po.id,
+                                po.po_number,
                                 'cancelled'
                               )
                             }
@@ -779,7 +694,7 @@ export default function PurchaseOrdersPage() {
               </AlertDialogTitle>
               <AlertDialogDescription className='text-xs'>
                 Apakah Anda yakin ingin mengubah status untuk PO{' '}
-                <strong>{poToUpdate?.poNumber}</strong> menjadi{' '}
+                <strong>{poToUpdate?.po_number}</strong> menjadi{' '}
                 <strong>"{getPOStatusText(poToUpdate?.newStatus)}"</strong>?
                 {poToUpdate?.newStatus === 'ordered' &&
                   ' Ini menandakan pesanan telah dikirim ke pemasok.'}

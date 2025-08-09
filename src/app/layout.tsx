@@ -38,7 +38,7 @@ export default function RootLayout({
             <BranchProvider>{children}</BranchProvider>
           </AuthProvider>
         </ThemeProvider>
-        <Toaster richColors duration={2000} closeButton={true} />
+        <Toaster richColors duration={3000} closeButton={true} />
       </body>
     </html>
   )

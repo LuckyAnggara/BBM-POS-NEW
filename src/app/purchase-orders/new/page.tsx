@@ -27,7 +27,7 @@ import {
 // Konteks dan Hook
 import { useAuth } from '@/contexts/auth-context'
 import { useBranches } from '@/contexts/branch-context'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from 'sonner'
 
 // Komponen UI
 import MainLayout from '@/components/layout/main-layout'
@@ -70,32 +70,33 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
 // Tipe dan Fungsi Appwrite
-import type { Supplier } from '@/lib/appwrite/suppliers'
-import type { InventoryItem } from '@/lib/appwrite/inventory' // Menggunakan tipe dokumen baru jika ada
-import {
+import type {
+  Supplier,
+  Product,
   PurchaseOrderInput,
   PurchaseOrderPaymentTerms,
-} from '@/lib/appwrite/purchaseOrders' // Tipe input utama kita
-import { getSuppliers } from '@/lib/appwrite/suppliers'
-import { getInventoryItems } from '@/lib/appwrite/inventory' // Asumsi fungsi ini mengembalikan { documents, total }
-import { addPurchaseOrder } from '@/lib/appwrite/purchaseOrders'
+} from '@/lib/types'
+import { listSuppliers } from '@/lib/laravel/suppliers'
+import { listProducts } from '@/lib/laravel/product' // Asumsi fungsi ini mengembalikan { documents, total }
+import { createPurchaseOrder } from '@/lib/laravel/purchaseOrderService'
 import { useDebounce } from '@uidotdev/usehooks'
 import { formatCurrency } from '@/lib/helper'
+import { se } from 'date-fns/locale'
 
 // --- Skema Validasi (Zod) ---
 // Skema untuk satu item dalam form, ini adalah data mentah dari UI
 const formItemSchema = z.object({
-  productId: z.string().min(1, 'Produk harus dipilih.'),
+  product_id: z.string().min(1, 'Produk harus dipilih.'),
   productName: z.string(), // Nama produk untuk display sementara
-  orderedQuantity: z.coerce.number().positive('Jumlah harus lebih dari 0.'),
-  purchasePrice: z.coerce.number().min(0, 'Harga beli tidak boleh negatif.'),
+  quantity: z.coerce.number().positive('Jumlah harus lebih dari 0.'),
+  cost: z.coerce.number().min(0, 'Harga beli tidak boleh negatif.'),
 })
 
 // Skema untuk keseluruhan form PO
 const purchaseOrderFormSchema = z
   .object({
-    supplierId: z.string().min(1, 'Pemasok harus dipilih.'),
-    orderDate: z.date({ required_error: 'Tanggal pemesanan harus diisi.' }),
+    supplier_id: z.string().min(1, 'Pemasok harus dipilih.'),
+    order_date: z.date({ required_error: 'Tanggal pemesanan harus diisi.' }),
     expectedDeliveryDate: z.date().optional(),
     items: z
       .array(formItemSchema)
@@ -131,33 +132,34 @@ type PurchaseOrderFormValues = z.infer<typeof purchaseOrderFormSchema>
 export default function NewPurchaseOrderPage() {
   const { currentUser } = useAuth()
   const { selectedBranch } = useBranches()
-  const { toast } = useToast()
   const router = useRouter()
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
+  const [inventoryItems, setInventoryItems] = useState<Product[]>([])
 
   const [loading, setLoading] = useState(true)
   const [loadingSuppliers, setLoadingSuppliers] = useState(true)
   const [loadingInventory, setLoadingInventory] = useState(true)
 
   const [searchTerm, setSearchTerm] = useState('')
+  const [searchSupplierTerm, setSearchSupplierTerm] = useState('')
   const [openProductPopovers, setOpenProductPopovers] = useState<
     Record<number, boolean>
   >({})
 
   const debouncedSearchTerm = useDebounce(searchTerm, 500)
+  const debouncedSupplierSearchTerm = useDebounce(searchSupplierTerm, 500)
 
   const poForm = useForm<PurchaseOrderFormValues>({
     resolver: zodResolver(purchaseOrderFormSchema),
     defaultValues: {
-      orderDate: new Date(),
+      order_date: new Date(),
       items: [
         {
-          productId: '',
+          product_id: '',
           productName: '',
-          orderedQuantity: 1,
-          purchasePrice: 0,
+          quantity: 1,
+          cost: 0,
         },
       ],
       paymentTermsOnPO: 'cash',
@@ -179,17 +181,14 @@ export default function NewPurchaseOrderPage() {
 
     try {
       const [suppliersResult, inventoryResult] = await Promise.all([
-        getSuppliers(selectedBranch.id),
-        getInventoryItems(selectedBranch.id, { limit: 5 }), // Ambil semua item untuk pencarian
+        listSuppliers({ branch_id: selectedBranch.id, limit: 5 }),
+        listProducts({ branch_id: selectedBranch.id, limit: 5 }), // Ambil semua item untuk pencarian
       ])
-      setSuppliers(suppliersResult.suppliers || [])
-      setInventoryItems(inventoryResult.items || [])
+      setSuppliers(suppliersResult.data || [])
+      setInventoryItems(inventoryResult.data || [])
     } catch (error) {
-      console.error('Error fetching initial data:', error)
-      toast({
-        title: 'Gagal Memuat Data',
+      toast.error('Gagal Memuat Data', {
         description: 'Tidak dapat memuat data pemasok atau inventaris.',
-        variant: 'destructive',
       })
     } finally {
       setLoading(false)
@@ -198,92 +197,101 @@ export default function NewPurchaseOrderPage() {
     }
   }, [selectedBranch, toast])
 
-  const fetchInventoryData = useCallback(async () => {
-    if (!selectedBranch) return
-    setLoadingInventory(true)
-    try {
-      const [inventoryResult] = await Promise.all([
-        getInventoryItems(selectedBranch.id, {
-          limit: 5,
-          searchTerm: debouncedSearchTerm,
-        }), // Ambil semua item untuk pencarian
-      ])
-      setInventoryItems(inventoryResult.items || [])
-    } finally {
-      setLoadingInventory(false)
-    }
-  }, [debouncedSearchTerm])
+  const fetchSuppliers = useCallback(
+    async (currentSearchTerm: string) => {
+      if (!selectedBranch) {
+        setSuppliers([])
+        setLoadingSuppliers(false)
+        return
+      }
+      setLoadingSuppliers(true)
+      const result = await listSuppliers({
+        branch_id: selectedBranch.id,
+        limit: 5,
+        searchTerm: debouncedSupplierSearchTerm,
+      })
+      setSuppliers(result.data)
+      setLoadingSuppliers(false)
+    },
+    [selectedBranch, debouncedSupplierSearchTerm]
+  )
+
+  const fetchInventoryData = useCallback(
+    async (currentSearchTerm: string) => {
+      if (!selectedBranch) return
+      setLoadingInventory(true)
+      try {
+        const [inventoryResult] = await Promise.all([
+          listProducts({
+            branch_id: selectedBranch.id,
+            limit: 5,
+            searchTerm: currentSearchTerm,
+          }), // Ambil semua item untuk pencarian
+        ])
+        setInventoryItems(inventoryResult.data || [])
+      } finally {
+        setLoadingInventory(false)
+      }
+    },
+    [debouncedSearchTerm]
+  )
 
   useEffect(() => {
     fetchInitialData()
   }, [fetchInitialData])
 
   useEffect(() => {
-    fetchInventoryData()
-  }, [debouncedSearchTerm])
-
-  const getFilteredProductsForItem = (index: number) => {
-    const searchTerm = inventoryItems
-  }
+    fetchInventoryData(debouncedSearchTerm)
+    fetchSuppliers(debouncedSupplierSearchTerm)
+  }, [debouncedSearchTerm, debouncedSupplierSearchTerm])
 
   const onSubmitPurchaseOrder: SubmitHandler<PurchaseOrderFormValues> = async (
     values
   ) => {
     if (!selectedBranch || !currentUser) {
-      toast({
-        title: 'Error',
-        description: 'Cabang atau pengguna tidak valid.',
-        variant: 'destructive',
-      })
+      toast.error('Cabang atau pengguna tidak valid.')
       return
     }
 
-    const selectedSupplier = suppliers.find((s) => s.id === values.supplierId)
+    const selectedSupplier = suppliers.find((s) => s.id === values.supplier_id)
     if (!selectedSupplier) {
-      toast({ title: 'Pemasok Tidak Valid', variant: 'destructive' })
+      toast.error('Pemasok Tidak Valid')
       return
     }
 
-    // Transformasi data form menjadi struktur yang dibutuhkan oleh `addPurchaseOrder`
+    // Transformasi data form menjadi struktur yang dibutuhkan oleh `createPurchaseOrder`
     const poInputData: PurchaseOrderInput = {
-      branchId: selectedBranch.id,
-      supplierId: values.supplierId,
-      createdById: currentUser.$id,
-      orderDate: values.orderDate.toISOString(),
-      expectedDeliveryDate: values.expectedDeliveryDate?.toISOString(),
+      branch_id: selectedBranch.id,
+      supplier_id: Number(values.supplier_id),
+      order_date: values.order_date.toISOString(),
+      expected_delivery_date: values.expectedDeliveryDate?.toISOString(),
       notes: values.notes,
-      paymentTermsOnPO: values.paymentTermsOnPO,
-      supplierInvoiceNumber: values.supplierInvoiceNumber,
-      paymentDueDateOnPO: values.paymentDueDateOnPO?.toISOString(),
-      taxDiscountAmount: values.taxDiscountAmount,
-      shippingCostCharged: values.shippingCostCharged,
-      otherCosts: values.otherCosts,
+      payment_terms_on_po: values.paymentTermsOnPO,
+      supplier_invoice_number: values.supplierInvoiceNumber,
+      payment_due_date_on_po: values.paymentDueDateOnPO?.toISOString(),
+      tax_discount_amount: values.taxDiscountAmount,
+      shipping_cost_charged: values.shippingCostCharged,
+      other_costs: values.otherCosts,
       // Map item dari form ke struktur yang benar
       items: values.items.map((item) => ({
-        productId: item.productId,
-        productName: item.productName, // Denormalisasi nama saat membuat
-        orderedQuantity: item.orderedQuantity,
-        purchasePrice: item.purchasePrice,
+        product_id: item.product_id,
+        quantity: item.quantity,
+        cost: item.cost,
       })),
       status: 'draft', // or another default status as required by your app
       supplierName: selectedSupplier.name,
     }
 
     setLoading(true)
-    const result = await addPurchaseOrder(poInputData, selectedSupplier.name)
+    const result = await createPurchaseOrder(poInputData, selectedSupplier.name)
     setLoading(false)
 
     if (result && 'error' in result) {
-      toast({
-        title: 'Gagal Membuat Pesanan',
-        description: result.error,
-        variant: 'destructive',
-      })
+      toast.error(`Gagal Membuat Pesanan: ${result.error}`)
     } else if (result) {
-      toast({
-        title: 'Pesanan Pembelian Dibuat!',
-        description: `PO ${result.poNumber} berhasil disimpan.`,
-      })
+      toast.success(
+        `Pesanan Pembelian Dibuat! PO ${result.po_number} berhasil disimpan.`
+      )
       router.push('/purchase-orders')
     }
   }
@@ -295,8 +303,8 @@ export default function NewPurchaseOrderPage() {
   // --- Kalkulasi Total untuk Ditampilkan di UI ---
   const watchedItems = poForm.watch('items')
   const itemsSubtotal = watchedItems.reduce((acc, item) => {
-    const quantity = Number(item.orderedQuantity) || 0
-    const price = Number(item.purchasePrice) || 0
+    const quantity = Number(item.quantity) || 0
+    const price = Number(item.cost) || 0
     return acc + quantity * price
   }, 0)
 
@@ -348,11 +356,11 @@ export default function NewPurchaseOrderPage() {
               <CardContent className='space-y-4'>
                 <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
                   <div>
-                    <Label htmlFor='supplierId' className='text-xs'>
+                    <Label htmlFor='supplier_id' className='text-xs'>
                       Pemasok*
                     </Label>
                     <Controller
-                      name='supplierId'
+                      name='supplier_id'
                       control={poForm.control}
                       render={({ field }) => (
                         <Select
@@ -381,18 +389,18 @@ export default function NewPurchaseOrderPage() {
                         </Select>
                       )}
                     />
-                    {poForm.formState.errors.supplierId && (
+                    {poForm.formState.errors.supplier_id && (
                       <p className='text-xs text-destructive mt-1'>
-                        {poForm.formState.errors.supplierId.message}
+                        {poForm.formState.errors.supplier_id.message}
                       </p>
                     )}
                   </div>
                   <div>
-                    <Label htmlFor='orderDate' className='text-xs'>
+                    <Label htmlFor='order_date' className='text-xs'>
                       Tanggal Pemesanan*
                     </Label>
                     <Controller
-                      name='orderDate'
+                      name='order_date'
                       control={poForm.control}
                       render={({ field }) => (
                         <Popover>
@@ -419,9 +427,9 @@ export default function NewPurchaseOrderPage() {
                         </Popover>
                       )}
                     />
-                    {poForm.formState.errors.orderDate && (
+                    {poForm.formState.errors.order_date && (
                       <p className='text-xs text-destructive mt-1'>
-                        {poForm.formState.errors.orderDate.message}
+                        {poForm.formState.errors.order_date.message}
                       </p>
                     )}
                   </div>
@@ -453,8 +461,8 @@ export default function NewPurchaseOrderPage() {
                               selected={field.value}
                               onSelect={field.onChange}
                               disabled={(date) =>
-                                poForm.getValues('orderDate')
-                                  ? date < poForm.getValues('orderDate')
+                                poForm.getValues('order_date')
+                                  ? date < poForm.getValues('order_date')
                                   : false
                               }
                             />
@@ -542,8 +550,8 @@ export default function NewPurchaseOrderPage() {
                                   selected={field.value}
                                   onSelect={field.onChange}
                                   disabled={(date) =>
-                                    poForm.getValues('orderDate')
-                                      ? date < poForm.getValues('orderDate')
+                                    poForm.getValues('order_date')
+                                      ? date < poForm.getValues('order_date')
                                       : false
                                   }
                                 />
@@ -645,10 +653,10 @@ export default function NewPurchaseOrderPage() {
                     className='text-xs h-8'
                     onClick={() =>
                       append({
-                        productId: '',
+                        product_id: '',
                         productName: '',
-                        orderedQuantity: 1,
-                        purchasePrice: 0,
+                        quantity: 1,
+                        cost: 0,
                       })
                     }
                     disabled={loadingInventory}
@@ -672,7 +680,7 @@ export default function NewPurchaseOrderPage() {
                 {fields.map((field, index) => {
                   const filteredProducts = inventoryItems
                   const selectedProductValue = poForm.watch(
-                    `items.${index}.productId`
+                    `items.${index}.product_id`
                   )
                   const currentSelectedProduct = inventoryItems.find(
                     (p) => p.id === selectedProductValue
@@ -684,13 +692,13 @@ export default function NewPurchaseOrderPage() {
                     >
                       <div className='col-span-12 sm:col-span-4'>
                         <Label
-                          htmlFor={`items.${index}.productId`}
+                          htmlFor={`items.${index}.product_id`}
                           className='text-xs'
                         >
                           Produk*
                         </Label>
                         <Controller
-                          name={`items.${index}.productId`}
+                          name={`items.${index}.product_id`}
                           control={poForm.control}
                           render={({ field: controllerField }) => (
                             <Popover
@@ -760,7 +768,7 @@ export default function NewPurchaseOrderPage() {
                                               selectedProd?.name || ''
                                             )
                                             poForm.setValue(
-                                              `items.${index}.purchasePrice`,
+                                              `items.${index}.cost`,
                                               selectedProd?.costPrice || 0
                                             )
                                             handleProductPopoverOpenChange(
@@ -797,10 +805,10 @@ export default function NewPurchaseOrderPage() {
                             </Popover>
                           )}
                         />
-                        {poForm.formState.errors.items?.[index]?.productId && (
+                        {poForm.formState.errors.items?.[index]?.product_id && (
                           <p className='text-xs text-destructive mt-0.5'>
                             {
-                              poForm.formState.errors.items?.[index]?.productId
+                              poForm.formState.errors.items?.[index]?.product_id
                                 ?.message
                             }
                           </p>
@@ -808,46 +816,44 @@ export default function NewPurchaseOrderPage() {
                       </div>
                       <div className='col-span-6 sm:col-span-2'>
                         <Label
-                          htmlFor={`items.${index}.orderedQuantity`}
+                          htmlFor={`items.${index}.quantity`}
                           className='text-xs'
                         >
                           Jumlah*
                         </Label>
                         <Input
-                          id={`items.${index}.orderedQuantity`}
+                          id={`items.${index}.quantity`}
                           type='number'
-                          {...poForm.register(`items.${index}.orderedQuantity`)}
+                          {...poForm.register(`items.${index}.quantity`)}
                           className='h-8 text-xs mt-0.5'
                         />
-                        {poForm.formState.errors.items?.[index]
-                          ?.orderedQuantity && (
+                        {poForm.formState.errors.items?.[index]?.quantity && (
                           <p className='text-xs text-destructive mt-0.5'>
                             {
-                              poForm.formState.errors.items?.[index]
-                                ?.orderedQuantity?.message
+                              poForm.formState.errors.items?.[index]?.quantity
+                                ?.message
                             }
                           </p>
                         )}
                       </div>
                       <div className='col-span-6 sm:col-span-3'>
                         <Label
-                          htmlFor={`items.${index}.purchasePrice`}
+                          htmlFor={`items.${index}.cost`}
                           className='text-xs'
                         >
                           Harga Beli ({currencySymbol})*
                         </Label>
                         <Input
-                          id={`items.${index}.purchasePrice`}
+                          id={`items.${index}.cost`}
                           type='number'
-                          {...poForm.register(`items.${index}.purchasePrice`)}
+                          {...poForm.register(`items.${index}.cost`)}
                           className='h-8 text-xs mt-0.5'
                         />
-                        {poForm.formState.errors.items?.[index]
-                          ?.purchasePrice && (
+                        {poForm.formState.errors.items?.[index]?.cost && (
                           <p className='text-xs text-destructive mt-0.5'>
                             {
-                              poForm.formState.errors.items?.[index]
-                                ?.purchasePrice?.message
+                              poForm.formState.errors.items?.[index]?.cost
+                                ?.message
                             }
                           </p>
                         )}
@@ -858,12 +864,9 @@ export default function NewPurchaseOrderPage() {
                         </Label>
                         <Input
                           value={`${formatCurrency(
-                            (Number(
-                              poForm.watch(`items.${index}.orderedQuantity`)
-                            ) || 0) *
-                              (Number(
-                                poForm.watch(`items.${index}.purchasePrice`)
-                              ) || 0)
+                            (Number(poForm.watch(`items.${index}.quantity`)) ||
+                              0) *
+                              (Number(poForm.watch(`items.${index}.cost`)) || 0)
                           )}`}
                           className='h-8 text-xs mt-0.5 bg-transparent border-0 px-0'
                           readOnly

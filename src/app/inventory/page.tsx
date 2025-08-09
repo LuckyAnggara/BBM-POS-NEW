@@ -70,11 +70,12 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
-import type {
-  Product,
-  Category,
-  ProductInput,
-  CategoryInput,
+import {
+  type Product,
+  type Category,
+  type ProductInput,
+  type CategoryInput,
+  ITEMS_PER_PAGE_OPTIONS,
 } from '@/lib/types'
 import {
   createProduct,
@@ -109,6 +110,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
+import { formatCurrency } from '@/lib/helper'
 
 const categoryFormSchema = z.object({
   name: z.string().min(2, { message: 'Nama kategori minimal 2 karakter.' }),
@@ -119,8 +121,6 @@ const categoryFormSchema = z.object({
 })
 type CategoryFormValues = z.infer<typeof categoryFormSchema>
 type ViewMode = 'card' | 'table'
-
-const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
 
 export default function InventoryPage() {
   const router = useRouter()
@@ -135,6 +135,10 @@ export default function InventoryPage() {
   const [loadingItems, setLoadingItems] = useState(true)
   const [loadingCategories, setLoadingCategories] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
+  const [duplicatingProduct, setDuplicatingProduct] = useState<Product | null>(
+    null
+  )
+  const [newProductName, setNewProductName] = useState('')
   const [itemsPerPage, setItemsPerPage] = useState<number>(
     ITEMS_PER_PAGE_OPTIONS[0]
   )
@@ -227,7 +231,7 @@ export default function InventoryPage() {
   }, [currentPage, debouncedSearchTerm, selectedBranch, fetchData]) // Sertakan semua dependensi relevan
 
   // --- New function for duplicating an item ---
-  const handleDuplicateItem = async (item: Product) => {
+  const handleDuplicateItem = async (item: Product, newProductName: string) => {
     if (!selectedBranch) {
       toast.error('Error', { description: 'Cabang tidak valid.' })
       return
@@ -241,8 +245,8 @@ export default function InventoryPage() {
     }
 
     const duplicatedItemData: ProductInput = {
-      name: `${item.name} (Copy)`,
-      sku: '', // Let Appwrite generate a new SKU
+      name: newProductName,
+      sku: '', // SKU will be auto-generated
       category_id: item.category_id,
       category_name: item.category_name,
       branch_id: selectedBranch.id,
@@ -252,24 +256,38 @@ export default function InventoryPage() {
       image_url: item.image_url || '',
       image_hint: item.image_hint || '',
     }
+    let skuToSave = duplicatedItemData.sku?.trim()
+    if (!skuToSave) {
+      skuToSave = `AUTOSKU-${Math.random()
+        .toString(36)
+        .substring(2, 10)
+        .toUpperCase()}`
+    }
+
+    duplicatedItemData.sku = skuToSave
 
     try {
       const result = await createProduct(duplicatedItemData)
-
-      if (result && 'error' in result) {
-        toast.error('Gagal Duplikasi Produk', {
-          description: result.error,
-        })
-      } else {
-        toast.success('Produk Berhasil Diduplikasi', {
-          description: `${item.name} telah diduplikasi menjadi ${duplicatedItemData.name}.`,
-        })
-        // Refresh the current page to show the new item
-        await fetchData(currentPage, debouncedSearchTerm)
-      }
+      toast.success('Produk Berhasil Diduplikasi', {
+        description: `${result.name} telah diduplikasi menjadi ${duplicatedItemData.name}.`,
+      })
+      // Refresh the current page to show the new item
+      await fetchData(currentPage, debouncedSearchTerm)
     } catch (error: any) {
-      toast.error('Terjadi Kesalahan', {
-        description: error.message || 'Gagal menduplikasi produk.',
+      console.error('Gagal Duplikasi produk:', error)
+
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error('Gagal Duplikasi Produk', {
+        description: errorMessage,
       })
     }
   }
@@ -384,7 +402,7 @@ export default function InventoryPage() {
           text,
           items,
           categories,
-          selectedBranch.id
+          String(selectedBranch.id)
         )
 
         if (error) {
@@ -718,14 +736,23 @@ export default function InventoryPage() {
                           {product.quantity}
                         </TableCell>
                         <TableCell className='text-right hidden sm:table-cell py-1.5 px-2 text-xs'>
-                          {selectedBranch?.currency}{' '}
-                          {product.price.toLocaleString('id-ID')}
+                          {formatCurrency(product.price)}
                         </TableCell>
                         <TableCell className='text-right hidden sm:table-cell py-1.5 px-2 text-xs'>
-                          {selectedBranch?.currency}{' '}
-                          {(product.cost_price || 0).toLocaleString('id-ID')}
+                          {formatCurrency(product.cost_price)}
                         </TableCell>
                         <TableCell className='text-right py-1.5 px-2'>
+                          <Button
+                            variant='ghost'
+                            size='icon'
+                            className='h-7 w-7'
+                            onClick={(e) => {
+                              setNewProductName(`${product.name} (Copy)`)
+                              setDuplicatingProduct(product)
+                            }}
+                          >
+                            <Copy className='' />
+                          </Button>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button
@@ -747,13 +774,7 @@ export default function InventoryPage() {
                                 <FilePenLine className='mr-2 h-3.5 w-3.5' />
                                 Edit
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className='text-xs cursor-pointer'
-                                onClick={() => handleDuplicateItem(product)}
-                              >
-                                <Copy className='mr-2 h-3.5 w-3.5' />
-                                Duplikasi
-                              </DropdownMenuItem>
+
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
                                   <DropdownMenuItem
@@ -1096,6 +1117,47 @@ export default function InventoryPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog
+          open={!!duplicatingProduct}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) {
+              setDuplicatingProduct(null) // Tutup dialog saat di-cancel
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Duplikasi Produk</AlertDialogTitle>
+              <AlertDialogDescription>
+                Buat salinan dari "{duplicatingProduct?.name}". Anda dapat
+                mengubah nama duplikat di bawah ini.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className='grid gap-2 py-2'>
+              <Label htmlFor='new-name'>Nama Produk Baru</Label>
+              <Input
+                id='new-name'
+                value={newProductName}
+                onChange={(e) => setNewProductName(e.target.value)}
+                placeholder='Contoh: Aqua (Copy)'
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Batal</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (duplicatingProduct) {
+                    handleDuplicateItem(duplicatingProduct, newProductName)
+                  }
+                }}
+                disabled={!newProductName}
+              >
+                Ya, Duplikat
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </MainLayout>
     </ProtectedRoute>
   )

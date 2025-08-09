@@ -5,9 +5,8 @@ import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranches } from '@/contexts/branch-context'
-import { getShiftsForUserByBranch, type PosShift } from '@/lib/firebase/pos'
-import type { PaymentMethod } from '@/lib/firebase/types'
-import { Timestamp } from 'firebase/firestore'
+import { listShiftHistory } from '@/lib/laravel/shiftService'
+import type { PaymentMethod, Shift } from '@/lib/types'
 import {
   Table,
   TableBody,
@@ -38,21 +37,35 @@ import { CalendarIcon, Search, FilterX, Filter } from 'lucide-react'
 import { format, startOfDay, endOfDay } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
+import { formatDateIntl } from '@/lib/helper'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from '@/components/ui/dialog'
+import { useDebounce } from '@uidotdev/usehooks'
 
 export default function ShiftHistoryPage() {
+  // Context and state hooks (keep order stable)
   const { currentUser } = useAuth()
   const { selectedBranch } = useBranches()
   const { toast } = useToast()
-
-  const [allFetchedShifts, setAllFetchedShifts] = useState<PosShift[]>([])
-  const [filteredShifts, setFilteredShifts] = useState<PosShift[]>([])
-  const [loading, setLoading] = useState(false)
-
   const [startDate, setStartDate] = useState<Date | undefined>(
-    startOfDay(new Date())
+    startOfDay(new Date(Date.now() - 6 * 24 * 60 * 60 * 1000))
   )
   const [endDate, setEndDate] = useState<Date | undefined>(endOfDay(new Date()))
   const [searchTerm, setSearchTerm] = useState('')
+  const [allFetchedShifts, setAllFetchedShifts] = useState<Shift[]>([])
+  const [filteredShifts, setFilteredShifts] = useState<Shift[]>([])
+  const [loading, setLoading] = useState(false)
+  // Details dialog
+  const [showDetailDialog, setShowDetailDialog] = useState(false)
+  const [selectedShift, setSelectedShift] = useState<Shift | null>(null)
+  const debouncedSearchTerm = useDebounce(searchTerm, 1000)
 
   const fetchShifts = useCallback(async () => {
     if (currentUser && selectedBranch && startDate && endDate) {
@@ -66,85 +79,62 @@ export default function ShiftHistoryPage() {
         return
       }
       setLoading(true)
-      const fetchedShifts = await getShiftsForUserByBranch(
-        currentUser.uid,
-        selectedBranch.id,
-        {
-          startDate: startOfDay(startDate),
-          endDate: endOfDay(endDate),
-          orderByField: 'startTime',
-          orderDirection: 'desc',
-        }
-      )
-      setAllFetchedShifts(fetchedShifts)
-      if (fetchedShifts.length === 0) {
-        toast({
-          title: 'Tidak Ada Shift',
-          description:
-            'Tidak ada riwayat shift ditemukan untuk filter yang dipilih.',
-          variant: 'default',
-        })
-      }
+      const fetchedShifts = await listShiftHistory({
+        branchId: selectedBranch.id,
+        page: 1, // Default ke halaman pertama
+      })
+      // Compute cash difference and update state
+      const shiftsWithDiff = fetchedShifts.data.map((x: Shift) => ({
+        ...x,
+        cash_difference: Number(x.actual_balance) - Number(x.ending_balance),
+      }))
+      // if (fetchedShifts.length === 0) {
+      setAllFetchedShifts(shiftsWithDiff)
+      // Apply initial filter (no search) so table displays data
+      setFilteredShifts(shiftsWithDiff)
+
+      // const shiftsWithDiff = fetchedShifts.data.map((x: Shift) => ({
+      //   ...x,
+      //   cash_difference:
+      //     Number(x.actual_balance) - Number(x.ending_balance),
+      // }))
+      // if (fetchedShifts.length === 0) {
+      //   toast({
+      //     title: 'Tidak Ada Shift',
+      //     description:
+      //       'Tidak ada riwayat shift ditemukan untuk filter yang dipilih.',
+      //     variant: 'default',
+      //   })
+      // }
       setLoading(false)
     } else {
       setAllFetchedShifts([])
       setLoading(false)
     }
-  }, [currentUser, selectedBranch, startDate, endDate, toast])
+  }, [currentUser, selectedBranch, startDate, endDate])
 
   useEffect(() => {
     fetchShifts()
-  }, [fetchShifts])
+  }, [fetchShifts, debouncedSearchTerm])
 
-  useEffect(() => {
-    let currentShifts = [...allFetchedShifts]
-    if (searchTerm.trim()) {
-      const lowerSearchTerm = searchTerm.toLowerCase()
-      currentShifts = currentShifts.filter((shift) => {
-        const startTimeString = formatDate(shift.startTime).toLowerCase()
-        const initialCashString = formatCurrency(
-          shift.initialCash
-        ).toLowerCase()
-        const actualCashString = formatCurrency(
-          shift.actualCashAtEnd
-        ).toLowerCase()
-        return (
-          startTimeString.includes(lowerSearchTerm) ||
-          initialCashString.includes(lowerSearchTerm) ||
-          (shift.actualCashAtEnd !== undefined &&
-            actualCashString.includes(lowerSearchTerm)) ||
-          shift.id.toLowerCase().includes(lowerSearchTerm)
-        )
-      })
-    }
-    setFilteredShifts(currentShifts)
-  }, [searchTerm, allFetchedShifts])
-
-  const handleApplyFilters = () => {
-    fetchShifts()
+  const paymentMethods: PaymentMethod[] = [
+    'cash',
+    'credit',
+    'card',
+    'transfer',
+    'qris',
+  ]
+  // Local currency formatter ...
+  // Local currency formatter to avoid hook in helper
+  const formatAmount = (amount: number) => {
+    const currency = selectedBranch?.currency || 'IDR'
+    const hasDecimal = amount % 1 !== 0
+    const formatted = Math.floor(amount).toLocaleString('id-ID', {
+      minimumFractionDigits: hasDecimal ? 2 : 0,
+      maximumFractionDigits: 2,
+    })
+    return `${currency} ${formatted}`
   }
-
-  const handleClearFilters = () => {
-    setStartDate(startOfDay(new Date()))
-    setEndDate(endOfDay(new Date()))
-    setSearchTerm('')
-    // fetchShifts will be called by useEffect due to startDate/endDate change
-  }
-
-  const formatDateDisplay = (timestamp: Timestamp | undefined) => {
-    if (!timestamp) return 'N/A'
-    return format(timestamp.toDate(), 'dd MMM yy, HH:mm')
-  }
-
-  const formatCurrency = (amount: number | undefined) => {
-    if (amount === undefined || amount === null) return 'N/A'
-    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString(
-      'id-ID'
-    )}`
-  }
-
-  const paymentMethods: PaymentMethod[] = ['cash', 'card', 'transfer']
-
   return (
     <ProtectedRoute>
       <MainLayout>
@@ -237,7 +227,7 @@ export default function ShiftHistoryPage() {
                     className='h-8 text-xs mt-0.5'
                   />
                 </div>
-                <div className='flex gap-2 lg:col-start-4'>
+                {/* <div className='flex gap-2 lg:col-start-4'>
                   <Button
                     onClick={handleApplyFilters}
                     size='sm'
@@ -255,7 +245,7 @@ export default function ShiftHistoryPage() {
                   >
                     <FilterX className='mr-1.5 h-3.5 w-3.5' /> Reset
                   </Button>
-                </div>
+                </div> */}
               </div>
             </CardContent>
           </Card>
@@ -296,17 +286,8 @@ export default function ShiftHistoryPage() {
                         <TableHead className='text-xs text-right'>
                           Modal Awal
                         </TableHead>
-                        {paymentMethods.map((method) => (
-                          <TableHead
-                            key={method}
-                            className='text-xs text-right hidden md:table-cell'
-                          >
-                            Total{' '}
-                            {method.charAt(0).toUpperCase() + method.slice(1)}
-                          </TableHead>
-                        ))}
                         <TableHead className='text-xs text-right hidden lg:table-cell'>
-                          Estimasi Kas Akhir
+                          Kas Akhir Seharusnya
                         </TableHead>
                         <TableHead className='text-xs text-right'>
                           Kas Aktual
@@ -317,55 +298,48 @@ export default function ShiftHistoryPage() {
                         <TableHead className='text-xs text-center'>
                           Status
                         </TableHead>
+                        <TableHead className='text-xs text-center'>
+                          Aksi
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredShifts.map((shift) => (
                         <TableRow key={shift.id}>
                           <TableCell className='text-xs py-2'>
-                            {formatDateDisplay(shift.startTime)}
+                            {formatDateIntl(shift.start_shift)}
                           </TableCell>
                           <TableCell className='text-xs py-2'>
-                            {shift.endTime
-                              ? formatDateDisplay(shift.endTime)
+                            {shift.end_shift
+                              ? formatDateIntl(shift.end_shift)
                               : 'Aktif'}
                           </TableCell>
                           <TableCell className='text-xs text-right py-2'>
-                            {formatCurrency(shift.initialCash)}
+                            {formatAmount(shift.starting_balance)}
                           </TableCell>
-                          {paymentMethods.map((method) => (
-                            <TableCell
-                              key={method}
-                              className='text-xs text-right py-2 hidden md:table-cell'
-                            >
-                              {formatCurrency(
-                                shift.totalSalesByPaymentMethod?.[method] || 0
-                              )}
-                            </TableCell>
-                          ))}
                           <TableCell className='text-xs text-right py-2 hidden lg:table-cell'>
-                            {formatCurrency(shift.expectedCashAtEnd)}
+                            {formatAmount(Number(shift.ending_balance))}
                           </TableCell>
                           <TableCell className='text-xs text-right py-2'>
-                            {formatCurrency(shift.actualCashAtEnd)}
+                            {formatAmount(Number(shift.actual_balance))}
                           </TableCell>
                           <TableCell
                             className={cn(
                               'text-xs text-right py-2 font-medium',
-                              shift.cashDifference && shift.cashDifference < 0
+                              shift.cash_difference && shift.cash_difference < 0
                                 ? 'text-destructive'
-                                : shift.cashDifference &&
-                                  shift.cashDifference > 0
+                                : shift.cash_difference &&
+                                  shift.cash_difference > 0
                                 ? 'text-green-600'
                                 : ''
                             )}
                           >
-                            {formatCurrency(shift.cashDifference)}
-                            {shift.cashDifference !== undefined &&
-                              shift.cashDifference !== 0 && (
+                            {formatAmount(Number(shift.cash_difference))}
+                            {shift.cash_difference !== undefined &&
+                              shift.cash_difference !== 0 && (
                                 <span className='ml-1 text-[0.65rem]'>
                                   (
-                                  {shift.cashDifference < 0
+                                  {Number(shift.cash_difference) < 0
                                     ? 'Kurang'
                                     : 'Lebih'}
                                   )
@@ -376,13 +350,26 @@ export default function ShiftHistoryPage() {
                             <span
                               className={cn(
                                 'px-1.5 py-0.5 rounded-full text-[0.7rem] font-medium',
-                                shift.status === 'active'
+                                shift.status === 'open'
                                   ? 'bg-green-100 text-green-700'
                                   : 'bg-gray-100 text-gray-700'
                               )}
                             >
-                              {shift.status === 'active' ? 'Aktif' : 'Selesai'}
+                              {shift.status === 'open' ? 'Open' : 'Closed'}
                             </span>
+                          </TableCell>
+                          <TableCell className='text-xs text-center py-2'>
+                            <Button
+                              variant='outline'
+                              size='sm'
+                              className='text-xs'
+                              onClick={() => {
+                                setSelectedShift(shift)
+                                setShowDetailDialog(true)
+                              }}
+                            >
+                              Detail
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -394,6 +381,77 @@ export default function ShiftHistoryPage() {
           </Card>
         </div>
       </MainLayout>
+      {/* Detail Shift Dialog */}
+      <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
+        <DialogContent className='sm:max-w-md'>
+          <DialogHeader>
+            <DialogTitle>Rincian Shift</DialogTitle>
+            <DialogDescription className='text-xs'>
+              Detail transaksi shift nomor: <strong>{selectedShift?.id}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-2 text-sm'>
+            <div className='flex justify-between'>
+              <span>Modal Awal:</span>
+              <span>{formatAmount(selectedShift?.starting_balance || 0)}</span>
+            </div>
+            <div className='flex justify-between'>
+              <span>Total Cash:</span>
+              <span>
+                {formatAmount(selectedShift?.total_cash_payments || 0)}
+              </span>
+            </div>
+            <div className='flex justify-between'>
+              <span>Total Credit:</span>
+              <span>
+                {formatAmount(selectedShift?.total_credit_payments || 0)}
+              </span>
+            </div>
+            <div className='flex justify-between'>
+              <span>Total Card:</span>
+              <span>
+                {formatAmount(selectedShift?.total_card_payments || 0)}
+              </span>
+            </div>
+            <div className='flex justify-between'>
+              <span>Total Transfer:</span>
+              <span>
+                {formatAmount(selectedShift?.total_bank_payments || 0)}
+              </span>
+            </div>
+            <div className='flex justify-between'>
+              <span>Total QRIS:</span>
+              <span>
+                {formatAmount(selectedShift?.total_qris_payments || 0)}
+              </span>
+            </div>
+            <div className='flex justify-between'>
+              <span>Estimasi Kas Akhir:</span>
+              <span>
+                {formatAmount(
+                  (selectedShift?.starting_balance || 0) +
+                    (selectedShift?.total_cash_payments || 0)
+                )}
+              </span>
+            </div>
+            <div className='flex justify-between'>
+              <span>Kas Aktual:</span>
+              <span>{formatAmount(selectedShift?.actual_balance || 0)}</span>
+            </div>
+            <div className='flex justify-between font-bold'>
+              <span>Selisih Kas:</span>
+              <span>{formatAmount(selectedShift?.cash_difference || 0)}</span>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant='outline' size='sm'>
+                Tutup
+              </Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </ProtectedRoute>
   )
 }

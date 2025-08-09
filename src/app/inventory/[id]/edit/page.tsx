@@ -21,45 +21,39 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
-import type {
-  InventoryItem,
-  InventoryItemInput,
-  InventoryCategory,
-} from '@/lib/appwrite/inventory'
-import {
-  getInventoryItem,
-  updateInventoryItem,
-  getInventoryCategories,
-} from '@/lib/appwrite/inventory'
+import type { Product, ProductInput, Category } from '@/lib/types'
+import { getProductById, updateProduct } from '@/lib/laravel/product'
+import { listCategories } from '@/lib/laravel/category'
+import { Building } from 'lucide-react'
 
 const itemFormSchema = z.object({
   name: z.string().min(3, { message: 'Nama produk minimal 3 karakter.' }),
   sku: z.string().optional(),
-  categoryId: z.string().min(1, { message: 'Kategori harus dipilih.' }),
+  category_id: z.number().min(1, { message: 'Kategori harus dipilih.' }),
   quantity: z.coerce.number().min(0, { message: 'Stok tidak boleh negatif.' }),
   price: z.coerce
     .number()
     .min(0, { message: 'Harga jual tidak boleh negatif.' }),
-  costPrice: z.coerce
+  cost_price: z.coerce
     .number()
     .min(0, { message: 'Harga pokok tidak boleh negatif.' }),
-  imageUrl: z
+  image_url: z
     .string()
     .url({ message: 'URL gambar tidak valid.' })
     .optional()
     .or(z.literal('')),
-  imageHint: z.string().optional(),
+  image_hint: z.string().optional(),
 })
 type ItemFormValues = z.infer<typeof itemFormSchema>
 
 export default function EditInventoryPage() {
   const router = useRouter()
   const params = useParams()
-  const itemId = params.id as string
+  const itemId = Number(params.id)
 
   const { selectedBranch } = useBranches()
-  const [item, setItem] = useState<InventoryItem | null>(null)
-  const [categories, setCategories] = useState<InventoryCategory[]>([])
+  const [item, setItem] = useState<Product | null>(null)
+  const [categories, setCategories] = useState<Category[]>([])
   const [loadingItem, setLoadingItem] = useState(true)
   const [loadingCategories, setLoadingCategories] = useState(true)
 
@@ -68,12 +62,12 @@ export default function EditInventoryPage() {
     defaultValues: {
       name: '',
       sku: '',
-      categoryId: '',
+      category_id: '',
       quantity: 0,
       price: 0,
-      costPrice: 0,
-      imageUrl: '',
-      imageHint: '',
+      cost_price: 0,
+      image_url: '',
+      image_hint: '',
     },
   })
 
@@ -89,8 +83,8 @@ export default function EditInventoryPage() {
       setLoadingCategories(true)
 
       const [fetchedItem, fetchedCategories] = await Promise.all([
-        getInventoryItem(itemId),
-        getInventoryCategories(selectedBranch.id),
+        getProductById(itemId),
+        listCategories(selectedBranch.id),
       ])
 
       if (fetchedItem) {
@@ -98,12 +92,12 @@ export default function EditInventoryPage() {
         itemForm.reset({
           name: fetchedItem.name,
           sku: fetchedItem.sku || '',
-          categoryId: fetchedItem.categoryId,
+          category_id: fetchedItem.category_id,
           quantity: fetchedItem.quantity,
           price: fetchedItem.price,
-          costPrice: fetchedItem.costPrice || 0,
-          imageUrl: fetchedItem.imageUrl || '',
-          imageHint: fetchedItem.imageHint || '',
+          cost_price: fetchedItem.cost_price || 0,
+          image_url: fetchedItem.image_url || '',
+          image_hint: fetchedItem.image_hint || '',
         })
       } else {
         toast.error('Produk tidak ditemukan', {
@@ -122,7 +116,9 @@ export default function EditInventoryPage() {
   const onSubmit: SubmitHandler<ItemFormValues> = async (values) => {
     if (!selectedBranch || !item) return
 
-    const selectedCategory = categories.find((c) => c.id === values.categoryId)
+    const selectedCategory = categories.find(
+      (c) => c.id === Number(values.category_id)
+    )
     if (!selectedCategory) {
       toast.error('Kategori Tidak Valid', {
         description: 'Kategori yang dipilih tidak ditemukan.',
@@ -130,43 +126,56 @@ export default function EditInventoryPage() {
       return
     }
 
-    const itemData: InventoryItemInput = {
+    const itemData: ProductInput = {
       name: values.name,
       sku: values.sku?.trim() || '', // SKU can be empty, Appwrite will handle if it's unique
-      categoryId: values.categoryId,
-      branchId: selectedBranch.id, // Ensure branchId is included
+      category_id: values.category_id,
+      category_name: selectedCategory.name,
+      branch_id: selectedBranch.id, // Ensure branch_id is included
       quantity: Number(values.quantity),
       price: Number(values.price),
-      costPrice: Number(values.costPrice),
-      imageUrl: values.imageUrl || `https://placehold.co/64x64.png`,
-      imageHint:
-        values.imageHint ||
+      cost_price: Number(values.cost_price),
+      image_url: values.image_url || `https://placehold.co/64x64.png`,
+      image_hint:
+        values.image_hint ||
         values.name.split(' ').slice(0, 2).join(' ').toLowerCase(),
     }
 
-    const result = await updateInventoryItem(
-      item.id,
-      itemData,
-      selectedCategory.name
-    )
+    try {
+      const result = await updateProduct(item.id, itemData)
 
-    if (result && 'error' in result) {
-      toast.error('Gagal Memperbarui Produk', {
-        description: result.error,
-      })
-    } else {
       toast.success('Produk Diperbarui', {
-        description: `${values.name} telah diperbarui di inventaris.`,
+        description: `${result.name} telah diperbarui di inventaris.`,
       })
       router.push('/inventory')
+    } catch (error: any) {
+      console.error('Gagal menambah produk:', error)
+
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error('Gagal Menambah Produk', {
+        description: errorMessage,
+      })
     }
   }
 
   if (!selectedBranch) {
     return (
       <MainLayout>
-        <div className='p-4 text-center'>
-          Pilih cabang untuk mengedit produk.
+        <div className='flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4'>
+          <Building className='h-16 w-16 text-primary animate-pulse mb-4' />
+          <h1 className='text-2xl font-semibold font-headline mb-2'>
+            Berkah Baja Makmur
+          </h1>
+          <p className='text-sm text-muted-foreground'>Silakan tunggu...</p>
         </div>
       </MainLayout>
     )
@@ -217,7 +226,7 @@ export default function EditInventoryPage() {
 // Reusable ProductForm component (copied from add/page.tsx)
 interface ProductFormProps {
   itemForm: ReturnType<typeof useForm<ItemFormValues>>
-  categories: InventoryCategory[]
+  categories: Category[]
   loadingCategories: boolean
   onSubmit: SubmitHandler<ItemFormValues>
   isSubmitting: boolean
@@ -263,12 +272,12 @@ const ProductForm: React.FC<ProductFormProps> = ({
           Kategori*
         </Label>
         <Controller
-          name='categoryId'
+          name='category_id'
           control={control}
           render={({ field }) => (
             <Select
               onValueChange={field.onChange}
-              value={field.value}
+              value={String(field.value)}
               disabled={loadingCategories}
             >
               <SelectTrigger className='h-9 text-xs'>
@@ -289,7 +298,11 @@ const ProductForm: React.FC<ProductFormProps> = ({
                   </div>
                 ) : (
                   categories.map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id} className='text-xs'>
+                    <SelectItem
+                      key={cat.id}
+                      value={String(cat.id)}
+                      className='text-xs'
+                    >
                       {cat.name}
                     </SelectItem>
                   ))
@@ -298,9 +311,9 @@ const ProductForm: React.FC<ProductFormProps> = ({
             </Select>
           )}
         />
-        {errors.categoryId && (
+        {errors.category_id && (
           <p className='text-xs text-destructive mt-1'>
-            {errors.categoryId.message}
+            {errors.category_id.message}
           </p>
         )}
       </div>
@@ -344,13 +357,13 @@ const ProductForm: React.FC<ProductFormProps> = ({
           <Input
             id='itemCostPrice'
             type='number'
-            {...register('costPrice')}
+            {...register('cost_price')}
             className='h-9 text-xs'
             placeholder='0'
           />
-          {errors.costPrice && (
+          {errors.cost_price && (
             <p className='text-xs text-destructive mt-1'>
-              {errors.costPrice.message}
+              {errors.cost_price.message}
             </p>
           )}
         </div>
@@ -361,13 +374,13 @@ const ProductForm: React.FC<ProductFormProps> = ({
         </Label>
         <Input
           id='itemImageUrl'
-          {...register('imageUrl')}
+          {...register('image_url')}
           placeholder='https://...'
           className='h-9 text-xs'
         />
-        {errors.imageUrl && (
+        {errors.image_url && (
           <p className='text-xs text-destructive mt-1'>
-            {errors.imageUrl.message}
+            {errors.image_url.message}
           </p>
         )}
       </div>
@@ -377,7 +390,7 @@ const ProductForm: React.FC<ProductFormProps> = ({
         </Label>
         <Input
           id='itemImageHint'
-          {...register('imageHint')}
+          {...register('image_hint')}
           placeholder='Contoh: coffee beans'
           className='h-9 text-xs'
         />

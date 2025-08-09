@@ -21,15 +21,9 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
-import type {
-  InventoryItemInput,
-  InventoryCategory,
-} from '@/lib/appwrite/inventory'
-import {
-  addInventoryItem,
-  getInventoryCategories,
-} from '@/lib/appwrite/inventory'
-import { ID } from 'appwrite'
+import type { ProductInput, Category } from '@/lib/types'
+import { listCategories } from '@/lib/laravel/category'
+import { createProduct } from '@/lib/laravel/product'
 import Link from 'next/link'
 import { DotLottieReact } from '@lottiefiles/dotlottie-react'
 import { ArrowLeft } from 'lucide-react'
@@ -37,27 +31,27 @@ import { ArrowLeft } from 'lucide-react'
 const itemFormSchema = z.object({
   name: z.string().min(3, { message: 'Nama produk minimal 3 karakter.' }),
   sku: z.string().optional(),
-  categoryId: z.string().min(1, { message: 'Kategori harus dipilih.' }),
+  category_id: z.string().min(1, { message: 'Kategori harus dipilih.' }),
   quantity: z.coerce.number().min(0, { message: 'Stok tidak boleh negatif.' }),
   price: z.coerce
     .number()
     .min(0, { message: 'Harga jual tidak boleh negatif.' }),
-  costPrice: z.coerce
+  cost_price: z.coerce
     .number()
     .min(0, { message: 'Harga pokok tidak boleh negatif.' }),
-  imageUrl: z
+  image_url: z
     .string()
     .url({ message: 'URL gambar tidak valid.' })
     .optional()
     .or(z.literal('')),
-  imageHint: z.string().optional(),
+  image_hint: z.string().optional(),
 })
 type ItemFormValues = z.infer<typeof itemFormSchema>
 
 export default function AddInventoryPage() {
   const router = useRouter()
   const { selectedBranch } = useBranches()
-  const [categories, setCategories] = React.useState<InventoryCategory[]>([])
+  const [categories, setCategories] = React.useState<Category[]>([])
   const [loadingCategories, setLoadingCategories] = React.useState(true)
 
   const itemForm = useForm<ItemFormValues>({
@@ -65,12 +59,12 @@ export default function AddInventoryPage() {
     defaultValues: {
       name: '',
       sku: '',
-      categoryId: '',
+      category_id: '',
       quantity: 0,
       price: 0,
-      costPrice: 0,
-      imageUrl: '',
-      imageHint: '',
+      cost_price: 0,
+      image_url: '',
+      image_hint: '',
     },
   })
 
@@ -78,9 +72,7 @@ export default function AddInventoryPage() {
     async function loadCategories() {
       if (selectedBranch) {
         setLoadingCategories(true)
-        const fetchedCategories = await getInventoryCategories(
-          selectedBranch.id
-        )
+        const fetchedCategories = await listCategories(selectedBranch.id)
         setCategories(fetchedCategories)
         setLoadingCategories(false)
       } else {
@@ -92,12 +84,15 @@ export default function AddInventoryPage() {
   }, [selectedBranch])
 
   const onSubmit: SubmitHandler<ItemFormValues> = async (values) => {
+    // --- Validasi awal di sisi frontend (ini sudah bagus) ---
     if (!selectedBranch) {
       toast.error('Error', { description: 'Cabang tidak valid.' })
       return
     }
 
-    const selectedCategory = categories.find((c) => c.id === values.categoryId)
+    const selectedCategory = categories.find(
+      (c) => c.id === Number(values.category_id)
+    )
     if (!selectedCategory) {
       toast.error('Kategori Tidak Valid', {
         description: 'Kategori yang dipilih tidak ditemukan.',
@@ -107,34 +102,51 @@ export default function AddInventoryPage() {
 
     let skuToSave = values.sku?.trim()
     if (!skuToSave) {
-      skuToSave = `AUTOSKU-${ID.unique().substring(0, 8).toUpperCase()}`
+      skuToSave = `AUTOSKU-${Math.random()
+        .toString(36)
+        .substring(2, 10)
+        .toUpperCase()}`
     }
 
-    const itemData: InventoryItemInput = {
+    const itemData: ProductInput = {
       name: values.name,
       sku: skuToSave,
-      categoryId: values.categoryId,
-      branchId: selectedBranch.id,
+      category_id: Number(values.category_id),
+      category_name: selectedCategory.name,
+      branch_id: selectedBranch.id,
       quantity: Number(values.quantity),
       price: Number(values.price),
-      costPrice: Number(values.costPrice),
-      imageUrl: values.imageUrl || `https://placehold.co/64x64.png`,
-      imageHint:
-        values.imageHint ||
+      cost_price: Number(values.cost_price),
+      image_url: values.image_url || `https://placehold.co/64x64.png`,
+      image_hint:
+        values.image_hint ||
         values.name.split(' ').slice(0, 2).join(' ').toLowerCase(),
     }
 
-    const result = await addInventoryItem(itemData, selectedCategory.name)
+    try {
+      const newProduct = await createProduct(itemData)
 
-    if (result && 'error' in result) {
-      toast.error('Gagal Menambah Produk', {
-        description: result.error,
-      })
-    } else {
       toast.success('Produk Ditambahkan', {
-        description: `${values.name} telah ditambahkan ke inventaris.`,
+        description: `${newProduct.name} telah ditambahkan ke inventaris.`,
       })
+
       router.push('/inventory')
+    } catch (error: any) {
+      console.error('Gagal menambah produk:', error)
+
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error('Gagal Menambah Produk', {
+        description: errorMessage,
+      })
     }
   }
 
@@ -187,7 +199,7 @@ export default function AddInventoryPage() {
 // Reusable ProductForm component (moved from original page.tsx)
 interface ProductFormProps {
   itemForm: ReturnType<typeof useForm<ItemFormValues>>
-  categories: InventoryCategory[]
+  categories: Category[]
   loadingCategories: boolean
   onSubmit: SubmitHandler<ItemFormValues>
   isSubmitting: boolean
@@ -236,7 +248,7 @@ const ProductForm: React.FC<ProductFormProps> = ({
             Kategori*
           </Label>
           <Controller
-            name='categoryId'
+            name='category_id'
             control={control}
             render={({ field }) => (
               <Select
@@ -264,7 +276,7 @@ const ProductForm: React.FC<ProductFormProps> = ({
                     categories.map((cat) => (
                       <SelectItem
                         key={cat.id}
-                        value={cat.id}
+                        value={String(cat.id)}
                         className='text-xs'
                       >
                         {cat.name}
@@ -275,9 +287,9 @@ const ProductForm: React.FC<ProductFormProps> = ({
               </Select>
             )}
           />
-          {errors.categoryId && (
+          {errors.category_id && (
             <p className='text-xs text-destructive mt-1'>
-              {errors.categoryId.message}
+              {errors.category_id.message}
             </p>
           )}
         </div>
@@ -315,46 +327,46 @@ const ProductForm: React.FC<ProductFormProps> = ({
             )}
           </div>
           <div>
-            <Label htmlFor='itemCostPrice' className='text-xs'>
+            <Label htmlFor='itemcost_price' className='text-xs'>
               Harga Pokok (Rp)
             </Label>
             <Input
-              id='itemCostPrice'
+              id='itemcost_price'
               type='number'
-              {...register('costPrice')}
+              {...register('cost_price')}
               className='h-9 text-xs'
               placeholder='0'
             />
-            {errors.costPrice && (
+            {errors.cost_price && (
               <p className='text-xs text-destructive mt-1'>
-                {errors.costPrice.message}
+                {errors.cost_price.message}
               </p>
             )}
           </div>
         </div>
         <div>
-          <Label htmlFor='itemImageUrl' className='text-xs'>
+          <Label htmlFor='itemimage_url' className='text-xs'>
             URL Gambar (Opsional)
           </Label>
           <Input
-            id='itemImageUrl'
-            {...register('imageUrl')}
+            id='itemimage_url'
+            {...register('image_url')}
             placeholder='https://...'
             className='h-9 text-xs'
           />
-          {errors.imageUrl && (
+          {errors.image_url && (
             <p className='text-xs text-destructive mt-1'>
-              {errors.imageUrl.message}
+              {errors.image_url.message}
             </p>
           )}
         </div>
         <div>
-          <Label htmlFor='itemImageHint' className='text-xs'>
+          <Label htmlFor='itemimage_hint' className='text-xs'>
             Petunjuk Gambar (Opsional, maks 2 kata untuk placeholder)
           </Label>
           <Input
-            id='itemImageHint'
-            {...register('imageHint')}
+            id='itemimage_hint'
+            {...register('image_hint')}
             placeholder='Contoh: coffee beans'
             className='h-9 text-xs'
           />

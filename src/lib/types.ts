@@ -6,7 +6,14 @@
 
 export type UserRole = 'admin' | 'cashier'
 export type ShiftStatus = 'open' | 'closed'
-export type SaleStatus = 'completed' | 'returned' | 'pending' // Sesuaikan dengan logika bisnis Anda
+export type SaleStatus =
+  | 'completed'
+  | 'returned'
+  | 'pending'
+  | 'pending_return'
+  | 'pending_void'
+  | 'voided'
+  | 'returned'
 export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid'
 export type PaymentMethod = 'cash' | 'card' | 'transfer' | 'qris' | 'credit' // Frontend constraint
 export type StockMutationType =
@@ -15,6 +22,25 @@ export type StockMutationType =
   | 'adjustment'
   | 'transfer'
   | 'return'
+
+export type ViewMode = 'card' | 'table'
+export const LOCALSTORAGE_POS_VIEW_MODE_KEY = 'branchwise_posViewMode'
+
+export type SaleRequestActionPayload = 'return' | 'void'
+export type AdminRequestActionPayload = 'return' | 'void' | 'all'
+
+export type PurchaseOrderStatus =
+  | 'draft'
+  | 'ordered'
+  | 'partially_received'
+  | 'fully_received'
+  | 'cancelled'
+export type PurchaseOrderPaymentStatus =
+  | 'unpaid'
+  | 'partially_paid'
+  | 'paid'
+  | 'overdue'
+export type PurchaseOrderPaymentTerms = 'cash' | 'credit'
 
 // ========================================================================
 // Definisi Interface Model Utama (sesuai Model Laravel)
@@ -34,6 +60,9 @@ export interface User {
 
 // Tipe data ini cocok dengan model BankAccount di Laravel
 export interface BankAccount {
+  bankName: string
+  accountNumber: number
+  accountHolderName: number
   id: number
   branch_id: number | string | null
   bank_name: string
@@ -56,6 +85,8 @@ export interface Branch {
   created_at: string
   updated_at: string
   transaction_deletion_password: string | null
+  printer_port: string
+  intl: string
 }
 
 export interface Category {
@@ -75,7 +106,7 @@ export interface Product {
   cost_price: number
   price: number
   branch_id: number | string | null
-  category_id: number | null
+  category_id: number
   category_name: string | null
   image_url: string | null | undefined
   image_hint: string | null | undefined
@@ -94,6 +125,7 @@ export interface Customer {
   notes: string | null
   created_at: string
   updated_at: string
+  qr_code_id: string
 }
 
 export interface Supplier {
@@ -115,10 +147,17 @@ export interface Shift {
   start_shift: string
   end_shift: string | null
   starting_balance: number
+  ending_balance: number | null
+  actual_balance: number | null
   total_sales: number
   total_cash_payments: number
-  // Tambahkan total pembayaran lain jika perlu
+  total_bank_payments: number
+  total_credit_payments: number
+  total_card_payments: number
+  total_qris_payments: number
+  discount_amount: number
   branch_id: number | string | null
+  cash_difference: number | null // Selisih kas antara saldo awal dan akhir
   user_id: number | null
   user_name: string
   created_at: string
@@ -131,6 +170,8 @@ export interface Sale {
   status: SaleStatus
   subtotal: number
   total_discount_amount: number
+  shipping_cost: number
+  total_cogs: number
   tax_amount: number
   total_amount: number
   payment_method: PaymentMethod
@@ -147,6 +188,18 @@ export interface Sale {
   sale_details?: SaleDetail[] // Relasi
   customer?: Customer // Relasi
   user?: User // Relasi
+  voucher_code?: string | null
+  voucher_discount_amount?: number | null
+  is_credit_sale: boolean
+  credit_due_date?: string | null
+  outstanding_amount?: number | null
+  bank_transaction_ref?: string | null
+  bank_name?: string | null
+  notes?: string | null
+  returned_reason?: string | null
+  returned_at?: string | null
+  returned_by_user_id?: number | null
+  returned_by_user_name?: string | null
 }
 
 export interface SaleDetail {
@@ -167,14 +220,17 @@ export interface SaleDetail {
 export interface PurchaseOrder {
   id: number
   po_number: string
-  status: string // 'pending', 'completed', 'canceled'
+  status: PurchaseOrderStatus // 'pending', 'completed', 'canceled'
   payment_status: PaymentStatus
+  payment_due_date: string | null
   subtotal: number
   total_amount: number
   outstanding_amount: number
   order_date: string
+  is_credit: boolean
   supplier_id: number
   supplier_name: string
+  supplier_invoice_number: string | null
   branch_id: number
   user_id: number | null
   created_at: string
@@ -266,22 +322,77 @@ export type ProductInput = Omit<Product, 'id' | 'created_at' | 'updated_at'>
 // Tipe ini digunakan saat membuat kategori baru.
 export type CategoryInput = Omit<Category, 'id' | 'created_at' | 'updated_at'>
 
+export type CustomerInput = Omit<Customer, 'id' | 'created_at' | 'updated_at'>
+
+export type SupplierInput = Omit<Supplier, 'id' | 'created_at' | 'updated_at'>
+
+export type ShiftInput = {
+  starting_balance: number
+  branch_id: number
+}
+
+export type ShiftEnding = {
+  ending_balance: number
+  branch_id: number
+  actual_balance: number
+  total_sales: number
+  total_cash_payments: number
+  total_bank_payments: number
+  total_credit_payments: number
+  total_card_payments: number
+  total_qris_payments: number
+}
 // ... tambahkan tipe input lain sesuai kebutuhan
 
 // Tipe data untuk item di dalam keranjang belanja (POS)
 export interface CartItem {
   product_id: number
   quantity: number
+  product_name: string
+  price: number
+  discount: number
+  cost_price: number
+  original_price: number // Harga asli sebelum diskon item
+  discount_amount: number // Diskon nominal per item
+  item_discount_type?: 'nominal' | 'percentage'
+  item_discount_value?: number
+  subtotal: number
   // tambahkan properti lain jika ada diskon per item, dll.
 }
 
-// Tipe data payload untuk membuat transaksi penjualan baru
 export interface CreateSalePayload {
-  user_id: number
-  branch_id: number
-  customer_id?: number
-  payment_method: PaymentMethod
-  amount_paid: number
-  notes?: string
+  shift_id: number
+  payment_method: PaymentMethod // 'cash', 'credit', 'card', dll.
+  amount_paid?: number // Untuk kredit, ini bisa dianggap sebagai DP (Down Payment)
   items: CartItem[]
+  change_given?: number
+  // -- Field Opsional untuk Kredit --
+  is_credit_sale?: boolean // Kirim `true` jika ini penjualan kredit
+  credit_due_date?: string // Opsional, tanggal jatuh tempo (format: 'YYYY-MM-DD')
+
+  customer_id?: number
+  notes?: string
 }
+
+export interface SaleActionParams {
+  id: number
+  action_type: SaleRequestActionPayload
+  reason: string
+}
+
+// Tipe untuk membuat PO baru
+export interface PurchaseOrderItemInput {
+  product_id: number
+  quantity: number
+  cost: number
+}
+export interface PurchaseOrderInput {
+  supplier_id: number
+  branch_id: number
+  order_date: string // 'YYYY-MM-DD'
+  notes?: string
+  items: PurchaseOrderItemInput[]
+}
+
+export const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
+export const ADMIN_REQUEST_SALES_STATUS = ['return', 'void', 'all']

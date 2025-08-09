@@ -75,7 +75,7 @@ import {
   CardTitle as CardTtl,
   CardFooter as CardFtr,
 } from '@/components/ui/card' // Aliased to avoid conflict
-import { formatCurrency, formatDateTwo } from '@/lib/helper'
+import { formatCurrency, formatDateIntlTwo } from '@/lib/helper'
 
 const paymentToSupplierFormSchema = z.object({
   paymentDate: z.date({ required_error: 'Tanggal pembayaran harus diisi.' }),
@@ -412,11 +412,11 @@ export default function AccountsPayablePage() {
                         {po.supplierName || '-'}
                       </TableCell>
                       <TableCell className='py-2 text-xs hidden md:table-cell'>
-                        {formatDateTwo(po.orderDate)}
+                        {formatDateIntlTwo(po.orderDate)}
                       </TableCell>
                       <TableCell className='py-2 text-xs'>
                         {po.paymentDueDateOnPO
-                          ? formatDateTwo(po.paymentDueDateOnPO)
+                          ? formatDateIntlTwo(po.paymentDueDateOnPO)
                           : '-'}
                       </TableCell>
                       <TableCell className='text-right py-2 text-xs'>
@@ -618,7 +618,7 @@ export default function AccountsPayablePage() {
                         <li key={idx} className='p-1.5 bg-muted/50 rounded-md'>
                           <p>
                             <strong>Tgl:</strong>{' '}
-                            {formatDateTwo(pmt.paymentDate, true)} -{' '}
+                            {formatDateIntlTwo(pmt.paymentDate, true)} -{' '}
                             <strong>{formatCurrency(pmt.amountPaid)}</strong> (
                             {pmt.paymentMethod})
                           </p>

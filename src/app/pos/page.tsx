@@ -91,6 +91,7 @@ import {
   Edit3,
   Trash2,
   Loader2,
+  Loader2Icon,
 } from 'lucide-react'
 import Image from 'next/image'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
@@ -105,53 +106,51 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { InventoryItem } from '@/lib/appwrite/inventory'
-import type { Customer } from '@/lib/appwrite/customers'
-import type { BankAccount } from '@/lib/appwrite/bankAccounts'
-import { getInventoryItems } from '@/lib/appwrite/inventory'
-import { getCustomers } from '@/lib/appwrite/customers'
-import { getBankAccounts } from '@/lib/appwrite/bankAccounts'
 import {
-  startShift as startNewShift,
+  type Product,
+  type Customer,
+  type BankAccount,
+  ITEMS_PER_PAGE_OPTIONS,
+} from '@/lib/types'
+import { listProducts } from '@/lib/laravel/product'
+import { getCustomerById, listCustomers } from '@/lib/laravel/customers'
+import { listBankAccounts } from '@/lib/laravel/bankAccounts'
+// import {
+//   startShift as startShift,
+//   getActiveShift,
+//   endShift,
+//   createPOSTransaction as createSale,
+//   getTransactions as listSales,
+//   getSaleById,
+// } from '@/lib/laravel/pos'
+
+import {
+  startShift,
   getActiveShift,
   endShift,
-  createPOSTransaction as recordTransaction,
-  getTransactions as getTransactionsForShift,
-  getTransactionById,
-} from '@/lib/appwrite/pos'
+} from '@/lib/laravel/shiftService'
+
+import { createSale, listSales, getSaleById } from '@/lib/laravel/saleService'
+
 // Impor SEMUA tipe yang berhubungan dengan POS dari satu file terpusat
 import type {
-  ShiftDocument,
-  TransactionDocument,
-  CreateTransactionPayload,
-  TransactionItemDocument,
-  TransactionViewModel,
+  Shift,
+  Sale,
+  CreateSalePayload,
   CartItem, // Tambahkan ini juga
   PaymentMethod,
-  InvoicePrintPayload,
-} from '@/lib/appwrite/types' // Ubah path jika perlu
-import { ScanCustomerDialog } from '@/components/pos/scan-customer-dialog'
+} from '@/lib/types' // Ubah path jika perlu
 
 import { format, parseISO, isValid } from 'date-fns' // Added parseISO and isValid
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useDebounce } from '@uidotdev/usehooks'
-import { formatCurrency } from '@/lib/helper'
+import { formatCurrency, formatDateIntlIntl } from '@/lib/helper'
 import { handlePrint } from '@/lib/printHelper'
+import { is } from 'date-fns/locale'
 
 type ViewMode = 'card' | 'table'
 const LOCALSTORAGE_POS_VIEW_MODE_KEY = 'branchwise_posViewMode'
-const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
-
-const COMMON_BANKS = [
-  'BCA',
-  'Mandiri',
-  'BRI',
-  'BNI',
-  'CIMB Niaga',
-  'Danamon',
-  'Lainnya',
-]
 
 export default function POSPage() {
   const { selectedBranch } = useBranches()
@@ -160,7 +159,7 @@ export default function POSPage() {
 
   const [viewMode, setViewMode] = useState<ViewMode>('table')
 
-  const [activeShift, setActiveShift] = useState<ShiftDocument | null>(null) // Changed to POSShift
+  const [activeShift, setActiveShift] = useState<Shift | null>(null) // Changed to POSShift
   const [loadingShift, setLoadingShift] = useState(true)
   const [showStartShiftModal, setShowStartShiftModal] = useState(false)
   const [initialCashInput, setInitialCashInput] = useState('')
@@ -170,12 +169,16 @@ export default function POSPage() {
   const [endShiftCalculations, setEndShiftCalculations] = useState<{
     expectedCash: number
     totalSalesByPaymentMethod: Record<PaymentMethod, number>
+    totalSales: number
+    difference: number
   } | null>(null)
+  const [endingCashBalance, setEndingCashBalance] = useState(0)
   const [isEndingShift, setIsEndingShift] = useState(false)
 
-  const [items, setItems] = useState<InventoryItem[]>([])
+  const [items, setItems] = useState<Product[]>([])
   const [loadingItems, setLoadingItems] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
+  const [searchCustomerTerm, setSearchCustomerTerm] = useState('')
   const [totalItems, setTotalItems] = useState(0)
   const [itemsPerPage, setItemsPerPage] = useState<number>(
     ITEMS_PER_PAGE_OPTIONS[0]
@@ -183,6 +186,7 @@ export default function POSPage() {
   const totalPages = Math.ceil(totalItems / itemsPerPage)
 
   const debouncedSearchTerm = useDebounce(searchTerm, 1000)
+  const debouncedSearchCustomer = useDebounce(searchCustomerTerm, 1000)
   const [hasNextPage, setHasNextPage] = useState(false)
 
   const [currentPage, setCurrentPage] = useState(1)
@@ -191,9 +195,9 @@ export default function POSPage() {
   const [selectedPaymentTerms, setSelectedPaymentTerms] =
     useState<PaymentMethod>('cash')
   const [isProcessingSale, setIsProcessingSale] = useState(false)
+  const [isCreditSaleProcessing, setIsCreditSaleProcessing] = useState(false)
 
-  const [posModeActive, setPosModeActive] = useState(false)
-  const [lastTransactionId, setLastTransactionId] = useState<string | null>(
+  const [lastTransactionId, setLastTransactionId] = useState<number | null>(
     null
   )
   const [showPrintInvoiceDialog, setShowPrintInvoiceDialog] = useState(false)
@@ -201,11 +205,12 @@ export default function POSPage() {
 
   const [showCashPaymentModal, setShowCashPaymentModal] = useState(false)
   const [cashAmountPaidInput, setCashAmountPaidInput] = useState('')
-  const [customerNameInputCash, setCustomerNameInputCash] = useState('')
+  const [customer_nameInputCash, setcustomer_nameInputCash] = useState('')
   const [calculatedChange, setCalculatedChange] = useState<number | null>(null)
+  const [showCreditConfirmationDialog, setShowCreditConfirmationDialog] =
+    useState(false)
 
   const [allCustomers, setAllCustomers] = useState<Customer[]>([])
-  const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([])
   const [loadingCustomers, setLoadingCustomers] = useState(true)
   const [selectedCustomerId, setSelectedCustomerId] = useState<
     string | undefined
@@ -223,13 +228,11 @@ export default function POSPage() {
   >([])
   const [loadingBankAccounts, setLoadingBankAccounts] = useState(false)
   const [showBankPaymentModal, setShowBankPaymentModal] = useState(false)
-  const [selectedBankName, setSelectedBankName] = useState<string>('')
+  const [selectedbank_name, setSelectedbank_name] = useState<string>('')
   const [bankRefNumberInput, setBankRefNumberInput] = useState('')
-  const [customerNameInputBank, setCustomerNameInputBank] = useState('')
+  const [customer_nameInputBank, setcustomer_nameInputBank] = useState('')
 
-  const [shiftTransactions, setShiftTransactions] = useState<
-    TransactionDocument[]
-  >([]) // Changed to POSTransaction
+  const [shiftTransactions, setShiftTransactions] = useState<Sale[]>([]) // Changed to POSTransaction
   const [loadingShiftTransactions, setLoadingShiftTransactions] =
     useState(false)
   const [showBankHistoryDialog, setShowBankHistoryDialog] = useState(false)
@@ -271,33 +274,9 @@ export default function POSPage() {
 
   const currencySymbol =
     selectedBranch?.currency === 'IDR' ? 'Rp' : selectedBranch?.currency || '$'
-  const taxRate = selectedBranch?.taxRate ? selectedBranch.taxRate / 100 : 0.0
-
-  const fetchItemsData = useCallback(
-    async (page: number, currentSearchTerm: string) => {
-      if (!selectedBranch) {
-        setItems([])
-        setLoadingItems(false)
-        setTotalItems(0)
-        return
-      }
-      setLoadingItems(true)
-
-      const options = {
-        limit: itemsPerPage,
-        searchTerm: currentSearchTerm || undefined,
-        page: page, // Kirim nomor halaman
-      }
-
-      // Panggil fungsi API yang baru
-      const result = await getInventoryItems(selectedBranch.id, options)
-
-      setItems(result.items)
-      setTotalItems(result.total) // Simpan total item
-      setLoadingItems(false)
-    },
-    [selectedBranch, itemsPerPage] // Dependensi lebih sederhana
-  )
+  const tax_rate = selectedBranch?.tax_rate
+    ? selectedBranch.tax_rate / 100
+    : 0.0
 
   const handleNextPage = () => {
     // Cek jika halaman saat ini belum mencapai halaman terakhir
@@ -312,6 +291,78 @@ export default function POSPage() {
     }
   }
 
+  const fetchBankAccounts = useCallback(async () => {
+    if (!selectedBranch) {
+      setAvailableBankAccounts([])
+      setLoadingBankAccounts(false)
+      return
+    }
+    setLoadingBankAccounts(true)
+    try {
+      const result = await listBankAccounts(selectedBranch.id)
+
+      setAvailableBankAccounts(result)
+    } catch (error) {
+      toast.error('Gagal Memuat Data', {
+        description: 'Tidak dapat memuat rekening bank.',
+      })
+    } finally {
+      setLoadingBankAccounts(false)
+    }
+  }, [selectedBranch])
+
+  const fetchItemsData = useCallback(
+    async (page: number, currentSearchTerm: string) => {
+      if (!selectedBranch) {
+        setItems([])
+        setLoadingItems(false)
+        setTotalItems(0)
+        return
+      }
+      setLoadingItems(true)
+
+      const options = {
+        branchId: selectedBranch.id,
+        limit: itemsPerPage,
+        searchTerm: currentSearchTerm || undefined,
+        page: page || 1,
+      }
+
+      // Panggil fungsi API yang baru
+      const result = await listProducts(options)
+      setItems(result.data)
+      setTotalItems(result.total) // Simpan total item
+      setLoadingItems(false)
+    },
+    [selectedBranch, itemsPerPage] // Dependensi lebih sederhana
+  )
+
+  const fetchCustomers = useCallback(
+    async (currentSearchTerm: string) => {
+      if (!selectedBranch) {
+        setAllCustomers([])
+        setLoadingCustomers(false)
+        return
+      }
+      setLoadingCustomers(true)
+      try {
+        const result = await listCustomers({
+          branchId: selectedBranch.id,
+          searchTerm: currentSearchTerm,
+        })
+        setAllCustomers(result.data)
+      } catch (error) {
+        toast.error('Gagal Memuat Data', {
+          description: 'Tidak dapat memuat pelanggan.',
+        })
+      } finally {
+        setLoadingCustomers(false)
+        setSearchCustomerTerm('') // Simpan search term yang digunakan
+      }
+    },
+    [selectedBranch, toast]
+  )
+
   useEffect(() => {
     // Jika tidak ada cabang yang dipilih, bersihkan state dan jangan lakukan apa-apa lagi.
     if (!selectedBranch) {
@@ -320,76 +371,37 @@ export default function POSPage() {
       setHasNextPage(false) // Sesuaikan dengan mode paginasi Anda
       return // Hentikan eksekusi lebih lanjut
     }
-
-    // Jika ada cabang, panggil fetchData.
-    // Efek ini akan otomatis berjalan ketika `currentPage` berubah (dari efek reset di atas)
-    // atau ketika `fetchData` itu sendiri berubah (jika dependensinya berubah).
     fetchItemsData(currentPage, debouncedSearchTerm)
   }, [currentPage, debouncedSearchTerm, selectedBranch, fetchItemsData]) // Sertakan semua dependensi relevan
 
-  const fetchCustomersAndBankAccounts = useCallback(async () => {
+  useEffect(() => {
+    // Jika tidak ada cabang yang dipilih, bersihkan state dan jangan lakukan apa-apa lagi.
     if (!selectedBranch) {
       setAllCustomers([])
-      setAvailableBankAccounts([])
       setLoadingCustomers(false)
-      setLoadingBankAccounts(false)
-      return
+      return // Hentikan eksekusi lebih lanjut
     }
-    setLoadingCustomers(true)
-    setLoadingBankAccounts(true)
-    try {
-      const [fetchedCustomers, fetchedBankAccounts] = await Promise.all([
-        getCustomers(selectedBranch.id),
-        getBankAccounts(selectedBranch.id),
-      ])
-      // setAllCustomers(fetchedCustomers)
-      // setFilteredCustomers(fetchedCustomers.slice(0, 5))
-      setAvailableBankAccounts(fetchedBankAccounts)
-    } catch (error) {
-      console.error('Error fetching customers/banks for POS:', error)
-      toast.error('Gagal Memuat Data', {
-        description: 'Tidak dapat memuat pelanggan atau rekening bank.',
-      })
-    } finally {
-      setLoadingCustomers(false)
-      setLoadingBankAccounts(false)
-    }
-  }, [selectedBranch, toast])
+    fetchCustomers(debouncedSearchCustomer)
+  }, [debouncedSearchCustomer, selectedBranch, fetchCustomers]) // Sertakan semua dependensi relevan
 
-  useEffect(() => {
-    fetchCustomersAndBankAccounts()
-  }, [fetchCustomersAndBankAccounts])
+  // useEffect(() => {
+  //   fetchCustomers(debouncedSearchCustomer)
+  //   fetchBankAccounts()
+  // }, [fetchCustomers, fetchBankAccounts])
 
-  useEffect(() => {
-    if (!customerSearchTerm.trim()) {
-      setFilteredCustomers(allCustomers.slice(0, 5))
-    } else {
-      const lowerSearch = customerSearchTerm.toLowerCase()
-      setFilteredCustomers(
-        allCustomers
-          .filter(
-            (customer) =>
-              customer.name.toLowerCase().includes(lowerSearch) ||
-              (customer.id &&
-                customer.id.toLowerCase().includes(lowerSearch)) ||
-              (customer.phone && customer.phone.includes(lowerSearch))
-          )
-          .slice(0, 10)
-      )
-    }
-  }, [customerSearchTerm, allCustomers])
-
-  const fetchShiftTransactions = useCallback(async () => {
+  const fetchShiftTransactions = useCallback(async (): Promise<Sale[]> => {
     if (activeShift && selectedBranch) {
       setLoadingShiftTransactions(true)
-      const transactions = await getTransactionsForShift({
-        branchId: selectedBranch.id,
-        shiftId: activeShift.$id,
+      const transactions = await listSales({
+        branchId: String(selectedBranch.id),
+        shiftId: String(activeShift.id),
       })
-      setShiftTransactions(transactions.documents)
+      setShiftTransactions(transactions.data)
       setLoadingShiftTransactions(false)
+      return transactions.data
     } else {
       setShiftTransactions([])
+      return []
     }
   }, [activeShift, selectedBranch])
 
@@ -404,10 +416,10 @@ export default function POSPage() {
       return
     }
     setLoadingShift(true)
-    const shift = await getActiveShift(currentUser.$id, selectedBranch.id)
+    const shift = await getActiveShift()
     setActiveShift(shift)
     if (shift) {
-      setInitialCashInput(shift.startingBalance.toString())
+      setInitialCashInput(shift.starting_balance.toString())
     } else {
       setInitialCashInput('')
     }
@@ -432,57 +444,70 @@ export default function POSPage() {
       })
       return
     }
-    const result = await startNewShift(
-      currentUser.$id,
-      selectedBranch.id,
-      currentUser.name,
-      cash
-    )
-    if ('error' in result) {
-      toast.error('Gagal Memulai Shift', {
-        description: result.error,
+
+    try {
+      const result = await startShift({
+        starting_balance: cash,
+        branch_id: selectedBranch.id,
       })
-    } else {
+
       setActiveShift(result)
       setShowStartShiftModal(false)
       toast.success('Shift Dimulai', {
         description: `Shift dimulai dengan modal awal ${currencySymbol}${cash.toLocaleString()}`,
       })
+    } catch (error: any) {
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error('Gagal Memulai Shift', {
+        description: errorMessage,
+      })
     }
+    setInitialCashInput('')
   }
 
   const prepareEndShiftCalculations = async () => {
     if (!activeShift) return
     setIsEndingShift(true)
-    await fetchShiftTransactions()
-    const currentShiftTransactions = shiftTransactions
+    // Fetch up-to-date transactions directly
+    const currentShiftTransactions = await fetchShiftTransactions()
 
-    const salesByPayment: Record<PaymentMethod, number> = {
-      cash: 0,
-      credit: 0,
-      card: 0,
-      transfer: 0,
-      qris: 0,
-    }
+    // Sum transactions by payment method
+    const salesByPayment: Record<PaymentMethod, number> =
+      currentShiftTransactions.reduce(
+        (acc, tx) => {
+          if (tx.status === 'completed') {
+            const method = tx.payment_method as PaymentMethod
+            if (acc.hasOwnProperty(method)) {
+              acc[method] += tx.total_amount
+            }
+          }
+          return acc
+        },
+        { cash: 0, credit: 0, card: 0, qris: 0, transfer: 0 }
+      )
 
-    currentShiftTransactions.forEach((tx) => {
-      if (
-        tx.paymentMethod === 'cash' ||
-        tx.paymentMethod === 'card' ||
-        tx.paymentMethod === 'transfer'
-      ) {
-        if (tx.status === 'completed') {
-          const paymentMethodForShift = tx.paymentMethod as PaymentMethod
-          salesByPayment[paymentMethodForShift] =
-            (salesByPayment[paymentMethodForShift] || 0) + tx.totalAmount
-        }
-      }
-    })
+    // Total sales across all payment methods
+    const totalSales = Object.values(salesByPayment).reduce(
+      (sum, value) => sum + value,
+      0
+    )
 
-    const expected = (activeShift.startingBalance || 0) + salesByPayment.cash
+    const expected = (activeShift.starting_balance || 0) + salesByPayment.cash
+    setEndingCashBalance(expected)
     setEndShiftCalculations({
+      difference: expected - totalSales,
       expectedCash: expected,
       totalSalesByPaymentMethod: salesByPayment,
+      totalSales,
     })
     setShowEndShiftModal(true)
     setIsEndingShift(false)
@@ -491,7 +516,7 @@ export default function POSPage() {
   const handleEndShiftConfirm = async () => {
     if (!activeShift || endShiftCalculations === null) return
 
-    const actualCash = parseFloat(actualCashAtEndInput)
+    const actualCash = Number(actualCashAtEndInput)
     if (isNaN(actualCash) || actualCash < 0) {
       toast.error('Input Tidak Valid', {
         description: 'Kas aktual di laci tidak valid.',
@@ -500,13 +525,23 @@ export default function POSPage() {
     }
     setIsEndingShift(true)
 
-    const cashDifference = actualCash - endShiftCalculations.expectedCash
-
-    const result = await endShift(activeShift.$id)
-
-    if (result && 'error' in result) {
-      toast.error('Gagal Mengakhiri Shift', { description: result.error })
-    } else {
+    try {
+      const result = await endShift({
+        ending_balance: endingCashBalance,
+        actual_balance: actualCash,
+        branch_id: Number(activeShift.branch_id),
+        total_bank_payments:
+          endShiftCalculations.totalSalesByPaymentMethod.transfer || 0,
+        total_card_payments:
+          endShiftCalculations.totalSalesByPaymentMethod.card || 0,
+        total_qris_payments:
+          endShiftCalculations.totalSalesByPaymentMethod.qris || 0,
+        total_credit_payments:
+          endShiftCalculations.totalSalesByPaymentMethod.credit || 0,
+        total_cash_payments:
+          endShiftCalculations.totalSalesByPaymentMethod.cash || 0,
+        total_sales: endShiftCalculations.totalSales || 0,
+      })
       toast.success('Shift Diakhiri', {
         description: 'Data shift telah disimpan.',
       })
@@ -517,11 +552,23 @@ export default function POSPage() {
       setShowEndShiftModal(false)
       setCartItems([])
       setShiftTransactions([])
+    } catch (error: any) {
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+
+      toast.error('Gagal Mengakhiri Shift', { description: errorMessage })
+      setIsEndingShift(false)
     }
-    setIsEndingShift(false)
   }
 
-  const handleAddToCart = (product: InventoryItem) => {
+  const handleAddToCart = (product: Product) => {
     if (!activeShift) {
       toast.error('Shift Belum Dimulai', {
         description: 'Silakan mulai shift untuk menambah item.',
@@ -536,12 +583,12 @@ export default function POSPage() {
     }
     setCartItems((prevItems) => {
       const existingItem = prevItems.find(
-        (item) => item.productId === product.id
+        (item) => item.product_id === product.id
       )
       if (existingItem) {
         if (existingItem.quantity < product.quantity) {
           return prevItems.map((item) =>
-            item.productId === product.id
+            item.product_id === product.id
               ? {
                   ...item,
                   quantity: item.quantity + 1,
@@ -559,16 +606,17 @@ export default function POSPage() {
       return [
         ...prevItems,
         {
-          productId: product.id,
-          productName: product.name,
-          originalPrice: product.price,
+          product_id: product.id,
+          product_name: product.name,
+          original_price: product.price,
           price: product.price,
-          discountAmount: 0,
-          itemDiscountType: 'nominal',
-          itemDiscountValue: 0,
+          discount_amount: 0,
+          item_discount_type: 'nominal',
+          item_discount_value: 0,
           quantity: 1,
-          costPrice: product.costPrice || 0,
+          cost_price: product.cost_price || 0,
           subtotal: product.price,
+          discount: 0, // Ensure required property is present
         },
       ]
     })
@@ -576,8 +624,8 @@ export default function POSPage() {
 
   const handleOpenItemDiscountDialog = (item: CartItem) => {
     setSelectedItemForDiscount(item)
-    setCurrentDiscountType(item.itemDiscountType || 'nominal')
-    setCurrentDiscountValue((item.itemDiscountValue || 0).toString())
+    setCurrentDiscountType(item.item_discount_type || 'nominal')
+    setCurrentDiscountValue((item.item_discount_value || 0).toString())
     setIsItemDiscountDialogOpen(true)
   }
 
@@ -591,27 +639,27 @@ export default function POSPage() {
   }
 
   const calculateDiscountedPrice = () => {
-    if (!selectedItemForDiscount || !selectedItemForDiscount.originalPrice)
+    if (!selectedItemForDiscount || !selectedItemForDiscount.original_price)
       return { discountedPrice: 0, actualDiscountAmount: 0 }
-    const originalPrice = selectedItemForDiscount.originalPrice
+    const original_price = selectedItemForDiscount.original_price
     const discountValueNum = parseFloat(currentDiscountValue)
 
     if (isNaN(discountValueNum) || discountValueNum < 0) {
-      return { discountedPrice: originalPrice, actualDiscountAmount: 0 }
+      return { discountedPrice: original_price, actualDiscountAmount: 0 }
     }
 
     let actualDiscountAmount = 0
     if (currentDiscountType === 'percentage') {
-      actualDiscountAmount = originalPrice * (discountValueNum / 100)
+      actualDiscountAmount = original_price * (discountValueNum / 100)
     } else {
       actualDiscountAmount = discountValueNum
     }
 
-    if (actualDiscountAmount > originalPrice) {
-      actualDiscountAmount = originalPrice
+    if (actualDiscountAmount > original_price) {
+      actualDiscountAmount = original_price
     }
 
-    const discountedPrice = originalPrice - actualDiscountAmount
+    const discountedPrice = original_price - actualDiscountAmount
     return {
       discountedPrice: discountedPrice < 0 ? 0 : discountedPrice,
       actualDiscountAmount,
@@ -624,13 +672,13 @@ export default function POSPage() {
 
     setCartItems((prevItems) =>
       prevItems.map((item) => {
-        if (item.productId === selectedItemForDiscount.productId) {
+        if (item.product_id === selectedItemForDiscount.product_id) {
           return {
             ...item,
             price: discountedPrice,
-            discountAmount: actualDiscountAmount,
-            itemDiscountType: currentDiscountType,
-            itemDiscountValue: parseFloat(currentDiscountValue) || 0,
+            discount_amount: actualDiscountAmount,
+            item_discount_type: currentDiscountType,
+            item_discount_value: parseFloat(currentDiscountValue) || 0,
             subtotal: discountedPrice * item.quantity,
           }
         }
@@ -646,14 +694,14 @@ export default function POSPage() {
     if (!selectedItemForDiscount) return
     setCartItems((prevItems) =>
       prevItems.map((item) => {
-        if (item.productId === selectedItemForDiscount.productId) {
+        if (item.product_id === selectedItemForDiscount.product_id) {
           return {
             ...item,
-            price: item.originalPrice || item.price, // Revert to original price
-            discountAmount: 0,
-            itemDiscountType: undefined,
-            itemDiscountValue: 0,
-            total: (item.originalPrice || item.price) * item.quantity,
+            price: item.original_price || item.price, // Revert to original price
+            discount_amount: 0,
+            item_discount_type: undefined,
+            item_discount_value: 0,
+            total: (item.original_price || item.price) * item.quantity,
           }
         }
         return item
@@ -663,16 +711,19 @@ export default function POSPage() {
     setSelectedItemForDiscount(null)
     setCurrentDiscountValue('')
     toast.success('Diskon Dihapus', {
-      description: `Diskon untuk ${selectedItemForDiscount.productName} telah dihapus.`,
+      description: `Diskon untuk ${selectedItemForDiscount.product_name} telah dihapus.`,
     })
   }
 
-  const handleUpdateCartQuantity = (productId: string, newQuantity: number) => {
-    const productInStock = items.find((p) => p.id === productId)
+  const handleUpdateCartQuantity = (
+    product_id: number,
+    newQuantity: number
+  ) => {
+    const productInStock = items.find((p) => p.id === product_id)
     if (!productInStock) return
 
     if (newQuantity <= 0) {
-      handleRemoveFromCart(productId)
+      handleRemoveFromCart(product_id)
       return
     }
     if (newQuantity > productInStock.quantity) {
@@ -681,7 +732,7 @@ export default function POSPage() {
       })
       setCartItems((prevItems) =>
         prevItems.map((item) =>
-          item.productId === productId
+          item.product_id === product_id
             ? {
                 ...item,
                 quantity: productInStock.quantity,
@@ -694,7 +745,7 @@ export default function POSPage() {
     }
     setCartItems((prevItems) =>
       prevItems.map((item) =>
-        item.productId === productId
+        item.product_id === product_id
           ? {
               ...item,
               quantity: newQuantity,
@@ -705,27 +756,27 @@ export default function POSPage() {
     )
   }
 
-  const handleRemoveFromCart = (productId: string) => {
+  const handleRemoveFromCart = (product_id: number) => {
     setCartItems((prevItems) =>
-      prevItems.filter((item) => item.productId !== productId)
+      prevItems.filter((item) => item.product_id !== product_id)
     )
   }
 
   const totalItemDiscount = useMemo(
     () =>
       cartItems.reduce(
-        (sum, item) => sum + (item.discountAmount || 0) * item.quantity,
+        (sum, item) => sum + (item.discount_amount || 0) * item.quantity,
         0
       ),
     [cartItems]
   )
   const subtotalAfterItemDiscounts = useMemo(
-    () => cartItems.reduce((sum, item) => sum + item.subtotal, 0),
+    () => cartItems.reduce((sum, item) => sum + Number(item.subtotal), 0),
     [cartItems]
   )
   const tax = useMemo(
-    () => subtotalAfterItemDiscounts * taxRate,
-    [subtotalAfterItemDiscounts, taxRate]
+    () => subtotalAfterItemDiscounts * tax_rate,
+    [subtotalAfterItemDiscounts, tax_rate]
   )
 
   const shippingCost = parseFloat(shippingCostInput) || 0
@@ -743,7 +794,7 @@ export default function POSPage() {
   const totalCost = useMemo(
     () =>
       cartItems.reduce(
-        (sum, item) => sum + item.quantity * (item.costPrice || 0),
+        (sum, item) => sum + item.quantity * (item.cost_price || 0),
         0
       ),
     [cartItems]
@@ -751,7 +802,7 @@ export default function POSPage() {
 
   const openCashPaymentModal = () => {
     setCashAmountPaidInput(total.toString())
-    setCustomerNameInputCash('')
+    setcustomer_nameInputCash('')
     setCalculatedChange(0)
     setShowCashPaymentModal(true)
   }
@@ -791,52 +842,26 @@ export default function POSPage() {
     try {
       // Persiapan data tetap di sini
       const change = amountPaidNum - total
-      const payload: CreateTransactionPayload = {
-        // --- Relational & Denormalized Info ---
-        branchId: selectedBranch.id,
-        shiftId: activeShift.$id,
-        userId: currentUser.$id,
-        userName: currentUser.name,
-        customerName: customerNameInputCash.trim() || undefined,
-
-        // --- Items ---
-        items: cartItems, // Kirim langsung array cartItems
-
-        // --- Financial Summary (ambil dari state/memo) ---
-        subtotal: subtotalAfterItemDiscounts,
-        itemsDiscountAmount: totalItemDiscount,
-        voucherCode: voucherCodeInput || undefined,
-        voucherDiscountAmount: voucherDiscount,
-        totalDiscountAmount: totalDiscountAmount,
-        shippingCost: shippingCost,
-        taxAmount: tax,
-        totalAmount: total,
-        totalCOGS: totalCost,
-        paymentStatus: 'paid',
-
-        // --- Payment Details ---
-        paymentMethod: 'cash',
-        amountPaid: amountPaidNum,
-        isCreditSale: false,
+      const payload: CreateSalePayload = {
+        shift_id: activeShift.id,
+        payment_method: 'cash',
+        amount_paid: amountPaidNum,
+        change_given: change,
+        is_credit_sale: false,
+        notes: '',
+        customer_id: Number(selectedCustomerId),
+        items: cartItems,
       }
 
       // 2. Blok `try`: Berisi "Happy Path" atau alur sukses
-      const result = await recordTransaction(payload)
-
-      // Jika server mengembalikan error dalam respons (bukan melempar exception)
-      if (!result || !result.$id || 'error' in result) {
-        // Kita "lemparkan" error ini agar ditangkap oleh blok `catch`
-        throw new Error(
-          result?.error || 'ID transaksi tidak valid setelah rekaman.'
-        )
-      }
+      const result = await createSale(payload)
 
       // --- Semua logika jika SUKSES ---
       toast.success('Transaksi Berhasil', {
         description: 'Penjualan telah direkam.',
       })
 
-      setLastTransactionId(result.$id)
+      setLastTransactionId(result.id)
       setShowPrintInvoiceDialog(true)
 
       // Reset semua state
@@ -846,7 +871,7 @@ export default function POSPage() {
       setVoucherCodeInput('')
       // ... reset state lainnya
       setCashAmountPaidInput('')
-      setCustomerNameInputCash('')
+      setcustomer_nameInputCash('')
       setCalculatedChange(null)
       fetchItemsData(currentPage, debouncedSearchTerm)
     } catch (error) {
@@ -881,7 +906,7 @@ export default function POSPage() {
       })
       return
     }
-    if (!selectedBankName) {
+    if (!selectedbank_name) {
       toast.error('Bank Diperlukan', {
         description: 'Pilih nama bank.',
       })
@@ -898,49 +923,24 @@ export default function POSPage() {
     setIsProcessingSale(true)
 
     try {
-      const payload: CreateTransactionPayload = {
-        // --- Info Relasi & Denormalisasi ---
-        branchId: selectedBranch.id,
-        shiftId: activeShift.$id,
-        userId: currentUser.$id,
-        userName: currentUser.name,
-        customerName: customerNameInputBank.trim() || undefined, // Gunakan state yang benar
-
-        // --- Items & Finansial (sudah benar) ---
+      const payload: CreateSalePayload = {
+        shift_id: activeShift.id,
+        payment_method: 'transfer',
+        amount_paid: total,
+        is_credit_sale: false,
+        notes: '',
+        customer_id: Number(selectedCustomerId),
         items: cartItems,
-        subtotal: subtotalAfterItemDiscounts,
-        itemsDiscountAmount: totalItemDiscount,
-        voucherCode: voucherCodeInput || undefined,
-        voucherDiscountAmount: voucherDiscount,
-        totalDiscountAmount: totalDiscountAmount,
-        shippingCost: shippingCost,
-        taxAmount: tax,
-        totalAmount: total,
-        totalCOGS: totalCost,
-
-        // --- Detail Pembayaran (INI YANG DIPERBAIKI) ---
-        paymentMethod: 'transfer', // Ganti ke 'transfer'
-        amountPaid: total, // Untuk transfer, jumlah dibayar = total
-        isCreditSale: false,
-        bankName: selectedBankName, // Tambahkan ini
-        bankTransactionRef: bankRefNumberInput.trim(), // Tambahkan ini
-        paymentStatus: 'paid', // <-- TAMBAHKAN INI
       }
       // 2. Blok `try`: Eksekusi alur sukses
-      const result = await recordTransaction(payload)
-
-      if (!result || !result.$id || 'error' in result) {
-        throw new Error(
-          result?.error || 'ID transaksi tidak valid setelah rekaman.'
-        )
-      }
+      const result = await createSale(payload)
 
       // --- Semua logika jika SUKSES ---
       toast.success('Transaksi Berhasil', {
         description: 'Penjualan transfer telah direkam.',
       })
 
-      setLastTransactionId(result.$id)
+      setLastTransactionId(result.id)
       setShowPrintInvoiceDialog(true)
 
       // Reset semua state yang relevan
@@ -949,9 +949,9 @@ export default function POSPage() {
       setShippingCostInput('')
       setVoucherCodeInput('')
       setVoucherDiscountInput('')
-      setSelectedBankName('')
+      setSelectedbank_name('')
       setBankRefNumberInput('')
-      setCustomerNameInputBank('')
+      setcustomer_nameInputBank('')
       fetchItemsData(currentPage, debouncedSearchTerm)
     } catch (error) {
       // 3. Blok `catch`: Menangkap semua jenis error
@@ -997,16 +997,14 @@ export default function POSPage() {
 
     // Routing ke modal pembayaran bank
     if (selectedPaymentTerms === 'transfer') {
-      setSelectedBankName('')
+      setSelectedbank_name('')
       setBankRefNumberInput('')
-      setCustomerNameInputBank('')
+      setcustomer_nameInputBank('')
       setShowBankPaymentModal(true)
       return
     }
 
     // --- Awal dari Logika Asinkron (untuk 'credit' atau metode langsung lainnya) ---
-
-    let customerNameForTx: string | undefined = undefined
 
     // Validasi spesifik untuk penjualan kredit
     if (selectedPaymentTerms === 'credit') {
@@ -1022,59 +1020,79 @@ export default function POSPage() {
         })
         return
       }
-      const cust = allCustomers.find((c) => c.id === selectedCustomerId)
-      customerNameForTx = cust?.name
+      setShowCreditConfirmationDialog(true)
+      return
     }
+    // setIsProcessingSale(true)
 
+    // try {
+    //   // Persiapan data transaksi
+    //   const payload: CreateSalePayload = {
+    //     shift_id: activeShift.id,
+    //     payment_method: 'credit',
+    //     amount_paid: total,
+    //     is_credit_sale: true,
+    //     notes: '',
+    //     customer_id: Number(selectedCustomerId),
+    //     items: cartItems,
+    //   }
+
+    //   const result = await createSale(payload)
+
+    //   // --- Logika jika SUKSES ---
+    //   toast.success('Transaksi Berhasil', {
+    //     description: 'Penjualan telah direkam.',
+    //   })
+    //   setLastTransactionId(result.id)
+    //   setShowPrintInvoiceDialog(true)
+
+    //   // Reset semua state yang relevan
+    //   setCartItems([])
+    //   setSelectedPaymentTerms('cash')
+    //   setShippingCostInput('')
+    //   setVoucherCodeInput('')
+    //   setVoucherDiscountInput('')
+    //   setSelectedCustomerId(undefined)
+    //   setCreditDueDate(undefined)
+    //   setSearchCustomerTerm('')
+    //   fetchItemsData(currentPage, debouncedSearchTerm)
+    // } catch (error) {
+    //   // Menangkap semua error dari proses `await`
+    //   console.error('Gagal menyelesaikan penjualan:', error)
+    //   const errorMessage =
+    //     error instanceof Error
+    //       ? error.message
+    //       : 'Terjadi kesalahan yang tidak diketahui.'
+    //   toast.error('Gagal Merekam Transaksi', {
+    //     description: errorMessage,
+    //   })
+    //   setLastTransactionId(null)
+    // } finally {
+    //   // Jaminan untuk menonaktifkan status loading
+    //   setIsProcessingSale(false)
+    // }
+  }
+
+  // Handler untuk konfirmasi penjualan kredit
+  const handleConfirmCreditSale = async () => {
     setIsProcessingSale(true)
-
+    setIsCreditSaleProcessing(true)
     try {
-      // Persiapan data transaksi
-      const payload: CreateTransactionPayload = {
-        // --- Info Relasi & Denormalisasi ---
-        branchId: selectedBranch.id,
-        shiftId: activeShift.$id,
-        userId: currentUser.$id,
-        userName: currentUser.name,
-        customerId: selectedCustomerId, // Gunakan ID pelanggan yang dipilih
-        customerName: customerNameForTx, // Gunakan nama pelanggan yang sudah divalidasi
-
-        // --- Items & Finansial (sudah benar) ---
+      const payload: CreateSalePayload = {
+        shift_id: activeShift!.id,
+        payment_method: 'credit',
+        amount_paid: total,
+        is_credit_sale: true,
+        notes: '',
+        customer_id: Number(selectedCustomerId),
         items: cartItems,
-        subtotal: subtotalAfterItemDiscounts,
-        itemsDiscountAmount: totalItemDiscount,
-        voucherCode: voucherCodeInput || undefined,
-        voucherDiscountAmount: voucherDiscount,
-        totalDiscountAmount: totalDiscountAmount,
-        shippingCost: shippingCost,
-        taxAmount: tax,
-        totalAmount: total,
-        totalCOGS: totalCost,
-
-        // --- Detail Pembayaran & Kredit (INI YANG DIPERBAIKI) ---
-        paymentMethod: 'credit', // Ganti ke 'credit'
-        amountPaid: 0, // Untuk penjualan kredit baru, yang dibayar adalah 0
-        isCreditSale: true, // Set ke true
-        creditDueDate: creditDueDate ? creditDueDate.toISOString() : undefined,
-        paymentStatus: 'unpaid', // <-- TAMBAHKAN INI
       }
-
-      const result = await recordTransaction(payload)
-
-      if (!result || !result.$id || 'error' in result) {
-        throw new Error(
-          result?.error || 'ID transaksi tidak valid setelah rekaman.'
-        )
-      }
-
-      // --- Logika jika SUKSES ---
+      const result = await createSale(payload)
       toast.success('Transaksi Berhasil', {
         description: 'Penjualan telah direkam.',
       })
-      setLastTransactionId(result.$id)
+      setLastTransactionId(result.id)
       setShowPrintInvoiceDialog(true)
-
-      // Reset semua state yang relevan
       setCartItems([])
       setSelectedPaymentTerms('cash')
       setShippingCostInput('')
@@ -1082,10 +1100,9 @@ export default function POSPage() {
       setVoucherDiscountInput('')
       setSelectedCustomerId(undefined)
       setCreditDueDate(undefined)
-      setCustomerSearchTerm('')
+      setSearchCustomerTerm('')
       fetchItemsData(currentPage, debouncedSearchTerm)
     } catch (error) {
-      // Menangkap semua error dari proses `await`
       console.error('Gagal menyelesaikan penjualan:', error)
       const errorMessage =
         error instanceof Error
@@ -1096,12 +1113,14 @@ export default function POSPage() {
       })
       setLastTransactionId(null)
     } finally {
-      // Jaminan untuk menonaktifkan status loading
       setIsProcessingSale(false)
+      setIsCreditSaleProcessing(false)
+
+      setShowCreditConfirmationDialog(false)
     }
   }
 
-  const handlePrintInvoice = async (transactionIdToPrint?: string) => {
+  const handlePrintInvoice = async (transactionIdToPrint?: number) => {
     const targetTransactionId = transactionIdToPrint || lastTransactionId
 
     if (!targetTransactionId || !selectedBranch || !currentUser || !userData) {
@@ -1117,14 +1136,14 @@ export default function POSPage() {
       toast.error('Tidak ada cabang yang dipilih.')
       return
     }
-    if (!selectedBranch.printerPort) {
+    if (!selectedBranch.printer_port) {
       toast.error('Fitur ini tidak didukung untuk printer port.', {
         id: 'print-error',
       })
       return
     }
 
-    const transaction = await getTransactionById(targetTransactionId)
+    const transaction = await getSaleById(targetTransactionId)
 
     if (!transaction) {
       toast.error('Gagal Cetak', {
@@ -1154,17 +1173,16 @@ export default function POSPage() {
     }
   }
 
-  const handlePrintInvoiceFromHistory = (transactionIdForReprint: string) => {
+  const handlePrintInvoiceFromHistory = (transactionIdForReprint: number) => {
     handlePrintInvoice(transactionIdForReprint)
   }
 
-  const handleScanCustomerSuccess = (scannedId: string) => {
-    const foundCustomer = allCustomers.find(
-      (c) => c.id === scannedId || c.qrCodeId === scannedId
-    )
+  const handleScanCustomerSuccess = async (scannedId: string) => {
+    const foundCustomer = await getCustomerById(scannedId)
+
     if (foundCustomer) {
-      setSelectedCustomerId(foundCustomer.id)
-      setCustomerSearchTerm(foundCustomer.name)
+      setSelectedCustomerId(String(foundCustomer.id))
+      setSearchCustomerTerm(foundCustomer.name)
       setSelectedPaymentTerms('credit')
       toast.success('Pelanggan Ditemukan', {
         description: `Pelanggan "${foundCustomer.name}" dipilih.`,
@@ -1179,54 +1197,52 @@ export default function POSPage() {
 
   const totalCashSalesInShift = useMemo(() => {
     return shiftTransactions
-      .filter((tx) => tx.paymentMethod === 'cash' && tx.status === 'completed')
-      .reduce((sum, tx) => sum + tx.totalAmount, 0)
+      .filter((tx) => tx.payment_method === 'cash' && tx.status === 'completed')
+      .reduce((sum, tx) => sum + tx.total_amount, 0)
   }, [shiftTransactions])
 
   const totalCardSalesInShift = useMemo(() => {
     return shiftTransactions
-      .filter((tx) => tx.paymentMethod === 'card' && tx.status === 'completed')
-      .reduce((sum, tx) => sum + tx.totalAmount, 0)
+      .filter((tx) => tx.payment_method === 'card' && tx.status === 'completed')
+      .reduce((sum, tx) => sum + tx.total_amount, 0)
+  }, [shiftTransactions])
+
+  const totalCreditSalesInShift = useMemo(() => {
+    return shiftTransactions
+      .filter(
+        (tx) => tx.payment_method === 'credit' && tx.status === 'completed'
+      )
+      .reduce((sum, tx) => sum + tx.total_amount, 0)
   }, [shiftTransactions])
 
   const totalTransferSalesInShift = useMemo(() => {
     return shiftTransactions
       .filter(
-        (tx) => tx.paymentMethod === 'transfer' && tx.status === 'completed'
+        (tx) => tx.payment_method === 'transfer' && tx.status === 'completed'
       )
-      .reduce((sum, tx) => sum + tx.totalAmount, 0)
+      .reduce((sum, tx) => sum + tx.total_amount, 0)
   }, [shiftTransactions])
 
   const estimatedCashInDrawer = useMemo(() => {
-    return (activeShift?.startingBalance || 0) + totalCashSalesInShift
+    return (activeShift?.starting_balance || 0) + Number(totalCashSalesInShift)
   }, [activeShift, totalCashSalesInShift])
 
   const bankTransactionsInShift = useMemo(() => {
     return shiftTransactions.filter(
-      (tx) => tx.paymentMethod === 'transfer' && tx.status === 'completed'
+      (tx) => tx.payment_method === 'transfer' && tx.status === 'completed'
     )
   }, [shiftTransactions])
-
-  const formatDateTimestamp = (
-    timestampString?: string,
-    includeTime = true
-  ) => {
-    if (!timestampString) return 'N/A'
-    const date = parseISO(timestampString) // Parse ISO string to Date
-    if (!isValid(date)) return 'Invalid Date'
-    return format(date, includeTime ? 'dd MMM yy, HH:mm' : 'dd MMM yyyy')
-  }
 
   const totalSalesShift = useMemo(() => {
     return shiftTransactions
       .filter((tx) => tx.status === 'completed')
-      .reduce((sum, tx) => sum + tx.totalAmount, 0)
+      .reduce((sum, tx) => sum + Number(tx.total_amount), 0)
   }, [shiftTransactions])
 
   const totalReturnsShift = useMemo(() => {
     return shiftTransactions
       .filter((tx) => tx.status === 'returned')
-      .reduce((sum, tx) => sum + tx.totalAmount, 0)
+      .reduce((sum, tx) => sum + Number(tx.total_amount), 0)
   }, [shiftTransactions])
 
   const {
@@ -1440,7 +1456,7 @@ export default function POSPage() {
                           <div className='relative w-full aspect-[4/3]'>
                             <Image
                               src={
-                                product.imageUrl ||
+                                product.image_url ||
                                 `https://placehold.co/150x100.png`
                               }
                               alt={product.name}
@@ -1448,7 +1464,7 @@ export default function POSPage() {
                               objectFit='cover'
                               className='rounded-t-md'
                               data-ai-hint={
-                                product.imageHint ||
+                                product.image_hint ||
                                 product.name
                                   .split(' ')
                                   .slice(0, 2)
@@ -1497,6 +1513,9 @@ export default function POSPage() {
                               <TableHead className='p-1.5 text-xs'>
                                 Nama Produk
                               </TableHead>
+                              <TableHead className='p-1.5 text-xs'>
+                                SKU
+                              </TableHead>
                               <TableHead className='p-1.5 text-xs text-right'>
                                 Harga
                               </TableHead>
@@ -1519,7 +1538,7 @@ export default function POSPage() {
                                 <TableCell className='p-1 hidden sm:table-cell'>
                                   <Image
                                     src={
-                                      product.imageUrl ||
+                                      product.image_url ||
                                       `https://placehold.co/28x28.png`
                                     }
                                     alt={product.name}
@@ -1527,7 +1546,7 @@ export default function POSPage() {
                                     height={28}
                                     className='rounded object-cover h-7 w-7'
                                     data-ai-hint={
-                                      product.imageHint ||
+                                      product.image_hint ||
                                       product.name
                                         .split(' ')
                                         .slice(0, 2)
@@ -1543,9 +1562,11 @@ export default function POSPage() {
                                 <TableCell className='p-1.5 text-xs font-medium'>
                                   {product.name}
                                 </TableCell>
+                                <TableCell className='p-1.5 text-xs font-medium'>
+                                  {product.sku ?? '-'}
+                                </TableCell>
                                 <TableCell className='p-1.5 text-xs text-right'>
-                                  {currencySymbol}
-                                  {product.price.toLocaleString('id-ID')}
+                                  {formatCurrency(product.price)}
                                 </TableCell>
                                 <TableCell className='p-1.5 text-xs text-center hidden md:table-cell'>
                                   {product.quantity}
@@ -1644,17 +1665,17 @@ export default function POSPage() {
                       </TableHeader>
                       <TableBody>
                         {cartItems.map((item) => (
-                          <TableRow key={item.productId}>
+                          <TableRow key={item.product_id}>
                             <TableCell className='font-medium text-xs py-1 px-2 truncate'>
-                              {item.productName}
-                              {item.discountAmount > 0 && (
+                              {item.product_name}
+                              {item.discount_amount > 0 && (
                                 <div className='flex items-center gap-1'>
                                   <span className='text-[0.65rem] text-muted-foreground line-through'>
-                                    {formatCurrency(item.originalPrice || 0)}
+                                    {formatCurrency(item.original_price || 0)}
                                   </span>
                                   <span className='text-[0.65rem] text-destructive'>
                                     (-
-                                    {formatCurrency(item.discountAmount)})
+                                    {formatCurrency(item.discount_amount)})
                                   </span>
                                 </div>
                               )}
@@ -1668,7 +1689,7 @@ export default function POSPage() {
                                   disabled={!activeShift}
                                   onClick={() =>
                                     handleUpdateCartQuantity(
-                                      item.productId,
+                                      item.product_id,
                                       item.quantity - 1
                                     )
                                   }
@@ -1680,7 +1701,7 @@ export default function POSPage() {
                                   value={item.quantity}
                                   onChange={(e) =>
                                     handleUpdateCartQuantity(
-                                      item.productId,
+                                      item.product_id,
                                       parseInt(e.target.value) || 0
                                     )
                                   }
@@ -1694,7 +1715,7 @@ export default function POSPage() {
                                   disabled={!activeShift}
                                   onClick={() =>
                                     handleUpdateCartQuantity(
-                                      item.productId,
+                                      item.product_id,
                                       item.quantity + 1
                                     )
                                   }
@@ -1730,7 +1751,7 @@ export default function POSPage() {
                                 className='h-5 w-5 text-destructive hover:text-destructive/80'
                                 disabled={!activeShift}
                                 onClick={() =>
-                                  handleRemoveFromCart(item.productId)
+                                  handleRemoveFromCart(item.product_id)
                                 }
                               >
                                 <XCircle className='h-3.5 w-3.5' />
@@ -1741,7 +1762,7 @@ export default function POSPage() {
                         {cartItems.length === 0 && (
                           <TableRow>
                             <TableCell
-                              colSpan={5}
+                              colSpan={6}
                               className='text-center text-muted-foreground py-8 text-xs'
                             >
                               <ShoppingCart className='mx-auto h-8 w-8 text-muted-foreground/50 mb-2' />
@@ -1755,15 +1776,13 @@ export default function POSPage() {
                   <CardFooter className='flex flex-col gap-1.5 border-t p-3'>
                     <div className='flex justify-between text-xs w-full'>
                       <span>Subtotal (Stlh Diskon Item):</span>
-                      <span>
-                        {currencySymbol}
-                        {subtotalAfterItemDiscounts.toLocaleString('id-ID')}
-                      </span>
+                      <span>{formatCurrency(subtotalAfterItemDiscounts)}</span>
                     </div>
                     <div className='flex justify-between text-xs w-full'>
                       <span>
                         Pajak (
-                        {selectedBranch?.taxRate || (taxRate * 100).toFixed(0)}
+                        {selectedBranch?.tax_rate ||
+                          (tax_rate * 100).toFixed(0)}
                         %):
                       </span>
                       <span>
@@ -1837,10 +1856,7 @@ export default function POSPage() {
 
                     <div className='flex justify-between text-base font-bold w-full mt-1.5 pt-1.5 border-t'>
                       <span>Total:</span>
-                      <span>
-                        {currencySymbol}
-                        {total.toLocaleString('id-ID')}
-                      </span>
+                      <span>{formatCurrency(total)}</span>
                     </div>
 
                     <div className='w-full mt-2 pt-2 border-t'>
@@ -1854,7 +1870,7 @@ export default function POSPage() {
                           if (value !== 'credit') {
                             setSelectedCustomerId(undefined)
                             setCreditDueDate(undefined)
-                            setCustomerSearchTerm('')
+                            setSearchCustomerTerm('')
                           }
                         }}
                         disabled={!activeShift || cartItems.length === 0}
@@ -1867,10 +1883,10 @@ export default function POSPage() {
                             <DollarSign className='inline-block mr-2 h-4 w-4' />
                             Tunai
                           </SelectItem>
-                          <SelectItem value='card' className='text-xs'>
+                          {/* <SelectItem value='card' className='text-xs'>
                             <CreditCard className='inline-block mr-2 h-4 w-4' />
                             Kartu
-                          </SelectItem>
+                          </SelectItem> */}
                           <SelectItem value='transfer' className='text-xs'>
                             <Banknote className='inline-block mr-2 h-4 w-4' />
                             Transfer Bank
@@ -1911,35 +1927,45 @@ export default function POSPage() {
                                   {selectedCustomerId
                                     ? allCustomers.find(
                                         (customer) =>
-                                          customer.id === selectedCustomerId
+                                          String(customer.id) ===
+                                          selectedCustomerId
                                       )?.name
                                     : loadingCustomers
                                     ? 'Memuat...'
                                     : allCustomers.length === 0
                                     ? 'Tidak ada pelanggan'
-                                    : 'Pilih Pelanggan'}
-                                  <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
+                                    : 'Cari Pelanggan'}
+                                  {!loadingCustomers ? (
+                                    <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
+                                  ) : (
+                                    <Loader2 className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50 animate-spin' />
+                                  )}
                                 </Button>
                               </PopoverTrigger>
                               <PopoverContent className='w-[--radix-popover-trigger-width] p-0'>
                                 <Command shouldFilter={false}>
                                   <CommandInput
-                                    placeholder='Cari pelanggan (nama/ID)...'
-                                    value={customerSearchTerm}
-                                    onValueChange={setCustomerSearchTerm}
+                                    placeholder='Cari pelanggan (nama/phone)...'
+                                    value={searchCustomerTerm}
+                                    onValueChange={setSearchCustomerTerm}
                                     className='h-9 text-xs'
                                   />
                                   <CommandEmpty className='p-2 text-xs text-center'>
                                     {loadingCustomers
                                       ? 'Memuat...'
                                       : 'Pelanggan tidak ditemukan.'}
+                                    {!loadingCustomers ? (
+                                      <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
+                                    ) : (
+                                      <Loader2 className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50 animate-spin' />
+                                    )}
                                   </CommandEmpty>
                                   <CommandList>
                                     <CommandGroup>
-                                      {filteredCustomers.map((customer) => (
+                                      {allCustomers.map((customer) => (
                                         <CommandItem
                                           key={customer.id}
-                                          value={customer.id}
+                                          value={String(customer.id)}
                                           onSelect={(currentValue) => {
                                             setSelectedCustomerId(
                                               currentValue ===
@@ -1960,7 +1986,8 @@ export default function POSPage() {
                                           <CheckCircle
                                             className={cn(
                                               'mr-2 h-3.5 w-3.5',
-                                              selectedCustomerId === customer.id
+                                              selectedCustomerId ===
+                                                String(customer.id)
                                                 ? 'opacity-100'
                                                 : 'opacity-0'
                                             )}
@@ -2023,10 +2050,127 @@ export default function POSPage() {
                         </div>
                       </div>
                     )}
+                    {selectedPaymentTerms === 'cash' && (
+                      <div className='w-full mt-2 space-y-2 p-2 border rounded-md bg-muted/30'>
+                        <Label
+                          htmlFor='customer_nameInputCash'
+                          className='text-xs'
+                        >
+                          Nama Pelanggan (Opsional)
+                        </Label>
+                        <div className='flex-grow'>
+                          <Popover
+                            modal={true}
+                            open={isCustomerComboboxOpen}
+                            onOpenChange={setIsCustomerComboboxOpen}
+                          >
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant='outline'
+                                role='combobox'
+                                aria-expanded={isCustomerComboboxOpen}
+                                className='w-full justify-between h-8 text-xs mt-1 font-normal'
+                              >
+                                {selectedCustomerId
+                                  ? allCustomers.find(
+                                      (customer) =>
+                                        String(customer.id) ===
+                                        selectedCustomerId
+                                    )?.name
+                                  : loadingCustomers
+                                  ? 'Memuat...'
+                                  : allCustomers.length === 0
+                                  ? 'Tidak ada pelanggan'
+                                  : 'Cari Pelanggan'}
+                                {!loadingCustomers ? (
+                                  <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
+                                ) : (
+                                  <Loader2 className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50 animate-spin' />
+                                )}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              asChild
+                              className='w-[--radix-popover-trigger-width] p-0'
+                            >
+                              <Command shouldFilter={false}>
+                                <CommandInput
+                                  placeholder='Cari pelanggan (nama/phone)...'
+                                  value={searchCustomerTerm}
+                                  onValueChange={setSearchCustomerTerm}
+                                  className='h-9 text-xs'
+                                />
+                                <CommandEmpty className='p-2 text-xs text-center'>
+                                  {loadingCustomers
+                                    ? 'Memuat...'
+                                    : 'Pelanggan tidak ditemukan.'}
+                                  {!loadingCustomers ? (
+                                    <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
+                                  ) : (
+                                    <Loader2 className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50 animate-spin' />
+                                  )}
+                                </CommandEmpty>
+                                <CommandList>
+                                  <CommandGroup>
+                                    {allCustomers.map((customer) => (
+                                      <CommandItem
+                                        key={customer.id}
+                                        value={String(customer.id)}
+                                        onSelect={(currentValue) => {
+                                          setSelectedCustomerId(
+                                            currentValue === selectedCustomerId
+                                              ? undefined
+                                              : currentValue
+                                          )
+                                          setCustomerSearchTerm(
+                                            currentValue === selectedCustomerId
+                                              ? ''
+                                              : customer.name
+                                          )
+                                          setIsCustomerComboboxOpen(false)
+                                        }}
+                                        className='text-xs'
+                                      >
+                                        <CheckCircle
+                                          className={cn(
+                                            'mr-2 h-3.5 w-3.5',
+                                            selectedCustomerId ===
+                                              String(customer.id)
+                                              ? 'opacity-100'
+                                              : 'opacity-0'
+                                          )}
+                                        />
+                                        {customer.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                        {/* <div className='flex items-center mt-1'>
+                    <UserPlus className='h-4 w-4 mr-2 text-muted-foreground' />
+                    <Input
+                      id='customer_nameInputCash'
+                      type='text'
+                      value={customer_nameInputCash}
+                      onChange={(e) =>
+                        setcustomer_nameInputCash(e.target.value)
+                      }
+                      placeholder='Masukkan nama pelanggan'
+                      className='h-9 text-sm flex-1'
+                    />
+                  </div> */}
+                        <p className='text-xs text-muted-foreground mt-1'>
+                          Kosongkan jika tidak ada nama pelanggan.
+                        </p>
+                      </div>
+                    )}
 
                     <Button
                       size='lg'
-                      className='w-full mt-2 h-10 text-sm'
+                      className='w-full my-4 h-10 text-sm'
                       disabled={
                         !activeShift ||
                         cartItems.length === 0 ||
@@ -2066,11 +2210,11 @@ export default function POSPage() {
           <DialogContent className='sm:max-w-md'>
             <DialogHeader>
               <DialogTitle className='text-base'>
-                Diskon untuk: {selectedItemForDiscount?.productName}
+                Diskon untuk: {selectedItemForDiscount?.product_name}
               </DialogTitle>
               <DialogDescription className='text-xs'>
                 Harga Asli: {currencySymbol}
-                {(selectedItemForDiscount?.originalPrice || 0).toLocaleString(
+                {(selectedItemForDiscount?.original_price || 0).toLocaleString(
                   'id-ID'
                 )}{' '}
                 per item
@@ -2144,7 +2288,7 @@ export default function POSPage() {
                 onClick={handleRemoveCurrentItemDiscount}
                 disabled={
                   !selectedItemForDiscount ||
-                  (selectedItemForDiscount.discountAmount || 0) === 0
+                  (selectedItemForDiscount.discount_amount || 0) === 0
                 }
               >
                 <Trash2 className='mr-1.5 h-3.5 w-3.5' /> Hapus Diskon
@@ -2208,7 +2352,100 @@ export default function POSPage() {
           </DialogContent>
         </Dialog>
 
-        <AlertDialog
+        <Dialog open={showEndShiftModal} onOpenChange={setShowEndShiftModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Konfirmasi Akhiri Shift</DialogTitle>
+              <DialogDescription>
+                Harap hitung kas fisik Anda dan masukkan jumlahnya di bawah ini.
+              </DialogDescription>
+            </DialogHeader>
+            <div className='py-4 space-y-4'>
+              <div className='p-4 bg-muted rounded-lg'>
+                <h4 className='font-semibold mb-2'>Ringkasan Penjualan</h4>
+                <div className='space-y-1 text-sm'>
+                  {endShiftCalculations &&
+                    Object.entries(
+                      endShiftCalculations.totalSalesByPaymentMethod
+                    ).map(([method, total]) => (
+                      <div key={method} className='flex justify-between'>
+                        <span>Penjualan {method}</span>
+                        <span>{formatCurrency(total)}</span>
+                      </div>
+                    ))}
+                  <div className='flex justify-between font-bold pt-2 border-t'>
+                    <span>Total Penjualan</span>
+                    <span>
+                      {formatCurrency(endShiftCalculations?.totalSales ?? 0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className='p-4 border rounded-lg'>
+                <h4 className='font-semibold mb-2'>Perhitungan Kas</h4>
+                <div className='space-y-1 text-sm'>
+                  <div className='flex justify-between'>
+                    <span>Kas Seharusnya</span>
+                    <span>
+                      {formatCurrency(endShiftCalculations?.expectedCash ?? 0)}
+                    </span>
+                  </div>
+                  <div>
+                    <Label htmlFor='actual-cash'>Kas Aktual di Laci</Label>
+                    <div className='relative mt-1'>
+                      <span className='absolute inset-y-0 left-0 flex items-center pl-3 text-muted-foreground'>
+                        {selectedBranch?.currency}
+                      </span>
+                      <Input
+                        id='actual-cash'
+                        type='number'
+                        value={actualCashAtEndInput}
+                        onChange={(e) =>
+                          setActualCashAtEndInput(e.target.value)
+                        }
+                        placeholder='0'
+                        className='pl-10'
+                      />
+                    </div>
+                  </div>
+                  <div
+                    className={`flex justify-between font-bold pt-2 ${
+                      endShiftCalculations?.difference !== 0
+                        ? 'text-red-500'
+                        : ''
+                    }`}
+                  >
+                    <span>Selisih</span>
+                    <span>
+                      {endShiftCalculations
+                        ? formatCurrency(endShiftCalculations.difference ?? 0)
+                        : formatCurrency(0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant='outline'
+                onClick={() => {
+                  setShowEndShiftModal(false)
+                  setActualCashAtEndInput('')
+                  setEndShiftCalculations(null)
+                }}
+                disabled={isEndingShift}
+              >
+                Batal
+              </Button>
+              <Button onClick={handleEndShiftConfirm} disabled={isEndingShift}>
+                {isEndingShift ? 'Memproses...' : 'Konfirmasi & Akhiri Shift'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* <AlertDialog
           open={showEndShiftModal}
           onOpenChange={setShowEndShiftModal}
         >
@@ -2220,7 +2457,7 @@ export default function POSPage() {
                   <div className='mt-2 p-2 border rounded-md bg-muted/50 text-xs space-y-1'>
                     <p>
                       Modal Awal:
-                      {formatCurrency(activeShift.startingBalance)}
+                      {formatCurrency(activeShift.starting_balance)}
                     </p>
                     <p>
                       Total Penjualan Tunai:
@@ -2229,9 +2466,15 @@ export default function POSPage() {
                       )}
                     </p>
                     <p>
-                      Total Penjualan Kartu:
+                      Total Penjualan Kredit:
                       {formatCurrency(
-                        endShiftCalculations.totalSalesByPaymentMethod.card
+                        endShiftCalculations.totalSalesByPaymentMethod.credit
+                      )}
+                    </p>
+                    <p>
+                      Total Penjualan Qris:
+                      {formatCurrency(
+                        endShiftCalculations.totalSalesByPaymentMethod.qris
                       )}
                     </p>
                     <p>
@@ -2240,7 +2483,11 @@ export default function POSPage() {
                         endShiftCalculations.totalSalesByPaymentMethod.transfer
                       )}
                     </p>
-                    <p className='font-semibold'>
+                    <p>
+                      Total Penjualan Semua:
+                      {formatCurrency(endShiftCalculations.totalSales)}
+                    </p>
+                    <p className='font-semibold text-md'>
                       Estimasi Kas Seharusnya:
                       {formatCurrency(endShiftCalculations.expectedCash)}
                     </p>
@@ -2319,7 +2566,7 @@ export default function POSPage() {
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
-        </AlertDialog>
+        </AlertDialog> */}
 
         <Dialog
           open={showCashPaymentModal}
@@ -2371,25 +2618,6 @@ export default function POSPage() {
                     {calculatedChange.toLocaleString('id-ID')}
                   </p>
                 )}
-                <div>
-                  <Label htmlFor='customerNameInputCash' className='text-xs'>
-                    Nama Pelanggan (Opsional)
-                  </Label>
-                  <div className='flex items-center mt-1'>
-                    <UserPlus className='h-4 w-4 mr-2 text-muted-foreground' />
-                    <Input
-                      id='customerNameInputCash'
-                      type='text'
-                      value={customerNameInputCash}
-                      onChange={(e) => setCustomerNameInputCash(e.target.value)}
-                      placeholder='Masukkan nama pelanggan'
-                      className='h-9 text-sm flex-1'
-                    />
-                  </div>
-                  <p className='text-xs text-muted-foreground mt-1'>
-                    Kosongkan jika tidak ada nama pelanggan.
-                  </p>
-                </div>
               </div>
               <DialogFooter className='mt-4'>
                 <DialogClose asChild>
@@ -2437,16 +2665,16 @@ export default function POSPage() {
             </DialogHeader>
             <div className='py-3 space-y-3'>
               <div>
-                <Label htmlFor='selectedBankName' className='text-xs'>
+                <Label htmlFor='selectedbank_name' className='text-xs'>
                   Nama Bank*
                 </Label>
                 <Select
-                  value={selectedBankName}
-                  onValueChange={setSelectedBankName}
+                  value={selectedbank_name}
+                  onValueChange={setSelectedbank_name}
                   disabled={loadingBankAccounts}
                 >
                   <SelectTrigger
-                    id='selectedBankName'
+                    id='selectedbank_name'
                     className='h-9 text-xs mt-1'
                   >
                     <SelectValue
@@ -2469,11 +2697,11 @@ export default function POSPage() {
                       availableBankAccounts.map((acc) => (
                         <SelectItem
                           key={acc.id}
-                          value={acc.bankName}
+                          value={acc.bank_name}
                           className='text-xs'
                         >
-                          {acc.bankName} ({acc.accountNumber}) - A/N:{' '}
-                          {acc.accountHolderName}
+                          {acc.bank_name} ({acc.account_number}) - A/N:{' '}
+                          {acc.account_holder_name}
                         </SelectItem>
                       ))
                     )}
@@ -2494,16 +2722,16 @@ export default function POSPage() {
                 />
               </div>
               <div>
-                <Label htmlFor='customerNameInputBank' className='text-xs'>
+                <Label htmlFor='customer_nameInputBank' className='text-xs'>
                   Nama Pelanggan (Opsional)
                 </Label>
                 <div className='flex items-center mt-1'>
                   <UserPlus className='h-4 w-4 mr-2 text-muted-foreground' />
                   <Input
-                    id='customerNameInputBank'
+                    id='customer_nameInputBank'
                     type='text'
-                    value={customerNameInputBank}
-                    onChange={(e) => setCustomerNameInputBank(e.target.value)}
+                    value={customer_nameInputBank}
+                    onChange={(e) => setcustomer_nameInputBank(e.target.value)}
                     placeholder='Masukkan nama pelanggan'
                     className='h-9 text-sm flex-1'
                   />
@@ -2526,7 +2754,7 @@ export default function POSPage() {
                 className='text-xs h-8'
                 disabled={
                   isProcessingSale ||
-                  !selectedBankName ||
+                  !selectedbank_name ||
                   !bankRefNumberInput.trim()
                 }
               >
@@ -2590,7 +2818,7 @@ export default function POSPage() {
           open={showBankHistoryDialog}
           onOpenChange={setShowBankHistoryDialog}
         >
-          <DialogContent className='sm:max-w-lg'>
+          <DialogContent className='sm:max-w-2xl'>
             <DialogHeader>
               <DialogTitle className='text-base'>
                 Riwayat Transaksi Transfer Bank (Shift Ini)
@@ -2620,22 +2848,21 @@ export default function POSPage() {
                   </TableHeader>
                   <TableBody>
                     {bankTransactionsInShift.map((tx) => (
-                      <TableRow key={tx.$id}>
+                      <TableRow key={tx.id}>
                         <TableCell className='text-xs py-1.5 font-medium'>
-                          {tx.transactionNumber}
+                          {tx.transaction_number}
                         </TableCell>
                         <TableCell className='text-xs py-1.5'>
-                          {formatDateTimestamp(tx.$createdAt)}
+                          {formatDateIntlIntl(tx.created_at)}
                         </TableCell>
                         <TableCell className='text-xs py-1.5'>
-                          {tx.bankName || '-'}
+                          {tx.bank_name || '-'}
                         </TableCell>
                         <TableCell className='text-xs hidden sm:table-cell py-1.5'>
-                          {tx.bankTransactionRef || '-'}
+                          {tx.bank_transaction_ref || '-'}
                         </TableCell>
                         <TableCell className='text-xs text-right py-1.5'>
-                          {currencySymbol}
-                          {tx.totalAmount.toLocaleString('id-ID')}
+                          {formatCurrency(tx.total_amount)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -2668,45 +2895,53 @@ export default function POSPage() {
               </DialogTitle>
               <DialogDescription className='text-xs'>
                 Detail keuangan untuk shift yang sedang berjalan.
+                <br />
+                {activeShift?.start_shift && (
+                  <span className='block mt-1 text-[11px] text-muted-foreground'>
+                    Shift dimulai pada:{' '}
+                    <b>{formatDateIntlIntl(activeShift.start_shift)}</b>
+                  </span>
+                )}
               </DialogDescription>
             </DialogHeader>
             <div className='py-3 space-y-2 text-sm'>
               <div className='flex justify-between p-2 bg-muted/30 rounded-md'>
                 <span>Modal Awal Shift:</span>
                 <span className='font-semibold'>
-                  {currencySymbol}
-                  {(activeShift?.startingBalance || 0).toLocaleString('id-ID')}
+                  {formatCurrency(activeShift?.starting_balance || 0)}
                 </span>
               </div>
               <Separator />
               <div className='flex justify-between p-2'>
                 <span>Total Penjualan Tunai:</span>
                 <span className='font-semibold'>
-                  {currencySymbol}
-                  {totalCashSalesInShift.toLocaleString('id-ID')}
+                  {formatCurrency(totalCashSalesInShift)}
                 </span>
               </div>
               <div className='flex justify-between p-2 bg-muted/30 rounded-md'>
                 <span>Estimasi Kas di Laci:</span>
                 <span className='font-semibold'>
-                  {currencySymbol}
-                  {estimatedCashInDrawer.toLocaleString('id-ID')}
+                  {formatCurrency(estimatedCashInDrawer)}
                 </span>
               </div>
               <Separator />
               <div className='flex justify-between p-2'>
                 <span>Total Penjualan Kartu:</span>
                 <span className='font-semibold'>
-                  {currencySymbol}
-                  {totalCardSalesInShift.toLocaleString('id-ID')}
+                  {formatCurrency(totalCardSalesInShift)}
+                </span>
+              </div>
+              <div className='flex justify-between p-2'>
+                <span>Total Penjualan Kredit:</span>
+                <span className='font-semibold'>
+                  {formatCurrency(totalCreditSalesInShift)}
                 </span>
               </div>
               <div className='flex justify-between items-center p-2 bg-muted/30 rounded-md'>
                 <span>Total Penjualan Transfer:</span>
                 <div className='flex items-center gap-2'>
                   <span className='font-semibold'>
-                    {currencySymbol}
-                    {totalTransferSalesInShift.toLocaleString('id-ID')}
+                    {formatCurrency(totalTransferSalesInShift)}
                   </span>
                   <Button
                     variant='link'
@@ -2733,6 +2968,61 @@ export default function POSPage() {
           </DialogContent>
         </Dialog>
 
+        {/* Credit Confirmation Dialog */}
+        <Dialog
+          open={showCreditConfirmationDialog}
+          onOpenChange={setShowCreditConfirmationDialog}
+        >
+          <DialogContent className='sm:max-w-xs'>
+            <DialogHeader>
+              <DialogTitle>Konfirmasi Penjualan Kredit</DialogTitle>
+              <DialogDescription>
+                Apakah Anda yakin ingin memproses penjualan kredit ini?
+              </DialogDescription>
+            </DialogHeader>
+            <div className='py-3 space-y-2'>
+              <div className='flex justify-between text-sm'>
+                <span>Pelanggan:</span>
+                <span className='font-semibold'>
+                  {allCustomers.find((c) => String(c.id) === selectedCustomerId)
+                    ?.name || '-'}
+                </span>
+              </div>
+              <div className='flex justify-between text-sm'>
+                <span>Jatuh Tempo:</span>
+                <span className='font-semibold'>
+                  {creditDueDate
+                    ? new Date(creditDueDate).toLocaleDateString('id-ID')
+                    : '-'}
+                </span>
+              </div>
+              <div className='flex justify-between text-base font-bold border-t pt-2'>
+                <span>Total:</span>
+                <span>{formatCurrency(total)}</span>
+              </div>
+            </div>
+            <DialogFooter className='flex flex-row gap-2 pt-2'>
+              <Button
+                variant='outline'
+                onClick={() => setShowCreditConfirmationDialog(false)}
+                disabled={isCreditSaleProcessing}
+              >
+                Batal
+              </Button>
+              {!isCreditSaleProcessing ? (
+                <Button variant='default' onClick={handleConfirmCreditSale}>
+                  Konfirmasi
+                </Button>
+              ) : (
+                <Button size='sm' disabled>
+                  <Loader2Icon className='animate-spin' />
+                  Please wait
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Dialog
           open={showAllShiftTransactionsDialog}
           onOpenChange={setShowAllShiftTransactionsDialog}
@@ -2753,7 +3043,7 @@ export default function POSPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className='text-xs'>No. Inv</TableHead>
+                      <TableHead className='text-xs'>No. Invoice</TableHead>
                       <TableHead className='text-xs hidden sm:table-cell'>
                         Waktu
                       </TableHead>
@@ -2773,26 +3063,25 @@ export default function POSPage() {
                   <TableBody>
                     {shiftTransactions.map((tx) => (
                       <TableRow
-                        key={tx.$id}
+                        key={tx.id}
                         className={cn(
                           tx.status === 'returned' && 'bg-muted/40'
                         )}
                       >
                         <TableCell className='text-xs py-1.5 font-medium'>
-                          {tx.transactionNumber}
+                          {tx.transaction_number}
                         </TableCell>
                         <TableCell className='text-xs hidden sm:table-cell py-1.5'>
-                          {formatDateTimestamp(tx.$createdAt)}
+                          {formatDateIntlIntl(tx.created_at)}
                         </TableCell>
                         <TableCell className='text-xs py-1.5'>
-                          {tx.customerName || '-'}
+                          {tx.customer_name || '-'}
                         </TableCell>
                         <TableCell className='text-xs py-1.5 capitalize'>
-                          {tx.paymentMethod}
+                          {tx.payment_method}
                         </TableCell>
                         <TableCell className='text-xs text-right py-1.5'>
-                          {currencySymbol}
-                          {tx.totalAmount.toLocaleString('id-ID')}
+                          {formatCurrency(tx.total_amount)}
                         </TableCell>
                         <TableCell className='text-xs text-center py-1.5'>
                           <span
@@ -2811,9 +3100,7 @@ export default function POSPage() {
                             variant='ghost'
                             size='icon'
                             className='h-6 w-6'
-                            onClick={() =>
-                              handlePrintInvoiceFromHistory(tx.$id)
-                            }
+                            onClick={() => handlePrintInvoiceFromHistory(tx.id)}
                           >
                             <Printer className='h-3.5 w-3.5 text-muted-foreground hover:text-primary' />
                             <span className='sr-only'>Cetak Ulang</span>
