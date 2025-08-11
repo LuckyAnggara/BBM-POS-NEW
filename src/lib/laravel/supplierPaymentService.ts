@@ -1,12 +1,5 @@
 import api from '@/lib/api'
-import type { SupplierPayment } from '@/lib/types'
-
-export interface SupplierPaymentInput {
-  purchase_order_id: number
-  amount_paid: number
-  payment_date: string // 'YYYY-MM-DD'
-  payment_method: string
-}
+import type { SupplierPayment, SupplierPaymentInput } from '@/lib/types'
 
 /**
  * Mencatat pembayaran baru ke supplier untuk sebuah PO.
@@ -38,6 +31,45 @@ export const listPaymentsForPo = async (
   } catch (error) {
     console.error(
       `Laravel API Error :: listPaymentsForPo (PO ID: ${purchaseOrderId}) :: `,
+      error
+    )
+    throw error
+  }
+}
+
+/**
+ * [BARU] Memperbarui data pembayaran yang sudah ada.
+ * @param {number} id - ID dari record pembayaran.
+ * @param {Partial<SupplierPaymentInput>} updates - Data yang ingin diperbarui.
+ * @returns {Promise<SupplierPayment>} Objek pembayaran yang sudah diupdate.
+ */
+export const updateSupplierPayment = async (
+  id: number,
+  updates: Partial<SupplierPaymentInput>
+): Promise<SupplierPayment> => {
+  try {
+    const response = await api.put(`/api/supplier-payments/${id}`, updates)
+    return response.data
+  } catch (error) {
+    console.error(
+      `Laravel API Error :: updateSupplierPayment (ID: ${id}) :: `,
+      error
+    )
+    throw error
+  }
+}
+
+/**
+ * [BARU] Menghapus data pembayaran.
+ * @param {number} id - ID dari record pembayaran.
+ * @returns {Promise<void>}
+ */
+export const deleteSupplierPayment = async (id: number): Promise<void> => {
+  try {
+    await api.delete(`/api/supplier-payments/${id}`)
+  } catch (error) {
+    console.error(
+      `Laravel API Error :: deleteSupplierPayment (ID: ${id}) :: `,
       error
     )
     throw error

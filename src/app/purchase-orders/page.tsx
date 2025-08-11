@@ -34,7 +34,10 @@ import {
   type PurchaseOrderPaymentStatus,
   ITEMS_PER_PAGE_OPTIONS,
 } from '@/lib/types'
-import { listPurchaseOrders } from '@/lib/laravel/purchaseOrderService'
+import {
+  listPurchaseOrders,
+  updatePurchaseOrderStatus,
+} from '@/lib/laravel/purchaseOrderService'
 import { format, isBefore, startOfDay } from 'date-fns'
 import { Badge } from '@/components/ui/badge'
 import { cn, formatCurrency } from '@/lib/utils'
@@ -106,7 +109,7 @@ export default function PurchaseOrdersPage() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const [poToUpdate, setPoToUpdate] = useState<{
-    id: string
+    id: number
     newStatus: PurchaseOrderStatus
     po_number: string
   } | null>(null)
@@ -165,10 +168,6 @@ export default function PurchaseOrdersPage() {
           })
         }
       } catch (error) {
-        console.error(
-          'Error fetching purchase orders with date filters:',
-          error
-        )
         toast.error('Gagal Memuat Pesanan', {
           description:
             'Terjadi kesalahan saat mengambil data pesanan pembelian.',
@@ -220,33 +219,35 @@ export default function PurchaseOrdersPage() {
 
   const handleUpdateStatus = async () => {
     if (!poToUpdate || !selectedBranch) return
-    setIsUpdatingStatus(true)
-    const result = await updatePurchaseOrderStatus({
-      poId: poToUpdate.id,
-      newStatus: poToUpdate.newStatus,
-    })
-    if (result && 'error' in result) {
-      toast.error('Gagal Update Status', {
-        description: result.error,
-      })
-    } else if (result) {
+
+    try {
+      setIsUpdatingStatus(true)
+      const result = await updatePurchaseOrderStatus(
+        poToUpdate.id,
+        poToUpdate.newStatus
+      )
       toast.success('Status Diperbarui', {
-        description: `Status PO ${
+        description: `Status ${
           poToUpdate.po_number
         } telah diubah menjadi ${getPOStatusText(poToUpdate.newStatus)}. `,
       })
+      fetchTransactions(currentPage, debouncedSearchTerm)
+    } catch (error: any) {
+      toast.error('Gagal Update Status', {
+        description: error.message,
+      })
+    } finally {
+      setIsUpdatingStatus(false)
+      setShowConfirmDialog(false)
+      setPoToUpdate(null)
     }
-    setIsUpdatingStatus(false)
-    setShowConfirmDialog(false)
-    setPoToUpdate(null)
   }
 
   const openConfirmDialog = (
-    poId: number,
-    po_number: string,
+    po: PurchaseOrder,
     newStatus: PurchaseOrderStatus
   ) => {
-    // setPoToUpdate({ id: poId, newStatus, po_number })
+    setPoToUpdate({ id: po.id, newStatus, po_number: po.po_number })
     setShowConfirmDialog(true)
   }
 
@@ -446,7 +447,7 @@ export default function PurchaseOrdersPage() {
                 </div>
                 <div>
                   <Label htmlFor='statusPoFilter' className='text-xs'>
-                    Status PO
+                    Status
                   </Label>
                   <Select
                     value={statusPoFilter}
@@ -455,11 +456,11 @@ export default function PurchaseOrdersPage() {
                     }
                   >
                     <SelectTrigger className='h-8 text-xs mt-0.5'>
-                      <SelectValue placeholder='Semua Status PO' />
+                      <SelectValue placeholder='Semua Status' />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value='all' className='text-xs'>
-                        Semua Status PO
+                        Semua Status
                       </SelectItem>
                       {ALL_PO_STATUSES.map((status) => (
                         <SelectItem
@@ -573,7 +574,7 @@ export default function PurchaseOrdersPage() {
                       Jenis Beli
                     </TableHead>
                     <TableHead className='text-xs text-center'>
-                      Status PO
+                      Status
                     </TableHead>
                     <TableHead className='text-xs text-center hidden md:table-cell'>
                       Status Bayar
@@ -649,9 +650,7 @@ export default function PurchaseOrdersPage() {
                             variant='ghost'
                             size='icon'
                             className='text-xs cursor-pointer h-7 w-7 '
-                            onClick={() =>
-                              openConfirmDialog(po.id, po.po_number, 'ordered')
-                            }
+                            onClick={() => openConfirmDialog(po, 'ordered')}
                             disabled={isUpdatingStatus}
                           >
                             <CheckCircle className='mr-2 h-3.5 w-3.5' />
@@ -662,13 +661,7 @@ export default function PurchaseOrdersPage() {
                             variant='ghost'
                             size='icon'
                             className='h-7 w-7 text-xs cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10'
-                            onClick={() =>
-                              openConfirmDialog(
-                                po.id,
-                                po.po_number,
-                                'cancelled'
-                              )
-                            }
+                            onClick={() => openConfirmDialog(po, 'cancelled')}
                             disabled={isUpdatingStatus}
                           >
                             <XCircle className='mr-2 h-3.5 w-3.5' />
@@ -689,9 +682,7 @@ export default function PurchaseOrdersPage() {
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>
-                Konfirmasi Perubahan Status PO
-              </AlertDialogTitle>
+              <AlertDialogTitle>Konfirmasi Perubahan Status</AlertDialogTitle>
               <AlertDialogDescription className='text-xs'>
                 Apakah Anda yakin ingin mengubah status untuk PO{' '}
                 <strong>{poToUpdate?.po_number}</strong> menjadi{' '}

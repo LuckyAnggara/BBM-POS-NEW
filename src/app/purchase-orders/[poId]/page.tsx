@@ -39,20 +39,25 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 import type {
   PurchaseOrder,
-  PurchaseOrderItemDocument,
   PurchaseOrderStatus,
-  ReceivedItemData,
   PurchaseOrderPaymentStatus,
-  SupplierPaymentDocument,
-} from '@/lib/appwrite/purchaseOrders'
+  SupplierPayment,
+  ReceivedItemData,
+  PaymentMethod,
+  SupplierPaymentInput,
+  SupplierPaymentEditInput,
+} from '@/lib/types'
 import {
   getPurchaseOrderById,
+  receivePurchaseOrder,
   receivePurchaseOrderItems,
-  recordPaymentToSupplier,
-  updatePaymentToSupplier,
-  deletePaymentToSupplier,
   updatePurchaseOrderStatus,
-} from '@/lib/appwrite/purchaseOrders'
+} from '@/lib/laravel/purchaseOrderService'
+import {
+  createSupplierPayment,
+  updateSupplierPayment,
+  deleteSupplierPayment,
+} from '@/lib/laravel/supplierPaymentService'
 import { format, isBefore, startOfDay } from 'date-fns'
 import Link from 'next/link'
 import {
@@ -100,15 +105,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { formatCurrency } from '@/lib/helper'
 
 const receiveItemSchema = z.object({
-  purchaseOrderItemId: z.string(),
-  productId: z.string(),
-  productName: z.string(),
-  orderedQuantity: z.number(),
-  alreadyReceivedQuantity: z.number(),
-  purchasePrice: z.number(),
-  quantityReceivedNow: z.coerce
+  purchaseOrderItemId: z.number(),
+  product_id: z.number(),
+  product_name: z.string(),
+  ordered_quantity: z.number(),
+  already_received_quantity: z.number(),
+  purchase_price: z.number(),
+  quantity_received_now: z.coerce
     .number()
     .min(0, 'Jumlah tidak boleh negatif.')
     .max(99999, 'Jumlah terlalu besar.'),
@@ -117,15 +123,15 @@ const receiveItemSchema = z.object({
 const receiveFormSchema = z.object({
   itemsToReceive: z
     .array(receiveItemSchema)
-    .refine((items) => items.some((item) => item.quantityReceivedNow > 0), {
+    .refine((items) => items.some((item) => item.quantity_received_now > 0), {
       message: 'Minimal satu item harus memiliki jumlah diterima lebih dari 0.',
     })
     .refine(
       (items) =>
         items.every(
           (item) =>
-            item.quantityReceivedNow <=
-            item.orderedQuantity - item.alreadyReceivedQuantity
+            item.quantity_received_now <=
+            item.ordered_quantity - item.already_received_quantity
         ),
       {
         message:
@@ -134,13 +140,12 @@ const receiveFormSchema = z.object({
     ),
 })
 type ReceiveFormValues = z.infer<typeof receiveFormSchema>
-
 const paymentToSupplierFormSchema = z.object({
-  paymentDate: z.date({ required_error: 'Tanggal pembayaran harus diisi.' }),
-  amountPaid: z.coerce
+  payment_date: z.date({ required_error: 'Tanggal pembayaran harus diisi.' }),
+  amount_paid: z.coerce
     .number()
     .positive({ message: 'Jumlah bayar harus lebih dari 0.' }),
-  paymentMethod: z.enum(['cash', 'transfer', 'card', 'other'], {
+  payment_method: z.enum(['cash', 'card', 'transfer', 'qris', 'credit'], {
     required_error: 'Metode pembayaran harus dipilih.',
   }),
   notes: z.string().optional(),
@@ -148,12 +153,12 @@ const paymentToSupplierFormSchema = z.object({
 type PaymentToSupplierFormValues = z.infer<typeof paymentToSupplierFormSchema>
 
 const editPaymentToSupplierFormSchema = z.object({
-  paymentId: z.string(),
-  paymentDate: z.date({ required_error: 'Tanggal pembayaran harus diisi.' }),
-  amountPaid: z.coerce
+  payment_id: z.number(),
+  payment_date: z.date({ required_error: 'Tanggal pembayaran harus diisi.' }),
+  amount_paid: z.coerce
     .number()
     .positive({ message: 'Jumlah bayar harus lebih dari 0.' }),
-  paymentMethod: z.enum(['cash', 'transfer', 'card', 'other'], {
+  payment_method: z.enum(['cash', 'card', 'transfer', 'qris', 'credit'], {
     required_error: 'Metode pembayaran harus dipilih.',
   }),
   notes: z.string().optional(),
@@ -163,9 +168,12 @@ type EditPaymentToSupplierFormValues = z.infer<
 >
 
 const changeStatusFormSchema = z.object({
-  newStatus: z.enum(['ordered', 'cancelled'], {
-    required_error: 'Status harus dipilih.',
-  }),
+  status: z.enum(
+    ['draft', 'ordered', 'partially_received', 'fully_received', 'cancelled'],
+    {
+      required_error: 'Status harus dipilih.',
+    }
+  ),
 })
 type ChangeStatusFormValues = z.infer<typeof changeStatusFormSchema>
 
@@ -197,17 +205,17 @@ export default function PurchaseOrderDetailPage() {
   const [isDeleteConfirmModalOpen, setIsDeleteConfirmModalOpen] =
     useState(false)
   const [selectedPaymentForEdit, setSelectedPaymentForEdit] =
-    useState<SupplierPaymentDocument | null>(null)
+    useState<SupplierPaymentEditInput | null>(null)
   const [selectedPaymentForDelete, setSelectedPaymentForDelete] =
-    useState<SupplierPaymentDocument | null>(null)
+    useState<SupplierPayment | null>(null)
   const [isProcessingDelete, setIsProcessingDelete] = useState(false)
 
   const paymentToSupplierForm = useForm<PaymentToSupplierFormValues>({
     resolver: zodResolver(paymentToSupplierFormSchema),
     defaultValues: {
-      paymentDate: new Date(),
-      amountPaid: 0,
-      paymentMethod: 'transfer',
+      payment_date: new Date(),
+      amount_paid: 0,
+      payment_method: 'transfer',
       notes: '',
     },
   })
@@ -247,24 +255,27 @@ export default function PurchaseOrderDetailPage() {
       const fetchedPO = await getPurchaseOrderById(poId)
       if (fetchedPO) {
         setPurchaseOrder(fetchedPO)
-        const itemsForForm = fetchedPO.items
-          .filter((item) => item.orderedQuantity > item.receivedQuantity)
-          .map((item) => ({
-            purchaseOrderItemId: item.$id,
-            productId: item.productId,
-            productName: item.productName,
-            orderedQuantity: item.orderedQuantity,
-            alreadyReceivedQuantity: item.receivedQuantity,
-            purchasePrice: item.purchasePrice,
-            quantityReceivedNow: 0,
-          }))
-        replaceReceiveFields(itemsForForm)
 
-        if (fetchedPO.isCreditPurchase && fetchedPO.outstandingPOAmount) {
+        if (fetchedPO.purchase_order_details) {
+          const itemsForForm = fetchedPO.purchase_order_details
+            .filter((item) => item.ordered_quantity > item.received_quantity)
+            .map((item) => ({
+              purchaseOrderItemId: item.id,
+              product_id: item.product_id,
+              product_name: item.product_name,
+              ordered_quantity: item.ordered_quantity,
+              already_received_quantity: item.received_quantity,
+              purchase_price: item.purchase_price,
+              quantity_received_now: 0,
+            }))
+          replaceReceiveFields(itemsForForm)
+        }
+
+        if (fetchedPO.is_credit && fetchedPO.outstanding_amount) {
           paymentToSupplierForm.reset({
-            paymentDate: new Date(),
-            amountPaid: fetchedPO.outstandingPOAmount,
-            paymentMethod: 'transfer',
+            payment_date: new Date(),
+            amount_paid: fetchedPO.outstanding_amount,
+            payment_method: 'transfer',
             notes: '',
           })
         }
@@ -281,7 +292,7 @@ export default function PurchaseOrderDetailPage() {
     } finally {
       setLoadingPO(false)
     }
-  }, [poId, toast, router, replaceReceiveFields, paymentToSupplierForm])
+  }, [poId, replaceReceiveFields, paymentToSupplierForm])
 
   useEffect(() => {
     fetchPurchaseOrder()
@@ -290,15 +301,14 @@ export default function PurchaseOrderDetailPage() {
   const onSubmitReceiveItems: SubmitHandler<ReceiveFormValues> = async (
     values
   ) => {
-    if (!purchaseOrder || !currentUser) return
+    console.log(values)
+    if (!purchaseOrder) return
 
     const itemsToProcess: ReceivedItemData[] = values.itemsToReceive
-      .filter((item) => item.quantityReceivedNow > 0)
+      .filter((item) => item.quantity_received_now > 0)
       .map((item) => ({
-        purchaseOrderItemId: item.purchaseOrderItemId,
-        productId: item.productId,
-        productName: item.productName,
-        quantityReceivedNow: item.quantityReceivedNow,
+        purchase_order_detail_id: item.purchaseOrderItemId,
+        quantity_received: item.quantity_received_now,
       }))
 
     if (itemsToProcess.length === 0) {
@@ -308,27 +318,24 @@ export default function PurchaseOrderDetailPage() {
       return
     }
 
-    setIsProcessingReceipt(true)
-    const result = await receivePurchaseOrderItems({
-      poId: purchaseOrder.$id,
-      poBranchId: purchaseOrder.branchId,
-      poNumber: purchaseOrder.poNumber,
-      itemsReceived: itemsToProcess,
-      receivedByUserId: currentUser.$id,
-      receivedByUserName: currentUser.name,
-    })
-    setIsProcessingReceipt(false)
-
-    if (result && 'error' in result) {
-      toast.error('Gagal Menerima Barang', {
-        description: result.error,
-      })
-    } else {
+    try {
+      setIsProcessingReceipt(true)
+      const result = await receivePurchaseOrderItems(
+        purchaseOrder.id,
+        itemsToProcess
+      )
       toast.success('Penerimaan Barang Berhasil', {
         description: 'Stok dan status PO telah diperbarui.',
       })
       setIsReceivingItemsModalOpen(false)
+
       await fetchPurchaseOrder()
+    } catch (error) {
+      toast.error('Gagal Menerima Barang', {
+        description: 'Terjadi kesalahan saat menerima barang.',
+      })
+    } finally {
+      setIsProcessingReceipt(false)
     }
   }
 
@@ -341,62 +348,58 @@ export default function PurchaseOrderDetailPage() {
       })
       return
     }
-    if (values.amountPaid > (purchaseOrder.outstandingPOAmount || 0)) {
+    if (values.amount_paid > (purchaseOrder.outstanding_amount || 0)) {
       toast.error('Jumlah Tidak Valid', {
         description: 'Jumlah bayar melebihi sisa tagihan.',
       })
 
-      paymentToSupplierForm.setError('amountPaid', {
+      paymentToSupplierForm.setError('amount_paid', {
         type: 'manual',
         message: 'Jumlah bayar melebihi sisa tagihan.',
       })
       return
     }
 
-    const paymentDetails: Omit<
-      SupplierPaymentDocument,
-      '$id' | 'poId' | 'branchId' | 'supplierId'
-    > = {
-      amountPaid: values.amountPaid,
-      paymentMethod: values.paymentMethod,
-      notes: values.notes,
-      paymentDate: values.paymentDate.toISOString(),
-      recordedByUserId: currentUser.$id,
+    const paymentDetails: SupplierPaymentInput = {
+      purchase_order_id: purchaseOrder.id,
+      amount_paid: values.amount_paid,
+      payment_date: values.payment_date.toISOString(),
+      payment_method: values.payment_method,
+      notes: values.notes ?? '',
+      recorded_by_user_id: currentUser.id,
     }
 
-    setIsProcessingPaymentToSupplier(true)
-    const result = await recordPaymentToSupplier(
-      purchaseOrder.$id,
-      paymentDetails
-    )
-    setIsProcessingPaymentToSupplier(false)
+    try {
+      setIsProcessingPaymentToSupplier(true)
+      const result = await createSupplierPayment(paymentDetails)
 
-    if (result && 'error' in result) {
-      toast.error('Gagal Mencatat Pembayaran', {
-        description: result.error,
-      })
-    } else {
       toast.success('Pembayaran Dicatat', {
-        description: `Pembayaran untuk PO ${purchaseOrder.poNumber} berhasil dicatat.`,
+        description: `Pembayaran untuk PO ${purchaseOrder.po_number} berhasil dicatat.`,
       })
       setIsPaymentToSupplierModalOpen(false)
       await fetchPurchaseOrder()
+    } catch (error: any) {
+      toast.error('Gagal Mencatat Pembayaran', {
+        description: error.message,
+      })
+    } finally {
+      setIsProcessingPaymentToSupplier(false)
     }
   }
 
-  const handleEditPayment = (payment: SupplierPaymentDocument) => {
+  const handleEditPayment = (payment: SupplierPayment) => {
     setSelectedPaymentForEdit(payment)
     editPaymentToSupplierForm.reset({
-      paymentId: payment.$id,
-      paymentDate: new Date(payment.paymentDate),
-      amountPaid: payment.amountPaid,
-      paymentMethod: payment.paymentMethod,
+      payment_id: payment.id,
+      payment_date: new Date(payment.payment_date),
+      amount_paid: payment.amount_paid,
+      payment_method: payment.payment_method,
       notes: payment.notes || '',
     })
     setIsEditPaymentModalOpen(true)
   }
 
-  const handleDeletePayment = (payment: SupplierPaymentDocument) => {
+  const handleDeletePayment = (payment: SupplierPayment) => {
     setSelectedPaymentForDelete(payment)
     setIsDeleteConfirmModalOpen(true)
   }
@@ -404,24 +407,21 @@ export default function PurchaseOrderDetailPage() {
   const confirmDeletePayment = async () => {
     if (!selectedPaymentForDelete || !purchaseOrder) return
 
-    setIsProcessingDelete(true)
-    const result = await deletePaymentToSupplier(
-      purchaseOrder.$id,
-      selectedPaymentForDelete.$id
-    )
-    setIsProcessingDelete(false)
-
-    if (result && 'error' in result) {
-      toast.error('Gagal Menghapus Pembayaran', {
-        description: result.error,
-      })
-    } else {
+    try {
+      setIsProcessingDelete(true)
+      const result = await deleteSupplierPayment(purchaseOrder.id)
       toast.success('Pembayaran Dihapus', {
-        description: 'Riwayat pembayaran telah diperbarui.',
+        description: 'Riwayat pembayaran telah dihapus.',
       })
       setIsDeleteConfirmModalOpen(false)
       setSelectedPaymentForDelete(null)
       await fetchPurchaseOrder()
+    } catch (error: any) {
+      toast.error('Gagal Menghapus Pembayaran', {
+        description: error.message,
+      })
+    } finally {
+      setIsProcessingDelete(false)
     }
   }
 
@@ -430,17 +430,17 @@ export default function PurchaseOrderDetailPage() {
   > = async (values) => {
     if (!purchaseOrder || !currentUser || !selectedPaymentForEdit) return
 
-    const originalAmount = selectedPaymentForEdit.amountPaid
-    const newAmount = values.amountPaid
+    const originalAmount = selectedPaymentForEdit.amount_paid
+    const newAmount = values.amount_paid
     const difference = newAmount - originalAmount
     const newOutstandingAmount =
-      (purchaseOrder.outstandingPOAmount || 0) - difference
+      (purchaseOrder.outstanding_amount || 0) - difference
 
     if (newOutstandingAmount < 0) {
       toast.error('Jumlah Tidak Valid', {
         description: `Jumlah bayar baru akan membuat total bayar melebihi total tagihan.`,
       })
-      editPaymentToSupplierForm.setError('amountPaid', {
+      editPaymentToSupplierForm.setError('amount_paid', {
         type: 'manual',
         message: 'Jumlah bayar melebihi sisa tagihan.',
       })
@@ -448,32 +448,32 @@ export default function PurchaseOrderDetailPage() {
     }
 
     const paymentUpdateDetails = {
-      amountPaid: values.amountPaid,
-      paymentMethod: values.paymentMethod,
+      amount_paid: values.amount_paid,
+      payment_method: values.payment_method,
       notes: values.notes,
-      paymentDate: values.paymentDate.toISOString(),
-      recordedByUserId: currentUser.$id, // Keep track of who edited
+      payment_date: values.payment_date.toISOString(),
+      recorded_by_user_id: currentUser.id, // Keep track of who edited
     }
 
-    setIsProcessingPaymentToSupplier(true)
-    const result = await updatePaymentToSupplier(
-      purchaseOrder.$id,
-      values.paymentId,
-      paymentUpdateDetails
-    )
-    setIsProcessingPaymentToSupplier(false)
+    try {
+      setIsProcessingPaymentToSupplier(true)
+      const result = await updateSupplierPayment(
+        purchaseOrder.id,
+        paymentUpdateDetails
+      )
 
-    if (result && 'error' in result) {
-      toast.error('Gagal Memperbarui Pembayaran', {
-        description: result.error,
-      })
-    } else {
       toast.success('Pembayaran Diperbarui', {
         description: 'Detail pembayaran berhasil diperbarui.',
       })
       setIsEditPaymentModalOpen(false)
       setSelectedPaymentForEdit(null)
       await fetchPurchaseOrder()
+    } catch (error: any) {
+      toast.error('Gagal Memperbarui Pembayaran', {
+        description: error.message,
+      })
+    } finally {
+      setIsProcessingPaymentToSupplier(false)
     }
   }
 
@@ -482,24 +482,23 @@ export default function PurchaseOrderDetailPage() {
   ) => {
     if (!purchaseOrder || !currentUser) return
 
-    setIsProcessingChangeStatus(true)
-    const result = await updatePurchaseOrderStatus({
-      poId: purchaseOrder.$id,
-      newStatus: values.newStatus,
-    })
-
-    setIsProcessingChangeStatus(false)
-
-    if (result && 'error' in result) {
-      toast.error('Gagal Mengganti Status', {
-        description: result.error,
-      })
-    } else {
+    try {
+      setIsProcessingChangeStatus(true)
+      const result = await updatePurchaseOrderStatus(
+        purchaseOrder.id,
+        values.status
+      )
       toast.success('Status Diperbarui', {
         description: 'Status PO telah diperbarui.',
       })
       setIsChangeStatusModalOpen(false)
       await fetchPurchaseOrder()
+    } catch (error: any) {
+      toast.error('Gagal Mengganti Status', {
+        description: error.message,
+      })
+    } finally {
+      setIsProcessingChangeStatus(false)
     }
   }
 
@@ -515,13 +514,6 @@ export default function PurchaseOrderDetailPage() {
       console.error('Invalid date format:', dateInput, error)
       return 'Invalid Date'
     }
-  }
-
-  const formatCurrency = (amount: number | undefined) => {
-    if (amount === undefined || amount === null) return 'N/A' // Handle null and undefined
-    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString(
-      'id-ID'
-    )}`
   }
 
   const getPOStatusBadgeVariant = (status: PurchaseOrderStatus | undefined) => {
@@ -654,13 +646,15 @@ export default function PurchaseOrderDetailPage() {
   const canReceiveGoods =
     purchaseOrder.status === 'ordered' ||
     purchaseOrder.status === 'partially_received'
-  const itemsPendingReceipt = purchaseOrder.items.filter(
-    (item) => item.orderedQuantity > item.receivedQuantity
-  )
+  const itemsPendingReceipt = purchaseOrder.purchase_order_details
+    ? purchaseOrder.purchase_order_details.filter(
+        (item) => item.ordered_quantity > item.received_quantity
+      )
+    : []
   const canPaySupplier =
-    purchaseOrder.isCreditPurchase &&
-    (purchaseOrder.paymentStatusOnPO === 'unpaid' ||
-      purchaseOrder.paymentStatusOnPO === 'partially_paid')
+    purchaseOrder.is_credit &&
+    (purchaseOrder.payment_status === 'unpaid' ||
+      purchaseOrder.payment_status === 'partially_paid')
 
   return (
     <ProtectedRoute>
@@ -669,7 +663,7 @@ export default function PurchaseOrderDetailPage() {
           <div className='flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3'>
             <div>
               <h1 className='text-xl md:text-2xl font-semibold font-headline'>
-                Detail Pesanan Pembelian: {purchaseOrder.poNumber}
+                Detail Pesanan Pembelian: {purchaseOrder.po_number}
               </h1>
               <div className='flex flex-row space-x-2'>
                 <p className='text-sm text-muted-foreground'>Status PO: </p>
@@ -687,26 +681,26 @@ export default function PurchaseOrderDetailPage() {
                 >
                   {getPOStatusText(purchaseOrder.status)}
                 </Badge>
-                {purchaseOrder.isCreditPurchase && (
+                {purchaseOrder.is_credit && (
                   <>
                     <p className='text-sm text-muted-foreground'>
                       Status Bayar:
                     </p>
                     <Badge
                       variant={getPaymentStatusBadgeVariant(
-                        purchaseOrder.paymentStatusOnPO,
-                        purchaseOrder.paymentDueDateOnPO
+                        purchaseOrder.payment_status,
+                        purchaseOrder.payment_due_date ?? ''
                       )}
                       className={cn(
-                        purchaseOrder.paymentStatusOnPO === 'paid' &&
+                        purchaseOrder.payment_status === 'paid' &&
                           'bg-green-600 hover:bg-green-700 text-white',
-                        purchaseOrder.paymentStatusOnPO === 'partially_paid' &&
+                        purchaseOrder.payment_status === 'partially_paid' &&
                           'border-yellow-500 text-yellow-600'
                       )}
                     >
                       {getPaymentStatusText(
-                        purchaseOrder.paymentStatusOnPO,
-                        purchaseOrder.paymentDueDateOnPO
+                        purchaseOrder.payment_status,
+                        purchaseOrder.payment_due_date ?? ''
                       )}
                     </Badge>
                   </>
@@ -768,25 +762,27 @@ export default function PurchaseOrderDetailPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {purchaseOrder.items.map((item, index) => (
-                      <TableRow key={item.productId + index}>
-                        <TableCell className='text-xs font-medium py-1.5'>
-                          {item.productName}
-                        </TableCell>
-                        <TableCell className='text-xs text-center py-1.5'>
-                          {item.orderedQuantity}
-                        </TableCell>
-                        <TableCell className='text-xs text-center py-1.5'>
-                          {item.receivedQuantity}
-                        </TableCell>
-                        <TableCell className='text-xs text-right py-1.5'>
-                          {formatCurrency(item.purchasePrice)}
-                        </TableCell>
-                        <TableCell className='text-xs text-right py-1.5'>
-                          {formatCurrency(item.totalPrice)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {purchaseOrder.purchase_order_details?.map(
+                      (item, index) => (
+                        <TableRow key={item.product_id + index}>
+                          <TableCell className='text-xs font-medium py-1.5'>
+                            {item.product_name}
+                          </TableCell>
+                          <TableCell className='text-xs text-center py-1.5'>
+                            {item.ordered_quantity}
+                          </TableCell>
+                          <TableCell className='text-xs text-center py-1.5'>
+                            {item.received_quantity}
+                          </TableCell>
+                          <TableCell className='text-xs text-right py-1.5'>
+                            {formatCurrency(item.purchase_price)}
+                          </TableCell>
+                          <TableCell className='text-xs text-right py-1.5'>
+                            {formatCurrency(item.total_price)}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    )}
                   </TableBody>
                 </Table>
                 <Separator className='my-3' />
@@ -798,40 +794,40 @@ export default function PurchaseOrderDetailPage() {
                         {formatCurrency(purchaseOrder.subtotal)}
                       </span>
                     </div>
-                    {(purchaseOrder.taxDiscountAmount || 0) > 0 && (
+                    {(purchaseOrder.tax_discount_amount || 0) > 0 && (
                       <div className='flex justify-between text-green-600'>
                         <span>Diskon Pajak (-):</span>
                         <span className='font-medium'>
-                          {formatCurrency(purchaseOrder.taxDiscountAmount)}
+                          {formatCurrency(purchaseOrder.tax_discount_amount)}
                         </span>
                       </div>
                     )}
-                    {(purchaseOrder.shippingCostCharged || 0) > 0 && (
+                    {(purchaseOrder.shipping_cost_charged || 0) > 0 && (
                       <div className='flex justify-between text-destructive'>
                         <span>Ongkos Kirim (+):</span>
                         <span className='font-medium'>
-                          {formatCurrency(purchaseOrder.shippingCostCharged)}
+                          {formatCurrency(purchaseOrder.shipping_cost_charged)}
                         </span>
                       </div>
                     )}
-                    {(purchaseOrder.otherCosts || 0) > 0 && (
+                    {(purchaseOrder.other_costs || 0) > 0 && (
                       <div className='flex justify-between text-destructive'>
                         <span>Biaya Lainnya (+):</span>
                         <span className='font-medium'>
-                          {formatCurrency(purchaseOrder.otherCosts)}
+                          {formatCurrency(purchaseOrder.other_costs)}
                         </span>
                       </div>
                     )}
                     <Separator className='my-1.5' />
                     <div className='flex justify-between font-semibold text-base'>
                       <span>Total Pesanan:</span>
-                      <span>{formatCurrency(purchaseOrder.totalAmount)}</span>
+                      <span>{formatCurrency(purchaseOrder.total_amount)}</span>
                     </div>
-                    {purchaseOrder.isCreditPurchase && (
+                    {purchaseOrder.is_credit && (
                       <div className='flex justify-between text-destructive font-semibold'>
                         <span>Sisa Utang:</span>
                         <span>
-                          {formatCurrency(purchaseOrder.outstandingPOAmount)}
+                          {formatCurrency(purchaseOrder.outstanding_amount)}
                         </span>
                       </div>
                     )}
@@ -853,7 +849,7 @@ export default function PurchaseOrderDetailPage() {
                       <div>
                         <p className='text-xs text-muted-foreground'>No. PO</p>
                         <p className='font-semibold'>
-                          {purchaseOrder.poNumber}
+                          {purchaseOrder.po_number}
                         </p>
                       </div>
                     </div>
@@ -863,7 +859,7 @@ export default function PurchaseOrderDetailPage() {
                       <div>
                         <p className='text-xs text-muted-foreground'>Pemasok</p>
                         <p className='font-semibold'>
-                          {purchaseOrder.supplierName}
+                          {purchaseOrder.supplier_name}
                         </p>
                       </div>
                     </div>
@@ -875,7 +871,7 @@ export default function PurchaseOrderDetailPage() {
                           Tanggal Pesan
                         </p>
                         <p className='font-semibold'>
-                          {formatDateIntl(purchaseOrder.orderDate)}
+                          {formatDateIntl(purchaseOrder.order_date)}
                         </p>
                       </div>
                     </div>
@@ -887,8 +883,10 @@ export default function PurchaseOrderDetailPage() {
                           Estimasi Terima
                         </p>
                         <p className='font-semibold'>
-                          {purchaseOrder.expectedDeliveryDate
-                            ? formatDateIntl(purchaseOrder.expectedDeliveryDate)
+                          {purchaseOrder.expected_delivery_date
+                            ? formatDateIntl(
+                                purchaseOrder.expected_delivery_date
+                              )
                             : '-'}
                         </p>
                       </div>
@@ -901,7 +899,7 @@ export default function PurchaseOrderDetailPage() {
                           Termin Pembayaran
                         </p>
                         <p className='font-semibold capitalize'>
-                          {purchaseOrder.paymentTermsOnPO}
+                          {purchaseOrder.payment_terms}
                         </p>
                       </div>
                     </div>
@@ -913,13 +911,13 @@ export default function PurchaseOrderDetailPage() {
                           Dibuat Oleh
                         </p>
                         <p className='font-semibold'>
-                          ID: {purchaseOrder.createdById.substring(0, 8)}...
+                          ID: {purchaseOrder.user?.name}
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  {purchaseOrder.paymentTermsOnPO === 'credit' && (
+                  {purchaseOrder.payment_terms === 'credit' && (
                     <>
                       <Separator />
                       <div className='grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2'>
@@ -931,7 +929,7 @@ export default function PurchaseOrderDetailPage() {
                               No. Invoice Pemasok
                             </p>
                             <p className='font-semibold'>
-                              {purchaseOrder.supplierInvoiceNumber || '-'}
+                              {purchaseOrder.supplier_invoice_number || '-'}
                             </p>
                           </div>
                         </div>
@@ -943,10 +941,8 @@ export default function PurchaseOrderDetailPage() {
                               Jatuh Tempo
                             </p>
                             <p className='font-semibold'>
-                              {purchaseOrder.paymentDueDateOnPO
-                                ? formatDateIntl(
-                                    purchaseOrder.paymentDueDateOnPO
-                                  )
+                              {purchaseOrder.payment_due_date
+                                ? formatDateIntl(purchaseOrder.payment_due_date)
                                 : '-'}
                             </p>
                           </div>
@@ -976,11 +972,11 @@ export default function PurchaseOrderDetailPage() {
                   <Separator />
                   <div className='space-y-1 text-xs text-muted-foreground'>
                     <p>
-                      Dibuat: {formatDateIntl(purchaseOrder.$createdAt, true)}
+                      Dibuat: {formatDateIntl(purchaseOrder.created_at, true)}
                     </p>
                     <p>
                       Diperbarui:{' '}
-                      {formatDateIntl(purchaseOrder.$updatedAt, true)}
+                      {formatDateIntl(purchaseOrder.updated_at, true)}
                     </p>
                   </div>
                 </CardContent>
@@ -1021,7 +1017,7 @@ export default function PurchaseOrderDetailPage() {
                   )}
                   {purchaseOrder.status === 'fully_received' &&
                     !canPaySupplier &&
-                    purchaseOrder.paymentStatusOnPO === 'paid' && (
+                    purchaseOrder.payment_status === 'paid' && (
                       <p className='text-xs text-green-600 text-center font-medium py-2'>
                         PO selesai dan sudah lunas.
                       </p>
@@ -1035,7 +1031,7 @@ export default function PurchaseOrderDetailPage() {
                     canReceiveGoods ||
                     canPaySupplier ||
                     (purchaseOrder.status === 'fully_received' &&
-                      purchaseOrder.paymentStatusOnPO === 'paid') ||
+                      purchaseOrder.payment_status === 'paid') ||
                     purchaseOrder.status === 'cancelled'
                   ) && (
                     <p className='text-xs text-muted-foreground text-center py-2'>
@@ -1062,11 +1058,11 @@ export default function PurchaseOrderDetailPage() {
                             <div>
                               <p>
                                 <strong>Tgl:</strong>{' '}
-                                {formatDateIntl(pmt.paymentDate, true)} -{' '}
+                                {formatDateIntl(pmt.payment_date, true)} -{' '}
                                 <strong>
-                                  {formatCurrency(pmt.amountPaid)}
+                                  {formatCurrency(pmt.amount_paid)}
                                 </strong>{' '}
-                                ({pmt.paymentMethod})
+                                ({pmt.payment_method})
                               </p>
                               {pmt.notes && (
                                 <p className='text-muted-foreground italic text-[0.7rem]'>
@@ -1110,7 +1106,7 @@ export default function PurchaseOrderDetailPage() {
           <DialogContent className='sm:max-w-2xl'>
             <DialogHeader>
               <DialogModalTitle>
-                Catat Penerimaan Barang untuk PO: {purchaseOrder.poNumber}
+                Catat Penerimaan Barang untuk PO: {purchaseOrder.po_number}
               </DialogModalTitle>
               <DialogModalDescription className='text-xs'>
                 Masukkan jumlah barang yang diterima untuk setiap item. Stok
@@ -1128,7 +1124,7 @@ export default function PurchaseOrderDetailPage() {
                 ) : (
                   receiveFields.map((field, index) => {
                     const remainingToReceive =
-                      field.orderedQuantity - field.alreadyReceivedQuantity
+                      field.ordered_quantity - field.already_received_quantity
                     return (
                       <div
                         key={field.id}
@@ -1136,26 +1132,26 @@ export default function PurchaseOrderDetailPage() {
                       >
                         <div className='col-span-12 sm:col-span-5'>
                           <Label className='text-xs font-medium'>
-                            {field.productName}
+                            {field.product_name}
                           </Label>
                           <p className='text-xs text-muted-foreground'>
-                            Dipesan: {field.orderedQuantity} | Sudah Diterima:{' '}
-                            {field.alreadyReceivedQuantity} | Sisa:{' '}
+                            Dipesan: {field.ordered_quantity} | Sudah Diterima:{' '}
+                            {field.already_received_quantity} | Sisa:{' '}
                             {remainingToReceive}
                           </p>
                         </div>
                         <div className='col-span-12 sm:col-span-4'>
                           <Label
-                            htmlFor={`itemsToReceive.${index}.quantityReceivedNow`}
+                            htmlFor={`itemsToReceive.${index}.quantity_received_now`}
                             className='text-xs'
                           >
                             Diterima Sekarang
                           </Label>
                           <Input
-                            id={`itemsToReceive.${index}.quantityReceivedNow`}
+                            id={`itemsToReceive.${index}.quantity_received_now`}
                             type='number'
                             {...receiveItemsForm.register(
-                              `itemsToReceive.${index}.quantityReceivedNow`
+                              `itemsToReceive.${index}.quantity_received_now`
                             )}
                             className='h-8 text-xs mt-0.5'
                             placeholder='0'
@@ -1164,12 +1160,12 @@ export default function PurchaseOrderDetailPage() {
                           />
                           {receiveItemsForm.formState.errors.itemsToReceive?.[
                             index
-                          ]?.quantityReceivedNow && (
+                          ]?.quantity_received_now && (
                             <p className='text-xs text-destructive mt-0.5'>
                               {
                                 receiveItemsForm.formState.errors
-                                  .itemsToReceive?.[index]?.quantityReceivedNow
-                                  ?.message
+                                  .itemsToReceive?.[index]
+                                  ?.quantity_received_now?.message
                               }
                             </p>
                           )}
@@ -1177,7 +1173,7 @@ export default function PurchaseOrderDetailPage() {
                         <div className='col-span-12 sm:col-span-3'>
                           <Label className='text-xs'>Harga Beli Satuan</Label>
                           <p className='text-xs font-medium mt-0.5'>
-                            {formatCurrency(field.purchasePrice)}
+                            {formatCurrency(field.purchase_price)}
                           </p>
                         </div>
                       </div>
@@ -1238,7 +1234,7 @@ export default function PurchaseOrderDetailPage() {
                 Ganti Status Pesanan
               </DialogModalTitle>
               <DialogModalDescription className='text-xs'>
-                Ganti status PO: {purchaseOrder.poNumber}
+                Ganti status PO: {purchaseOrder.po_number}
                 <Badge
                   variant={getPOStatusBadgeVariant(purchaseOrder.status)}
                   className={cn(
@@ -1260,11 +1256,11 @@ export default function PurchaseOrderDetailPage() {
               className='space-y-3 p-2 max-h-[70vh] overflow-y-auto pr-1'
             >
               <div>
-                <Label htmlFor='newStatus' className='text-xs'>
+                <Label htmlFor='status' className='text-xs'>
                   Pilih Status Baru*
                 </Label>
                 <Controller
-                  name='newStatus'
+                  name='status'
                   control={changeStatusForm.control}
                   render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
@@ -1272,15 +1268,23 @@ export default function PurchaseOrderDetailPage() {
                         <SelectValue placeholder='Pilih status baru' />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value='draft' className='text-xs'>
-                          Draft
-                        </SelectItem>
-                        <SelectItem value='ordered' className='text-xs '>
-                          Dipesan
-                        </SelectItem>
-                        <SelectItem value='cancelled' className='text-xs'>
-                          Dibatalkan
-                        </SelectItem>
+                        {(
+                          [
+                            'draft',
+                            'ordered',
+                            'partially_received',
+                            'fully_received',
+                            'cancelled',
+                          ] as PurchaseOrderStatus[]
+                        ).map((status) => (
+                          <SelectItem
+                            key={status}
+                            value={status}
+                            className='text-xs'
+                          >
+                            {getPOStatusText(status)}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   )}
@@ -1323,11 +1327,11 @@ export default function PurchaseOrderDetailPage() {
                 Catat Pembayaran ke Pemasok
               </DialogModalTitle>
               <DialogModalDescription className='text-xs'>
-                PO: {purchaseOrder.poNumber} ({purchaseOrder.supplierName}){' '}
+                PO: {purchaseOrder.po_number} ({purchaseOrder.supplier_name}){' '}
                 <br />
                 Sisa Tagihan:{' '}
                 <span className='font-semibold'>
-                  {formatCurrency(purchaseOrder.outstandingPOAmount)}
+                  {formatCurrency(purchaseOrder.outstanding_amount)}
                 </span>
               </DialogModalDescription>
             </DialogHeader>
@@ -1338,11 +1342,11 @@ export default function PurchaseOrderDetailPage() {
               className='space-y-3 p-2 max-h-[70vh] overflow-y-auto pr-1'
             >
               <div>
-                <Label htmlFor='paymentDateSupplier' className='text-xs'>
+                <Label htmlFor='payment_dateSupplier' className='text-xs'>
                   Tanggal Pembayaran*
                 </Label>
                 <Controller
-                  name='paymentDate'
+                  name='payment_date'
                   control={paymentToSupplierForm.control}
                   render={({ field }) => (
                     <Popover modal={true}>
@@ -1370,35 +1374,38 @@ export default function PurchaseOrderDetailPage() {
                     </Popover>
                   )}
                 />
-                {paymentToSupplierForm.formState.errors.paymentDate && (
+                {paymentToSupplierForm.formState.errors.payment_date && (
                   <p className='text-xs text-destructive mt-1'>
-                    {paymentToSupplierForm.formState.errors.paymentDate.message}
+                    {
+                      paymentToSupplierForm.formState.errors.payment_date
+                        .message
+                    }
                   </p>
                 )}
               </div>
               <div>
-                <Label htmlFor='amountPaidSupplier' className='text-xs'>
+                <Label htmlFor='amount_paidSupplier' className='text-xs'>
                   Jumlah Dibayar* ({selectedBranch?.currency || 'Rp'})
                 </Label>
                 <Input
-                  id='amountPaidSupplier'
+                  id='amount_paidSupplier'
                   type='number'
-                  {...paymentToSupplierForm.register('amountPaid')}
+                  {...paymentToSupplierForm.register('amount_paid')}
                   className='h-9 text-xs mt-1'
                   placeholder='0'
                 />
-                {paymentToSupplierForm.formState.errors.amountPaid && (
+                {paymentToSupplierForm.formState.errors.amount_paid && (
                   <p className='text-xs text-destructive mt-1'>
-                    {paymentToSupplierForm.formState.errors.amountPaid.message}
+                    {paymentToSupplierForm.formState.errors.amount_paid.message}
                   </p>
                 )}
               </div>
               <div>
-                <Label htmlFor='paymentMethodSupplier' className='text-xs'>
+                <Label htmlFor='payment_methodSupplier' className='text-xs'>
                   Metode Pembayaran*
                 </Label>
                 <Controller
-                  name='paymentMethod'
+                  name='payment_method'
                   control={paymentToSupplierForm.control}
                   render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
@@ -1422,10 +1429,10 @@ export default function PurchaseOrderDetailPage() {
                     </Select>
                   )}
                 />
-                {paymentToSupplierForm.formState.errors.paymentMethod && (
+                {paymentToSupplierForm.formState.errors.payment_method && (
                   <p className='text-xs text-destructive mt-1'>
                     {
-                      paymentToSupplierForm.formState.errors.paymentMethod
+                      paymentToSupplierForm.formState.errors.payment_method
                         .message
                     }
                   </p>
@@ -1482,7 +1489,7 @@ export default function PurchaseOrderDetailPage() {
                 Edit Pembayaran ke Pemasok
               </DialogModalTitle>
               <DialogModalDescription className='text-xs'>
-                Perbarui detail pembayaran untuk PO: {purchaseOrder.poNumber}
+                Perbarui detail pembayaran untuk PO: {purchaseOrder.po_number}
               </DialogModalDescription>
             </DialogHeader>
             <form
@@ -1492,11 +1499,11 @@ export default function PurchaseOrderDetailPage() {
               className='space-y-3 p-2 max-h-[70vh] overflow-y-auto pr-1'
             >
               <div>
-                <Label htmlFor='editPaymentDate' className='text-xs'>
+                <Label htmlFor='editpayment_date' className='text-xs'>
                   Tanggal Pembayaran*
                 </Label>
                 <Controller
-                  name='paymentDate'
+                  name='payment_date'
                   control={editPaymentToSupplierForm.control}
                   render={({ field }) => (
                     <Popover modal={true}>
@@ -1524,40 +1531,40 @@ export default function PurchaseOrderDetailPage() {
                     </Popover>
                   )}
                 />
-                {editPaymentToSupplierForm.formState.errors.paymentDate && (
+                {editPaymentToSupplierForm.formState.errors.payment_date && (
                   <p className='text-xs text-destructive mt-1'>
                     {
-                      editPaymentToSupplierForm.formState.errors.paymentDate
+                      editPaymentToSupplierForm.formState.errors.payment_date
                         .message
                     }
                   </p>
                 )}
               </div>
               <div>
-                <Label htmlFor='editAmountPaid' className='text-xs'>
+                <Label htmlFor='editamount_paid' className='text-xs'>
                   Jumlah Dibayar* ({selectedBranch?.currency || 'Rp'})
                 </Label>
                 <Input
-                  id='editAmountPaid'
+                  id='editamount_paid'
                   type='number'
-                  {...editPaymentToSupplierForm.register('amountPaid')}
+                  {...editPaymentToSupplierForm.register('amount_paid')}
                   className='h-9 text-xs mt-1'
                 />
-                {editPaymentToSupplierForm.formState.errors.amountPaid && (
+                {editPaymentToSupplierForm.formState.errors.amount_paid && (
                   <p className='text-xs text-destructive mt-1'>
                     {
-                      editPaymentToSupplierForm.formState.errors.amountPaid
+                      editPaymentToSupplierForm.formState.errors.amount_paid
                         .message
                     }
                   </p>
                 )}
               </div>
               <div>
-                <Label htmlFor='editPaymentMethod' className='text-xs'>
+                <Label htmlFor='editpayment_method' className='text-xs'>
                   Metode Pembayaran*
                 </Label>
                 <Controller
-                  name='paymentMethod'
+                  name='payment_method'
                   control={editPaymentToSupplierForm.control}
                   render={({ field }) => (
                     <Select onValueChange={field.onChange} value={field.value}>
@@ -1581,10 +1588,10 @@ export default function PurchaseOrderDetailPage() {
                     </Select>
                   )}
                 />
-                {editPaymentToSupplierForm.formState.errors.paymentMethod && (
+                {editPaymentToSupplierForm.formState.errors.payment_method && (
                   <p className='text-xs text-destructive mt-1'>
                     {
-                      editPaymentToSupplierForm.formState.errors.paymentMethod
+                      editPaymentToSupplierForm.formState.errors.payment_method
                         .message
                     }
                   </p>

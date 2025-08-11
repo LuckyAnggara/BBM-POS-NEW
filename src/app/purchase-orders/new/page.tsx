@@ -65,29 +65,22 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
 // Tipe dan Fungsi Appwrite
-import type {
-  Supplier,
-  Product,
-  PurchaseOrderInput,
-  PurchaseOrderPaymentTerms,
-} from '@/lib/types'
+import type { Supplier, Product, PurchaseOrderInput } from '@/lib/types'
 import { listSuppliers } from '@/lib/laravel/suppliers'
 import { listProducts } from '@/lib/laravel/product' // Asumsi fungsi ini mengembalikan { documents, total }
 import { createPurchaseOrder } from '@/lib/laravel/purchaseOrderService'
 import { useDebounce } from '@uidotdev/usehooks'
 import { formatCurrency } from '@/lib/helper'
-import { se } from 'date-fns/locale'
 
 // --- Skema Validasi (Zod) ---
 // Skema untuk satu item dalam form, ini adalah data mentah dari UI
 const formItemSchema = z.object({
   product_id: z.string().min(1, 'Produk harus dipilih.'),
-  productName: z.string(), // Nama produk untuk display sementara
+  product_name: z.string(), // Nama produk untuk display sementara
   quantity: z.coerce.number().positive('Jumlah harus lebih dari 0.'),
   cost: z.coerce.number().min(0, 'Harga beli tidak boleh negatif.'),
 })
@@ -97,32 +90,34 @@ const purchaseOrderFormSchema = z
   .object({
     supplier_id: z.string().min(1, 'Pemasok harus dipilih.'),
     order_date: z.date({ required_error: 'Tanggal pemesanan harus diisi.' }),
-    expectedDeliveryDate: z.date().optional(),
+    expected_delivery_date: z.date().optional(),
     items: z
       .array(formItemSchema)
       .min(1, 'Minimal satu item harus ditambahkan.'),
     notes: z.string().optional(),
-    paymentTermsOnPO: z
+    payment_terms: z
       .enum(['cash', 'credit'], {
         required_error: 'Termin pembayaran harus dipilih.',
       })
       .default('cash'),
-    supplierInvoiceNumber: z.string().optional(),
-    paymentDueDateOnPO: z.date().optional(),
-    taxDiscountAmount: z.coerce.number().default(0),
-    shippingCostCharged: z.coerce.number().default(0),
-    otherCosts: z.coerce.number().default(0),
+    supplier_invoice_number: z.string().optional(),
+    payment_due_date: z.date().optional(),
+    tax_discount_amount: z.coerce.number().default(0), // actually used as discount amount
+    shipping_cost_charged: z.coerce.number().default(0),
+    tax_amount: z.coerce.number().default(0),
+    tax_type: z.enum(['amount', 'percent']).default('amount'),
+    other_costs: z.coerce.number().default(0),
   })
   .refine(
     (data) => {
-      if (data.paymentTermsOnPO === 'credit' && !data.paymentDueDateOnPO) {
+      if (data.payment_terms === 'credit' && !data.payment_due_date) {
         return false // Gagal validasi jika kredit tapi tidak ada tanggal jatuh tempo
       }
       return true
     },
     {
       message: 'Tanggal jatuh tempo harus diisi untuk termin kredit.',
-      path: ['paymentDueDateOnPO'], // Tunjukkan error pada field ini
+      path: ['payment_due_date'], // Tunjukkan error pada field ini
     }
   )
 
@@ -141,6 +136,10 @@ export default function NewPurchaseOrderPage() {
   const [loadingSuppliers, setLoadingSuppliers] = useState(true)
   const [loadingInventory, setLoadingInventory] = useState(true)
 
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(
+    null
+  )
+
   const [searchTerm, setSearchTerm] = useState('')
   const [searchSupplierTerm, setSearchSupplierTerm] = useState('')
   const [openProductPopovers, setOpenProductPopovers] = useState<
@@ -157,15 +156,17 @@ export default function NewPurchaseOrderPage() {
       items: [
         {
           product_id: '',
-          productName: '',
+          product_name: '',
           quantity: 1,
           cost: 0,
         },
       ],
-      paymentTermsOnPO: 'cash',
-      taxDiscountAmount: 0,
-      shippingCostCharged: 0,
-      otherCosts: 0,
+      payment_terms: 'cash',
+      tax_discount_amount: 0,
+      shipping_cost_charged: 0,
+      tax_amount: 0,
+      tax_type: 'amount',
+      other_costs: 0,
     },
   })
 
@@ -178,11 +179,11 @@ export default function NewPurchaseOrderPage() {
     if (!selectedBranch) return
     setLoading(true)
     setLoadingSuppliers(true)
-
+    setLoadingInventory(true)
     try {
       const [suppliersResult, inventoryResult] = await Promise.all([
-        listSuppliers({ branch_id: selectedBranch.id, limit: 5 }),
-        listProducts({ branch_id: selectedBranch.id, limit: 5 }), // Ambil semua item untuk pencarian
+        listSuppliers({ branchId: selectedBranch.id, limit: 5 }),
+        listProducts({ branchId: selectedBranch.id, limit: 5 }), // Ambil semua item untuk pencarian
       ])
       setSuppliers(suppliersResult.data || [])
       setInventoryItems(inventoryResult.data || [])
@@ -206,7 +207,7 @@ export default function NewPurchaseOrderPage() {
       }
       setLoadingSuppliers(true)
       const result = await listSuppliers({
-        branch_id: selectedBranch.id,
+        branchId: selectedBranch.id,
         limit: 5,
         searchTerm: debouncedSupplierSearchTerm,
       })
@@ -223,7 +224,7 @@ export default function NewPurchaseOrderPage() {
       try {
         const [inventoryResult] = await Promise.all([
           listProducts({
-            branch_id: selectedBranch.id,
+            branchId: selectedBranch.id,
             limit: 5,
             searchTerm: currentSearchTerm,
           }), // Ambil semua item untuk pencarian
@@ -241,9 +242,12 @@ export default function NewPurchaseOrderPage() {
   }, [fetchInitialData])
 
   useEffect(() => {
-    fetchInventoryData(debouncedSearchTerm)
     fetchSuppliers(debouncedSupplierSearchTerm)
-  }, [debouncedSearchTerm, debouncedSupplierSearchTerm])
+  }, [debouncedSupplierSearchTerm])
+
+  useEffect(() => {
+    fetchInventoryData(debouncedSearchTerm)
+  }, [debouncedSearchTerm])
 
   const onSubmitPurchaseOrder: SubmitHandler<PurchaseOrderFormValues> = async (
     values
@@ -252,26 +256,35 @@ export default function NewPurchaseOrderPage() {
       toast.error('Cabang atau pengguna tidak valid.')
       return
     }
-
-    const selectedSupplier = suppliers.find((s) => s.id === values.supplier_id)
-    if (!selectedSupplier) {
-      toast.error('Pemasok Tidak Valid')
-      return
-    }
-
     // Transformasi data form menjadi struktur yang dibutuhkan oleh `createPurchaseOrder`
     const poInputData: PurchaseOrderInput = {
       branch_id: selectedBranch.id,
+      is_credit: values.payment_terms === 'credit',
       supplier_id: Number(values.supplier_id),
       order_date: values.order_date.toISOString(),
-      expected_delivery_date: values.expectedDeliveryDate?.toISOString(),
-      notes: values.notes,
-      payment_terms_on_po: values.paymentTermsOnPO,
-      supplier_invoice_number: values.supplierInvoiceNumber,
-      payment_due_date_on_po: values.paymentDueDateOnPO?.toISOString(),
-      tax_discount_amount: values.taxDiscountAmount,
-      shipping_cost_charged: values.shippingCostCharged,
-      other_costs: values.otherCosts,
+      expected_delivery_date:
+        values.expected_delivery_date?.toISOString() ?? null,
+      notes: values.notes ?? '',
+      payment_terms: values.payment_terms,
+      supplier_invoice_number: values.supplier_invoice_number ?? '',
+      payment_due_date: values.payment_due_date?.toISOString() ?? '',
+      tax_discount_amount: values.tax_discount_amount, // discount amount
+      shipping_cost_charged: values.shipping_cost_charged,
+      tax_amount:
+        (values.tax_type || 'amount') === 'percent'
+          ? Math.max(
+              0,
+              ((values.items.reduce(
+                (acc, item) =>
+                  acc + Number(item.quantity || 0) * Number(item.cost || 0),
+                0
+              ) -
+                Number(values.tax_discount_amount || 0)) *
+                Number(values.tax_amount || 0)) /
+                100
+            )
+          : Number(values.tax_amount || 0),
+      other_costs: values.other_costs,
       // Map item dari form ke struktur yang benar
       items: values.items.map((item) => ({
         product_id: item.product_id,
@@ -279,20 +292,20 @@ export default function NewPurchaseOrderPage() {
         cost: item.cost,
       })),
       status: 'draft', // or another default status as required by your app
-      supplierName: selectedSupplier.name,
+      supplier_name: selectedSupplier?.name ?? '',
     }
+    try {
+      setLoading(true)
+      const result = await createPurchaseOrder(poInputData)
 
-    setLoading(true)
-    const result = await createPurchaseOrder(poInputData, selectedSupplier.name)
-    setLoading(false)
-
-    if (result && 'error' in result) {
-      toast.error(`Gagal Membuat Pesanan: ${result.error}`)
-    } else if (result) {
       toast.success(
         `Pesanan Pembelian Dibuat! PO ${result.po_number} berhasil disimpan.`
       )
       router.push('/purchase-orders')
+    } catch (error: any) {
+      toast.error(`Gagal Membuat Pesanan: ${error.message}`)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -308,14 +321,24 @@ export default function NewPurchaseOrderPage() {
     return acc + quantity * price
   }, 0)
 
-  const taxDiscountAmount = Number(poForm.watch('taxDiscountAmount')) || 0
-  const shippingCostCharged = Number(poForm.watch('shippingCostCharged')) || 0
-  const otherCosts = Number(poForm.watch('otherCosts')) || 0
+  // Discount (was tax_discount_amount)
+  const tax_discount_amount = Number(poForm.watch('tax_discount_amount')) || 0
+  const shipping_cost_charged =
+    Number(poForm.watch('shipping_cost_charged')) || 0
+  const tax_amount_input = Number(poForm.watch('tax_amount')) || 0
+  const tax_type = poForm.watch('tax_type') || 'amount'
+  const other_costs = Number(poForm.watch('other_costs')) || 0
+  // Taxable base is (items subtotal minus discount)
+  const taxableBase = Math.max(0, itemsSubtotal - Number(tax_discount_amount))
+  const computedTax =
+    tax_type === 'percent'
+      ? (taxableBase * tax_amount_input) / 100
+      : tax_amount_input
   const totalAmount =
-    itemsSubtotal -
-    Number(taxDiscountAmount) +
-    Number(shippingCostCharged) +
-    Number(otherCosts)
+    taxableBase +
+    Number(shipping_cost_charged) +
+    Number(computedTax) +
+    Number(other_costs)
   const currencySymbol = selectedBranch?.currency || 'Rp'
 
   if (!selectedBranch) {
@@ -379,7 +402,7 @@ export default function NewPurchaseOrderPage() {
                             {suppliers.map((s) => (
                               <SelectItem
                                 key={s.id}
-                                value={s.id}
+                                value={String(s.id)}
                                 className='text-xs'
                               >
                                 {s.name}
@@ -434,11 +457,11 @@ export default function NewPurchaseOrderPage() {
                     )}
                   </div>
                   <div>
-                    <Label htmlFor='expectedDeliveryDate' className='text-xs'>
+                    <Label htmlFor='expected_delivery_date' className='text-xs'>
                       Estimasi Tgl Terima
                     </Label>
                     <Controller
-                      name='expectedDeliveryDate'
+                      name='expected_delivery_date'
                       control={poForm.control}
                       render={({ field }) => (
                         <Popover>
@@ -475,11 +498,11 @@ export default function NewPurchaseOrderPage() {
 
                 <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
                   <div>
-                    <Label htmlFor='paymentTermsOnPO' className='text-xs'>
+                    <Label htmlFor='payment_terms' className='text-xs'>
                       Termin Pembayaran*
                     </Label>
                     <Controller
-                      name='paymentTermsOnPO'
+                      name='payment_terms'
                       control={poForm.control}
                       render={({ field }) => (
                         <Select
@@ -500,34 +523,34 @@ export default function NewPurchaseOrderPage() {
                         </Select>
                       )}
                     />
-                    {poForm.formState.errors.paymentTermsOnPO && (
+                    {poForm.formState.errors.payment_terms && (
                       <p className='text-xs text-destructive mt-1'>
-                        {poForm.formState.errors.paymentTermsOnPO.message}
+                        {poForm.formState.errors.payment_terms.message}
                       </p>
                     )}
                   </div>
-                  {poForm.watch('paymentTermsOnPO') === 'credit' && (
+                  {poForm.watch('payment_terms') === 'credit' && (
                     <>
                       <div>
                         <Label
-                          htmlFor='supplierInvoiceNumber'
+                          htmlFor='supplier_invoice_number'
                           className='text-xs'
                         >
                           No. Invoice Pemasok
                         </Label>
                         <Input
-                          id='supplierInvoiceNumber'
-                          {...poForm.register('supplierInvoiceNumber')}
+                          id='supplier_invoice_number'
+                          {...poForm.register('supplier_invoice_number')}
                           className='h-9 text-xs mt-1'
                           placeholder='Opsional'
                         />
                       </div>
                       <div>
-                        <Label htmlFor='paymentDueDateOnPO' className='text-xs'>
+                        <Label htmlFor='payment_due_date' className='text-xs'>
                           Tgl Jatuh Tempo Bayar*
                         </Label>
                         <Controller
-                          name='paymentDueDateOnPO'
+                          name='payment_due_date'
                           control={poForm.control}
                           render={({ field }) => (
                             <Popover>
@@ -559,9 +582,9 @@ export default function NewPurchaseOrderPage() {
                             </Popover>
                           )}
                         />
-                        {poForm.formState.errors.paymentDueDateOnPO && (
+                        {poForm.formState.errors.payment_due_date && (
                           <p className='text-xs text-destructive mt-1'>
-                            {poForm.formState.errors.paymentDueDateOnPO.message}
+                            {poForm.formState.errors.payment_due_date.message}
                           </p>
                         )}
                       </div>
@@ -575,53 +598,109 @@ export default function NewPurchaseOrderPage() {
                 </p>
                 <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
                   <div>
-                    <Label htmlFor='shippingCostCharged' className='text-xs'>
+                    <Label htmlFor='shipping_cost_charged' className='text-xs'>
                       Ongkos Kirim Dibebankan ({currencySymbol})
                     </Label>
                     <Input
-                      id='shippingCostCharged'
+                      id='shipping_cost_charged'
                       type='number'
-                      {...poForm.register('shippingCostCharged')}
+                      {...poForm.register('shipping_cost_charged')}
                       className='h-9 text-xs mt-1'
                       placeholder='0'
                     />
-                    {poForm.formState.errors.shippingCostCharged && (
+                    {poForm.formState.errors.shipping_cost_charged && (
                       <p className='text-xs text-destructive mt-1'>
-                        {poForm.formState.errors.shippingCostCharged.message}
+                        {poForm.formState.errors.shipping_cost_charged.message}
                       </p>
                     )}
                   </div>
                   <div>
-                    <Label htmlFor='taxDiscountAmount' className='text-xs'>
-                      Diskon Pajak ({currencySymbol})
+                    <Label htmlFor='tax_discount_amount' className='text-xs'>
+                      Diskon ({currencySymbol})
                     </Label>
                     <Input
-                      id='taxDiscountAmount'
+                      id='tax_discount_amount'
                       type='number'
-                      {...poForm.register('taxDiscountAmount')}
+                      {...poForm.register('tax_discount_amount')}
                       className='h-9 text-xs mt-1'
                       placeholder='0'
                     />
-                    {poForm.formState.errors.taxDiscountAmount && (
+                    {poForm.formState.errors.tax_discount_amount && (
                       <p className='text-xs text-destructive mt-1'>
-                        {poForm.formState.errors.taxDiscountAmount.message}
+                        {poForm.formState.errors.tax_discount_amount.message}
                       </p>
                     )}
                   </div>
                   <div>
-                    <Label htmlFor='otherCosts' className='text-xs'>
+                    <Label htmlFor='tax_amount' className='text-xs'>
+                      Pajak{' '}
+                      {tax_type === 'percent' ? '(%)' : `(${currencySymbol})`}
+                    </Label>
+                    <div className='flex gap-2 mt-1'>
+                      <div className='flex-1'>
+                        <Input
+                          id='tax_amount'
+                          type='number'
+                          step={tax_type === 'percent' ? '0.01' : '1'}
+                          {...poForm.register('tax_amount')}
+                          className='h-9 text-xs'
+                          placeholder={
+                            tax_type === 'percent'
+                              ? '0 (mis. 11 untuk 11%)'
+                              : '0'
+                          }
+                        />
+                      </div>
+                      <div className='w-32'>
+                        <Controller
+                          name='tax_type'
+                          control={poForm.control}
+                          render={({ field }) => (
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value}
+                            >
+                              <SelectTrigger className='h-9 text-xs'>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value='amount' className='text-xs'>
+                                  Nominal
+                                </SelectItem>
+                                <SelectItem value='percent' className='text-xs'>
+                                  Persentase
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
+                        />
+                      </div>
+                    </div>
+                    {tax_type === 'percent' && (
+                      <p className='text-[11px] text-muted-foreground mt-1'>
+                        Nilai pajak dihitung dari subtotal setelah diskon.
+                      </p>
+                    )}
+                    {poForm.formState.errors.tax_amount && (
+                      <p className='text-xs text-destructive mt-1'>
+                        {poForm.formState.errors.tax_amount.message}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <Label htmlFor='other_costs' className='text-xs'>
                       Biaya Lainnya ({currencySymbol})
                     </Label>
                     <Input
-                      id='otherCosts'
+                      id='other_costs'
                       type='number'
-                      {...poForm.register('otherCosts')}
+                      {...poForm.register('other_costs')}
                       className='h-9 text-xs mt-1'
                       placeholder='0'
                     />
-                    {poForm.formState.errors.otherCosts && (
+                    {poForm.formState.errors.other_costs && (
                       <p className='text-xs text-destructive mt-1'>
-                        {poForm.formState.errors.otherCosts.message}
+                        {poForm.formState.errors.other_costs.message}
                       </p>
                     )}
                   </div>
@@ -654,7 +733,7 @@ export default function NewPurchaseOrderPage() {
                     onClick={() =>
                       append({
                         product_id: '',
-                        productName: '',
+                        product_name: '',
                         quantity: 1,
                         cost: 0,
                       })
@@ -683,12 +762,12 @@ export default function NewPurchaseOrderPage() {
                     `items.${index}.product_id`
                   )
                   const currentSelectedProduct = inventoryItems.find(
-                    (p) => p.id === selectedProductValue
+                    (p) => String(p.id) === String(selectedProductValue)
                   )
                   return (
                     <div
                       key={field.id}
-                      className='grid grid-cols-12 gap-2 items-start p-2.5 border rounded-md bg-muted/30'
+                      className='grid grid-cols-12 gap-3 items-start p-2.5 border rounded-md bg-muted/30'
                     >
                       <div className='col-span-12 sm:col-span-4'>
                         <Label
@@ -754,22 +833,24 @@ export default function NewPurchaseOrderPage() {
                                       {filteredProducts.map((product) => (
                                         <CommandItem
                                           key={product.id}
-                                          value={product.id}
+                                          value={String(product.id)}
                                           onSelect={(currentValue) => {
                                             controllerField.onChange(
                                               currentValue
                                             )
                                             const selectedProd =
                                               inventoryItems.find(
-                                                (p) => p.id === currentValue
+                                                (p) =>
+                                                  String(p.id) ===
+                                                  String(currentValue)
                                               )
                                             poForm.setValue(
-                                              `items.${index}.productName`,
+                                              `items.${index}.product_name`,
                                               selectedProd?.name || ''
                                             )
                                             poForm.setValue(
                                               `items.${index}.cost`,
-                                              selectedProd?.costPrice || 0
+                                              selectedProd?.cost_price || 0
                                             )
                                             handleProductPopoverOpenChange(
                                               index,
@@ -781,8 +862,8 @@ export default function NewPurchaseOrderPage() {
                                           <CheckCircle
                                             className={cn(
                                               'mr-2 h-3.5 w-3.5',
-                                              controllerField.value ===
-                                                product.id
+                                              String(controllerField.value) ===
+                                                String(product.id)
                                                 ? 'opacity-100'
                                                 : 'opacity-0'
                                             )}
@@ -858,6 +939,7 @@ export default function NewPurchaseOrderPage() {
                           </p>
                         )}
                       </div>
+
                       <div className='col-span-9 sm:col-span-2'>
                         <Label className='text-xs block mb-0.5'>
                           Total Item
@@ -897,28 +979,39 @@ export default function NewPurchaseOrderPage() {
                     {formatCurrency(itemsSubtotal)}
                   </span>
                 </div>
-                {taxDiscountAmount > 0 && (
+                {tax_discount_amount > 0 && (
                   <div className='text-xs text-green-600'>
-                    (-) Diskon Pajak:{' '}
+                    (-) Diskon:{' '}
                     <span className='font-semibold'>
                       {currencySymbol}
-                      {formatCurrency(taxDiscountAmount)}
+                      {formatCurrency(tax_discount_amount)}
                     </span>
                   </div>
                 )}
-                {shippingCostCharged > 0 && (
+                {shipping_cost_charged > 0 && (
                   <div className='text-xs text-destructive'>
                     (+) Ongkos Kirim:{' '}
                     <span className='font-semibold'>
-                      {formatCurrency(shippingCostCharged)}
+                      {formatCurrency(shipping_cost_charged)}
                     </span>
                   </div>
                 )}
-                {otherCosts > 0 && (
+                {computedTax > 0 && (
+                  <div className='text-xs text-destructive'>
+                    (+) Pajak
+                    {tax_type === 'percent'
+                      ? ` (${tax_amount_input}%)`
+                      : ''}:{' '}
+                    <span className='font-semibold'>
+                      {formatCurrency(computedTax)}
+                    </span>
+                  </div>
+                )}
+                {other_costs > 0 && (
                   <div className='text-xs text-destructive'>
                     (+) Biaya Lainnya:{' '}
                     <span className='font-semibold'>
-                      {formatCurrency(otherCosts)}
+                      {formatCurrency(other_costs)}
                     </span>
                   </div>
                 )}

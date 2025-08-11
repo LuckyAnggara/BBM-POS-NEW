@@ -223,20 +223,29 @@ export interface PurchaseOrder {
   status: PurchaseOrderStatus // 'pending', 'completed', 'canceled'
   payment_status: PaymentStatus
   payment_due_date: string | null
+  expected_delivery_date: string | null
+  payment_terms: PurchaseOrderPaymentTerms
   subtotal: number
   total_amount: number
   outstanding_amount: number
   order_date: string
+  other_costs: number
+  notes: string | null
   is_credit: boolean
   supplier_id: number
   supplier_name: string
   supplier_invoice_number: string | null
+  tax_discount_amount: number
+  tax_amount: number
+  shipping_cost_charged: number
   branch_id: number
-  user_id: number | null
+  user_id: number
+  payments: SupplierPayment[]
   created_at: string
   updated_at: string
   purchase_order_details?: PurchaseOrderDetail[] // Relasi
   supplier?: Supplier // Relasi
+  user?: User
 }
 
 export interface PurchaseOrderDetail {
@@ -245,6 +254,7 @@ export interface PurchaseOrderDetail {
   product_id: number
   product_name: string
   ordered_quantity: number
+  received_quantity: number
   purchase_price: number
   total_price: number
   created_at: string
@@ -298,6 +308,7 @@ export interface SupplierPayment {
   supplier_id: number
   payment_date: string
   amount_paid: number
+  notes: string | null
   payment_method: PaymentMethod
   recorded_by_user_id: number
   created_at: string
@@ -382,17 +393,53 @@ export interface SaleActionParams {
 
 // Tipe untuk membuat PO baru
 export interface PurchaseOrderItemInput {
-  product_id: number
+  product_id: string
   quantity: number
   cost: number
 }
-export interface PurchaseOrderInput {
-  supplier_id: number
-  branch_id: number
-  order_date: string // 'YYYY-MM-DD'
-  notes?: string
-  items: PurchaseOrderItemInput[]
+
+export interface ReceivedItemData {
+  purchase_order_detail_id: number
+  quantity_received: number
 }
+
+export type PurchaseOrderInput = Omit<
+  PurchaseOrder,
+  | 'id'
+  | 'po_number'
+  | 'created_at'
+  | 'user'
+  | 'updated_at'
+  | 'purchase_order_details'
+  | 'supplier'
+  | 'payment_status'
+  | 'subtotal'
+  | 'payments'
+  | 'total_amount'
+  | 'user_id'
+  | 'outstanding_amount'
+> & {
+  items: PurchaseOrderItemInput[]
+  supplier_name: string | null
+}
+
+export type SupplierPaymentInput = Omit<
+  SupplierPayment,
+  'id' | 'branch_id' | 'supplier_id' | 'created_at' | 'updated_at'
+>
+
+export type SupplierPaymentEditInput = Omit<
+  SupplierPayment,
+  'branch_id' | 'supplier_id' | 'created_at' | 'updated_at'
+>
+
+// export interface PurchaseOrderInput {
+//   supplier_id: number
+//   branch_id: number
+//   order_date: string // 'YYYY-MM-DD'
+//   notes?: string
+//   items: PurchaseOrderItemInput[]
+// }
 
 export const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
 export const ADMIN_REQUEST_SALES_STATUS = ['return', 'void', 'all']

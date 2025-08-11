@@ -1,5 +1,12 @@
 import api from '@/lib/api'
-import type { PurchaseOrder, PurchaseOrderInput } from '@/lib/types'
+import type {
+  PaymentStatus,
+  PurchaseOrder,
+  PurchaseOrderInput,
+  PurchaseOrderPaymentStatus,
+  PurchaseOrderStatus,
+  ReceivedItemData,
+} from '@/lib/types'
 
 // Tipe untuk hasil paginasi dari Laravel
 interface PaginatedPurchaseOrders {
@@ -44,7 +51,7 @@ export const listPurchaseOrders = async (
  * Mengambil detail lengkap satu PO (termasuk item-itemnya).
  */
 export const getPurchaseOrderById = async (
-  id: number
+  id: string
 ): Promise<PurchaseOrder | null> => {
   try {
     const response = await api.get(`/api/purchase-orders/${id}`)
@@ -101,6 +108,71 @@ export const cancelPurchaseOrder = async (id: number): Promise<void> => {
   } catch (error) {
     console.error(
       `Laravel API Error :: cancelPurchaseOrder (ID: ${id}) :: `,
+      error
+    )
+    throw error
+  }
+}
+
+/**
+ * [MODIFIKASI] Menerima barang dari sebuah PO (parsial atau penuh).
+ * @param {number} id - ID dari Purchase Order.
+ * @param {ReceivedItemData[]} items - Array item yang diterima.
+ * @returns {Promise<{ message: string }>} Pesan sukses dari backend.
+ */
+export const receivePurchaseOrderItems = async (
+  id: number,
+  items: ReceivedItemData[]
+): Promise<{ message: string }> => {
+  try {
+    const response = await api.post(`/api/purchase-orders/${id}/receive`, {
+      items,
+    })
+    return response.data
+  } catch (error) {
+    console.error(
+      `Laravel API Error :: receivePurchaseOrderItems (ID: ${id}) :: `,
+      error
+    )
+    throw error
+  }
+}
+
+/**
+ * [BARU] Memperbarui status sebuah Purchase Order.
+ * @param {number} id - ID dari Purchase Order.
+ * @param {'pending' | 'cancelled'} status - Status baru untuk PO.
+ * @returns {Promise<PurchaseOrder>} Objek PO yang telah diperbarui.
+ */
+export const updatePurchaseOrderStatus = async (
+  id: number,
+  status: PurchaseOrderStatus
+): Promise<PurchaseOrder> => {
+  try {
+    const response = await api.put(`/api/purchase-orders/${id}/status`, {
+      status,
+    })
+    return response.data
+  } catch (error) {
+    console.error(
+      `Laravel API Error :: updatePurchaseOrderStatus (ID: ${id}) :: `,
+      error
+    )
+    throw error
+  }
+}
+
+// [MODIFIKASI] Ganti nama fungsi 'cancel' menjadi 'delete' agar lebih sesuai dengan method HTTP
+/**
+ * Menghapus/Membatalkan Purchase Order (hanya jika statusnya 'draft').
+ */
+export const deletePurchaseOrder = async (id: number): Promise<void> => {
+  try {
+    // Controller destroy method akan menangani logika status
+    await api.delete(`/api/purchase-orders/${id}`)
+  } catch (error) {
+    console.error(
+      `Laravel API Error :: deletePurchaseOrder (ID: ${id}) :: `,
       error
     )
     throw error
