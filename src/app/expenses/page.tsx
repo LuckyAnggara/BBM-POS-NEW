@@ -55,7 +55,6 @@ import {
   Download,
   FilePenLine,
   Trash2,
-  CalendarIcon,
   DollarSign,
   Activity,
 } from 'lucide-react'
@@ -67,20 +66,26 @@ import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EXPENSE_CATEGORIES } from '@/lib/appwrite/expenses'
 import {
-  addExpense,
-  getExpenses,
+  listExpenses,
+  createExpense,
   updateExpense,
   deleteExpense,
-  type Expense,
-  type ExpenseInput,
-  EXPENSE_CATEGORIES,
-} from '@/lib/appwrite/expenses'
+} from '@/lib/laravel/expenseService'
+import type { Expense } from '@/lib/types'
 import { format, parseISO, startOfMonth, endOfMonth } from 'date-fns'
-import { cn } from '@/lib/utils'
+import { cn, formatCurrency } from '@/lib/utils'
+import { useDebounce } from '@uidotdev/usehooks'
+import { ITEMS_PER_PAGE_OPTIONS } from '@/lib/types'
+
+// Local date formatter for created_at
+const formatDateIntl = (dateInput: string | Date) => {
+  const date = typeof dateInput === 'string' ? new Date(dateInput) : dateInput
+  return format(date, 'dd MMM yyyy')
+}
 
 const expenseFormSchema = z.object({
-  date: z.date({ required_error: 'Tanggal harus diisi.' }),
   category: z.string().min(1, { message: 'Kategori harus dipilih.' }),
   amount: z.coerce.number().positive({ message: 'Jumlah harus lebih dari 0.' }),
   description: z
@@ -92,7 +97,7 @@ const expenseFormSchema = z.object({
 type ExpenseFormValues = z.infer<typeof expenseFormSchema>
 
 export default function ExpensesPage() {
-  const { userData, currentUser } = useAuth()
+  const { currentUser } = useAuth()
 
   const { selectedBranch } = useBranches()
 
@@ -101,10 +106,24 @@ export default function ExpensesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
   const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null)
-  const [expenseSummary, setExpenseSummary] = useState<{
-    [key: string]: number
-  }>({})
-  const [totalExpenses, setTotalExpenses] = useState(0)
+  // Compute dynamic summary and total from filtered expenses
+  const expenseSummary = expenses.reduce<Record<string, number>>((acc, e) => {
+    const amt = Number((e as any).amount ?? 0)
+    acc[e.category] = (acc[e.category] || 0) + (isNaN(amt) ? 0 : amt)
+    return acc
+  }, {})
+  const totalExpenses = Object.values(expenseSummary).reduce(
+    (sum, v) => sum + v,
+    0
+  )
+  const [searchTerm, setSearchTerm] = useState('')
+  const debouncedSearchTerm = useDebounce(searchTerm, 800)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(
+    ITEMS_PER_PAGE_OPTIONS[0]
+  )
+  const [totalItems, setTotalItems] = useState(0)
+  const totalPages = Math.ceil(totalItems / itemsPerPage)
 
   // Filter states
   const [isFilterOpen, setIsFilterOpen] = useState(false)
@@ -124,7 +143,6 @@ export default function ExpensesPage() {
   const expenseForm = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseFormSchema),
     defaultValues: {
-      date: new Date(),
       category: '',
       amount: 0,
       description: '',
@@ -135,53 +153,61 @@ export default function ExpensesPage() {
     if (!selectedBranch) {
       setExpenses([])
       setLoadingExpenses(false)
+      setTotalItems(0)
       return
     }
     setLoadingExpenses(true)
-    const fetchedExpenses = await getExpenses(selectedBranch.id, {
-      categories: selectedCategories,
-      startDate: dateRange?.from ?? new Date('1900-01-01'),
-      endDate: dateRange?.to ?? new Date(),
-    })
-    setExpenses(fetchedExpenses)
-    setLoadingExpenses(false)
-  }, [selectedBranch, selectedCategories, dateRange])
+    try {
+      const res = await listExpenses({
+        branchId: selectedBranch.id,
+        page: currentPage,
+        limit: itemsPerPage,
+        categories: selectedCategories,
+        search: debouncedSearchTerm || undefined,
+        startDate: format(
+          dateRange?.from || startOfMonth(new Date()),
+          'yyyy-MM-dd'
+        ),
+        endDate: format(dateRange?.to || endOfMonth(new Date()), 'yyyy-MM-dd'),
+      })
+      setExpenses(res.data)
+      setTotalItems(res.total || res.data.length)
+    } catch (e) {
+      toast.error('Gagal memuat pengeluaran')
+    } finally {
+      setLoadingExpenses(false)
+    }
+  }, [
+    selectedBranch,
+    currentPage,
+    itemsPerPage,
+    dateRange,
+    debouncedSearchTerm,
+    selectedCategories,
+  ])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [selectedBranch])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [debouncedSearchTerm, selectedCategories, dateRange])
 
   useEffect(() => {
     fetchExpenses()
   }, [fetchExpenses])
 
-  useEffect(() => {
-    const summary: { [key: string]: number } = {}
-    let total = 0
-
-    expenses.forEach((expense) => {
-      // Add to category summary
-      if (summary[expense.category]) {
-        summary[expense.category] += expense.amount
-      } else {
-        summary[expense.category] = expense.amount
-      }
-      // Add to total
-      total += expense.amount
-    })
-
-    setExpenseSummary(summary)
-    setTotalExpenses(total)
-  }, [expenses])
-
   const handleOpenDialog = (expense: Expense | null = null) => {
     setEditingExpense(expense)
     if (expense) {
       expenseForm.reset({
-        date: parseISO(expense.date as any),
         category: expense.category,
         amount: expense.amount,
-        description: expense.description,
+        description: expense.description || '',
       })
     } else {
       expenseForm.reset({
-        date: new Date(),
         category: '',
         amount: 0,
         description: '',
@@ -198,45 +224,54 @@ export default function ExpensesPage() {
       return
     }
 
-    const expenseData: ExpenseInput = {
-      branchId: selectedBranch.id,
-      date: values.date,
+    const payload = {
+      branch_id: selectedBranch.id,
       category: values.category,
       amount: values.amount,
       description: values.description,
-      userId: currentUser.$id,
     }
 
-    let result
-    if (editingExpense) {
-      result = await updateExpense(editingExpense.id, expenseData)
-    } else {
-      result = await addExpense(expenseData)
-    }
-
-    if (result && 'error' in result) {
-      toast.error(editingExpense ? 'Gagal Memperbarui' : 'Gagal Menambah', {
-        description: result.error,
-      })
-    } else {
-      toast(
-        editingExpense ? 'Pengeluaran Diperbarui' : 'Pengeluaran Ditambahkan'
-      )
+    try {
+      if (editingExpense) {
+        await updateExpense(editingExpense.id as any, payload as any)
+        toast.success('Pengeluaran Diperbarui')
+      } else {
+        await createExpense(payload as any)
+        toast.success('Pengeluaran Ditambahkan')
+      }
       setIsDialogOpen(false)
       await fetchExpenses()
+    } catch (error: any) {
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+      toast.error(editingExpense ? 'Gagal Memperbarui' : 'Gagal Menambah', {
+        description: errorMessage,
+      })
     }
   }
 
   const handleDeleteExpense = async () => {
     if (!expenseToDelete) return
-    const result = await deleteExpense(expenseToDelete.id)
-    if (result && 'error' in result) {
-      toast('Gagal Menghapus', {
-        description: result.error,
-      })
-    } else {
-      toast('Pengeluaran Dihapus')
+    try {
+      await deleteExpense(expenseToDelete.id as any)
+      toast.success('Pengeluaran Dihapus')
       await fetchExpenses()
+    } catch (error: any) {
+      let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
+      if (error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors
+        const firstErrorKey = Object.keys(validationErrors)[0]
+        errorMessage = validationErrors[firstErrorKey][0]
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message
+      }
+      toast.error('Gagal Menghapus', { description: errorMessage })
     }
     setExpenseToDelete(null)
   }
@@ -262,17 +297,6 @@ export default function ExpensesPage() {
     setIsFilterOpen(false)
   }
 
-  const formatDateIntl = (dateInput: string | Date) => {
-    const date = typeof dateInput === 'string' ? parseISO(dateInput) : dateInput
-    return format(date, 'dd MMM yyyy')
-  }
-
-  const formatCurrency = (amount: number) => {
-    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString(
-      'id-ID'
-    )}`
-  }
-
   const activeFilterCount =
     (selectedCategories.length > 0 ? 1 : 0) +
     (dateRange?.from || dateRange?.to ? 1 : 0)
@@ -285,7 +309,39 @@ export default function ExpensesPage() {
             <h1 className='text-xl md:text-2xl font-semibold font-headline'>
               Pengeluaran {selectedBranch ? `- ${selectedBranch.name}` : ''}
             </h1>
-            <div className='flex gap-2 w-full sm:w-auto'>
+            <div className='flex gap-2 w-full sm:w-auto items-center'>
+              <div className='relative flex-grow sm:flex-grow-0'>
+                <Input
+                  type='search'
+                  placeholder='Cari deskripsi/kategori...'
+                  className='pl-3 w-full sm:w-56 rounded-md h-9 text-xs'
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  disabled={!selectedBranch || loadingExpenses}
+                />
+              </div>
+              <div className='hidden md:flex items-center gap-1 text-xs'>
+                <span>Per halaman:</span>
+                <Select
+                  value={String(itemsPerPage)}
+                  onValueChange={(v) => setItemsPerPage(Number(v))}
+                >
+                  <SelectTrigger className='h-8 w-[80px]'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ITEMS_PER_PAGE_OPTIONS.map((opt) => (
+                      <SelectItem
+                        key={opt}
+                        value={String(opt)}
+                        className='text-xs'
+                      >
+                        {opt}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Popover open={isFilterOpen} onOpenChange={setIsFilterOpen}>
                 <PopoverTrigger asChild>
                   <Button
@@ -332,7 +388,7 @@ export default function ExpensesPage() {
                             key={cat}
                             variant={
                               tempCategories.includes(cat)
-                                ? 'primary'
+                                ? 'default'
                                 : 'outline'
                             }
                             size='sm'
@@ -390,7 +446,7 @@ export default function ExpensesPage() {
             </div>
           </div>
 
-          {!loadingExpenses && expenses.length > 0 && (
+          {!loadingExpenses && selectedBranch && (
             <div className='grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-4'>
               <Card>
                 <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
@@ -408,7 +464,10 @@ export default function ExpensesPage() {
                   </p>
                 </CardContent>
               </Card>
-              {Object.entries(expenseSummary).map(([category, total]) => (
+              {(selectedCategories.length
+                ? selectedCategories
+                : Object.keys(expenseSummary)
+              ).map((category) => (
                 <Card key={category}>
                   <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
                     <CardTitle className='text-sm font-medium'>
@@ -418,7 +477,7 @@ export default function ExpensesPage() {
                   </CardHeader>
                   <CardContent>
                     <div className='text-2xl font-bold'>
-                      {formatCurrency(total)}
+                      {formatCurrency(expenseSummary[category] || 0)}
                     </div>
                   </CardContent>
                 </Card>
@@ -449,11 +508,11 @@ export default function ExpensesPage() {
             <div className='border rounded-lg shadow-sm overflow-hidden'>
               <Table>
                 <TableCaption className='text-xs'>
-                  Daftar pengeluaran untuk{' '}
-                  {selectedBranch?.name || 'cabang terpilih'}.
+                  Menampilkan {expenses.length} dari {totalItems}
                 </TableCaption>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className='text-xs w-12'>No</TableHead>
                     <TableHead className='text-xs'>Tanggal</TableHead>
                     <TableHead className='text-xs'>Kategori</TableHead>
                     <TableHead className='hidden sm:table-cell text-xs'>
@@ -464,10 +523,13 @@ export default function ExpensesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {expenses.map((expense) => (
+                  {expenses.map((expense, idx) => (
                     <TableRow key={expense.id}>
                       <TableCell className='py-2 text-xs'>
-                        {formatDateIntl(expense.date)}
+                        {(currentPage - 1) * itemsPerPage + idx + 1}
+                      </TableCell>
+                      <TableCell className='py-2 text-xs'>
+                        {formatDateIntl(expense.created_at)}
                       </TableCell>
                       <TableCell className='py-2 text-xs'>
                         {expense.category}
@@ -534,6 +596,30 @@ export default function ExpensesPage() {
               </Table>
             </div>
           )}
+          {/* Pagination controls */}
+          <div className='flex justify-between items-center pt-2'>
+            <Button
+              variant='outline'
+              size='sm'
+              className='text-xs h-8'
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage <= 1 || loadingExpenses}
+            >
+              Sebelumnya
+            </Button>
+            <span className='text-xs text-muted-foreground'>
+              Halaman {currentPage} dari {Math.max(1, totalPages)}
+            </span>
+            <Button
+              variant='outline'
+              size='sm'
+              className='text-xs h-8'
+              onClick={() => setCurrentPage((p) => p + 1)}
+              disabled={currentPage >= totalPages || loadingExpenses}
+            >
+              Berikutnya
+            </Button>
+          </div>
         </div>
 
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -549,48 +635,6 @@ export default function ExpensesPage() {
               onSubmit={expenseForm.handleSubmit(onSubmitExpense)}
               className='space-y-3 p-2 max-h-[70vh] overflow-y-auto pr-2'
             >
-              <div>
-                <Label htmlFor='date' className='text-xs'>
-                  Tanggal
-                </Label>
-                <Controller
-                  name='date'
-                  control={expenseForm.control}
-                  render={({ field }) => (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant={'outline'}
-                          className='w-full justify-start text-left font-normal h-9 text-xs mt-1'
-                        >
-                          <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
-                          {field.value ? (
-                            format(field.value, 'dd MMM yyyy')
-                          ) : (
-                            <span>Pilih tanggal</span>
-                          )}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className='w-auto p-0' align='start'>
-                        <Calendar
-                          mode='single'
-                          selected={field.value}
-                          onSelect={field.onChange}
-                          initialFocus
-                          disabled={(date) =>
-                            date > new Date() || date < new Date('1900-01-01')
-                          }
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  )}
-                />
-                {expenseForm.formState.errors.date && (
-                  <p className='text-xs text-destructive mt-1'>
-                    {expenseForm.formState.errors.date.message}
-                  </p>
-                )}
-              </div>
               <div>
                 <Label htmlFor='category' className='text-xs'>
                   Kategori

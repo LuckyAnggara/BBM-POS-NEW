@@ -88,6 +88,7 @@ import {
   useFieldArray,
   Controller,
   type SubmitHandler,
+  type FieldErrors,
 } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -107,13 +108,14 @@ import {
 } from '@/components/ui/select'
 import { formatCurrency } from '@/lib/helper'
 
+// Receive Items Schemas (fixed)
 const receiveItemSchema = z.object({
-  purchaseOrderItemId: z.number(),
-  product_id: z.number(),
-  product_name: z.string(),
-  ordered_quantity: z.number(),
-  already_received_quantity: z.number(),
-  purchase_price: z.number(),
+  purchaseOrderItemId: z.coerce.number(),
+  product_id: z.coerce.number().optional(),
+  product_name: z.string().optional(),
+  ordered_quantity: z.coerce.number().optional(),
+  already_received_quantity: z.coerce.number().optional(),
+  purchase_price: z.coerce.number().optional(),
   quantity_received_now: z.coerce
     .number()
     .min(0, 'Jumlah tidak boleh negatif.')
@@ -121,24 +123,9 @@ const receiveItemSchema = z.object({
 })
 
 const receiveFormSchema = z.object({
-  itemsToReceive: z
-    .array(receiveItemSchema)
-    .refine((items) => items.some((item) => item.quantity_received_now > 0), {
-      message: 'Minimal satu item harus memiliki jumlah diterima lebih dari 0.',
-    })
-    .refine(
-      (items) =>
-        items.every(
-          (item) =>
-            item.quantity_received_now <=
-            item.ordered_quantity - item.already_received_quantity
-        ),
-      {
-        message:
-          'Jumlah diterima tidak boleh melebihi sisa yang belum diterima untuk satu atau lebih item.',
-      }
-    ),
+  itemsToReceive: z.array(receiveItemSchema),
 })
+
 type ReceiveFormValues = z.infer<typeof receiveFormSchema>
 const paymentToSupplierFormSchema = z.object({
   payment_date: z.date({ required_error: 'Tanggal pembayaran harus diisi.' }),
@@ -298,11 +285,62 @@ export default function PurchaseOrderDetailPage() {
     fetchPurchaseOrder()
   }, [fetchPurchaseOrder])
 
+  const onInvalidReceive = (errors: FieldErrors<ReceiveFormValues>) => {
+    // Debug: log full errors for diagnosis
+    try {
+      console.log('Receive form validation errors:', errors)
+      console.log('Errors JSON:', JSON.stringify(errors, null, 2))
+    } catch (e) {
+      // ignore
+    }
+    // Prefer array-level errors (refine messages), otherwise the first field error
+    const arrayError = errors.itemsToReceive as any
+    const arrayRootMessage = arrayError?.root?.message as string | undefined
+    const firstItemErrorMsg: string | undefined = Array.isArray(arrayError)
+      ? arrayError.find((e: any) => e?.quantity_received_now)
+          ?.quantity_received_now?.message
+      : undefined
+    const message =
+      arrayRootMessage ||
+      firstItemErrorMsg ||
+      'Periksa input penerimaan barang.'
+    toast.error('Validasi Gagal', { description: message })
+  }
+
   const onSubmitReceiveItems: SubmitHandler<ReceiveFormValues> = async (
     values
   ) => {
     console.log(values)
     if (!purchaseOrder) return
+
+    // Validate quantities against remaining using server data
+    const detailMap = new Map(
+      (purchaseOrder.purchase_order_details || []).map((d) => [d.id, d])
+    )
+    for (let i = 0; i < values.itemsToReceive.length; i++) {
+      const item = values.itemsToReceive[i]
+      if (item.quantity_received_now > 0) {
+        const detail = detailMap.get(item.purchaseOrderItemId)
+        const ordered = detail?.ordered_quantity ?? 0
+        const already = detail?.received_quantity ?? 0
+        const remaining = ordered - already
+        if (item.quantity_received_now > remaining) {
+          receiveItemsForm.setError(
+            `itemsToReceive.${i}.quantity_received_now` as any,
+            {
+              type: 'manual',
+              message: `Jumlah melebihi sisa (${remaining}).`,
+            }
+          )
+          toast.error('Validasi Gagal', {
+            description: `Jumlah diterima untuk ${
+              detail?.product_name || 'item'
+            } melebihi sisa (${remaining}).`,
+          })
+          return
+        }
+      }
+    }
 
     const itemsToProcess: ReceivedItemData[] = values.itemsToReceive
       .filter((item) => item.quantity_received_now > 0)
@@ -331,8 +369,10 @@ export default function PurchaseOrderDetailPage() {
 
       await fetchPurchaseOrder()
     } catch (error) {
+      const anyErr = error as any
+      const backendMsg = anyErr?.response?.data?.message
       toast.error('Gagal Menerima Barang', {
-        description: 'Terjadi kesalahan saat menerima barang.',
+        description: backendMsg || 'Terjadi kesalahan saat menerima barang.',
       })
     } finally {
       setIsProcessingReceipt(false)
@@ -1114,7 +1154,11 @@ export default function PurchaseOrderDetailPage() {
               </DialogModalDescription>
             </DialogHeader>
             <form
-              onSubmit={receiveItemsForm.handleSubmit(onSubmitReceiveItems)}
+              noValidate
+              onSubmit={receiveItemsForm.handleSubmit(
+                onSubmitReceiveItems,
+                onInvalidReceive
+              )}
             >
               <div className='py-3 max-h-[60vh] overflow-y-auto pr-2 space-y-3'>
                 {itemsPendingReceipt.length === 0 ? (
@@ -1124,20 +1168,29 @@ export default function PurchaseOrderDetailPage() {
                 ) : (
                   receiveFields.map((field, index) => {
                     const remainingToReceive =
-                      field.ordered_quantity - field.already_received_quantity
+                      (field.ordered_quantity ?? 0) -
+                      (field.already_received_quantity ?? 0)
                     return (
                       <div
                         key={field.id}
                         className='grid grid-cols-12 gap-x-3 gap-y-1 p-2.5 border rounded-md items-center bg-muted/30'
                       >
+                        {/* Hidden required field to satisfy schema */}
+                        <input
+                          type='hidden'
+                          {...receiveItemsForm.register(
+                            `itemsToReceive.${index}.purchaseOrderItemId`
+                          )}
+                          defaultValue={field.purchaseOrderItemId}
+                        />
                         <div className='col-span-12 sm:col-span-5'>
                           <Label className='text-xs font-medium'>
                             {field.product_name}
                           </Label>
                           <p className='text-xs text-muted-foreground'>
-                            Dipesan: {field.ordered_quantity} | Sudah Diterima:{' '}
-                            {field.already_received_quantity} | Sisa:{' '}
-                            {remainingToReceive}
+                            Dipesan: {field.ordered_quantity ?? 0} | Sudah
+                            Diterima: {field.already_received_quantity ?? 0} |
+                            Sisa: {remainingToReceive}
                           </p>
                         </div>
                         <div className='col-span-12 sm:col-span-4'>
@@ -1156,7 +1209,6 @@ export default function PurchaseOrderDetailPage() {
                             className='h-8 text-xs mt-0.5'
                             placeholder='0'
                             min='0'
-                            max={remainingToReceive}
                           />
                           {receiveItemsForm.formState.errors.itemsToReceive?.[
                             index
@@ -1173,7 +1225,7 @@ export default function PurchaseOrderDetailPage() {
                         <div className='col-span-12 sm:col-span-3'>
                           <Label className='text-xs'>Harga Beli Satuan</Label>
                           <p className='text-xs font-medium mt-0.5'>
-                            {formatCurrency(field.purchase_price)}
+                            {formatCurrency(field.purchase_price ?? 0)}
                           </p>
                         </div>
                       </div>
@@ -1422,8 +1474,11 @@ export default function PurchaseOrderDetailPage() {
                         <SelectItem value='card' className='text-xs'>
                           Kartu
                         </SelectItem>
-                        <SelectItem value='other' className='text-xs'>
-                          Lainnya
+                        <SelectItem value='qris' className='text-xs'>
+                          QRIS
+                        </SelectItem>
+                        <SelectItem value='credit' className='text-xs'>
+                          Kredit
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -1581,8 +1636,11 @@ export default function PurchaseOrderDetailPage() {
                         <SelectItem value='card' className='text-xs'>
                           Kartu
                         </SelectItem>
-                        <SelectItem value='other' className='text-xs'>
-                          Lainnya
+                        <SelectItem value='qris' className='text-xs'>
+                          QRIS
+                        </SelectItem>
+                        <SelectItem value='credit' className='text-xs'>
+                          Kredit
                         </SelectItem>
                       </SelectContent>
                     </Select>
