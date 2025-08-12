@@ -1,16 +1,13 @@
 import api from '@/lib/api'
 import type {
-  PaymentStatus,
-  PurchaseOrder,
   PurchaseOrderInput,
-  PurchaseOrderPaymentStatus,
   PurchaseOrderStatus,
   ReceivedItemData,
 } from '@/lib/types'
 
 // Tipe untuk hasil paginasi dari Laravel
-interface PaginatedPurchaseOrders {
-  data: PurchaseOrder[]
+interface PaginatedPurchaseOrders<T = any> {
+  data: T[]
   total: number
   current_page: number
   // ...
@@ -47,12 +44,152 @@ export const listPurchaseOrders = async (
   }
 }
 
+// ===================== Accounts Payable (AP) helper types + mappers =====================
+export type AP_Payment = {
+  id: number
+  paymentDate: string
+  amountPaid: number
+  paymentMethod: string
+  notes: string | null
+}
+
+export type AP_PurchaseOrder = {
+  id: number
+  poNumber: string
+  supplierName: string | null
+  supplierId: number
+  branchId: number
+  orderDate: string
+  totalAmount: number
+  outstandingPOAmount: number
+  paymentStatusOnPO: 'unpaid' | 'partially_paid' | 'paid'
+  paymentDueDateOnPO?: string | null
+  payments?: AP_Payment[]
+}
+
+const mapPurchaseOrderDtoToAP = (dto: any): AP_PurchaseOrder => {
+  return {
+    id: dto.id,
+    poNumber: dto.po_number,
+    supplierName: dto.supplier_name ?? null,
+    supplierId: dto.supplier_id,
+    branchId: dto.branch_id,
+    orderDate: dto.order_date,
+    totalAmount: Number(dto.total_amount || 0),
+    outstandingPOAmount: Number(dto.outstanding_amount || 0),
+    paymentStatusOnPO: (dto.payment_status as any) ?? 'unpaid',
+    paymentDueDateOnPO: dto.payment_due_date ?? null,
+    payments: Array.isArray(dto.payments)
+      ? dto.payments.map((p: any) => ({
+          id: p.id,
+          paymentDate: p.payment_date,
+          amountPaid: Number(p.amount_paid || 0),
+          paymentMethod: p.payment_method,
+          notes: p.notes ?? null,
+        }))
+      : undefined,
+  }
+}
+
+// List only outstanding POs by branch (has_outstanding=true)
+export const listOutstandingPurchaseOrdersByBranch = async (
+  branchId: number,
+  opts?: {
+    limit?: number
+    searchTerm?: string
+    paymentStatus?: 'unpaid' | 'partially_paid' | 'paid'
+  }
+): Promise<{
+  data: AP_PurchaseOrder[]
+  total: number
+  current_page: number
+}> => {
+  try {
+    const response = await api.get('/api/purchase-orders', {
+      params: {
+        branch_id: branchId,
+        has_outstanding: true,
+        limit: opts?.limit ?? 10,
+        search: opts?.searchTerm,
+        payment_status: opts?.paymentStatus,
+      },
+    })
+    const raw = response.data as PaginatedPurchaseOrders<any>
+    return {
+      data: (raw.data || []).map(mapPurchaseOrderDtoToAP),
+      total: raw.total,
+      current_page: raw.current_page,
+    }
+  } catch (error) {
+    console.error(
+      'Laravel API Error :: listOutstandingPurchaseOrdersByBranch :: ',
+      error
+    )
+    throw error
+  }
+}
+
+export const getPurchaseOrderDetailAP = async (
+  id: number
+): Promise<AP_PurchaseOrder | null> => {
+  try {
+    const response = await api.get(`/api/purchase-orders/${id}`)
+    return mapPurchaseOrderDtoToAP(response.data)
+  } catch (error) {
+    console.error('Laravel API Error :: getPurchaseOrderDetailAP :: ', error)
+    return null
+  }
+}
+
+// Record supplier payment for a PO
+export type RecordSupplierPaymentInput = {
+  purchase_order_id: number
+  branch_id: number
+  supplier_id: number
+  payment_date: string
+  amount_paid: number
+  payment_method: string
+  notes?: string | null
+  recorded_by_user_id?: number | string
+}
+
+export const recordSupplierPayment = async (
+  payload: RecordSupplierPaymentInput
+): Promise<any> => {
+  try {
+    const response = await api.post('/api/supplier-payments', payload)
+    return response.data
+  } catch (error) {
+    console.error('Laravel API Error :: recordSupplierPayment :: ', error)
+    throw error
+  }
+}
+
+// Update supplier payment
+export type UpdateSupplierPaymentInput = {
+  payment_date?: string
+  amount_paid?: number
+  payment_method?: string
+  notes?: string | null
+}
+
+export const updateSupplierPayment = async (
+  id: number,
+  payload: UpdateSupplierPaymentInput
+): Promise<any> => {
+  try {
+    const response = await api.put(`/api/supplier-payments/${id}`, payload)
+    return response.data
+  } catch (error) {
+    console.error('Laravel API Error :: updateSupplierPayment :: ', error)
+    throw error
+  }
+}
+
 /**
  * Mengambil detail lengkap satu PO (termasuk item-itemnya).
  */
-export const getPurchaseOrderById = async (
-  id: string
-): Promise<PurchaseOrder | null> => {
+export const getPurchaseOrderById = async (id: string): Promise<any | null> => {
   try {
     const response = await api.get(`/api/purchase-orders/${id}`)
     return response.data
@@ -70,7 +207,7 @@ export const getPurchaseOrderById = async (
  */
 export const createPurchaseOrder = async (
   poData: PurchaseOrderInput
-): Promise<PurchaseOrder> => {
+): Promise<any> => {
   try {
     const response = await api.post('/api/purchase-orders', poData)
     return response.data
@@ -147,7 +284,7 @@ export const receivePurchaseOrderItems = async (
 export const updatePurchaseOrderStatus = async (
   id: number,
   status: PurchaseOrderStatus
-): Promise<PurchaseOrder> => {
+): Promise<any> => {
   try {
     const response = await api.put(`/api/purchase-orders/${id}/status`, {
       status,

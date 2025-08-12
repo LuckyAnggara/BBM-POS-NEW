@@ -55,14 +55,14 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useToast } from '@/hooks/use-toast'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Timestamp } from 'firebase/firestore'
+import type { Sale, PaymentStatus } from '@/lib/types'
 import {
-  getOutstandingCreditSalesByBranch,
-  recordPaymentForCreditSale,
-  type PosTransaction,
-  type TransactionPayment,
-  type PaymentStatus,
-} from '@/lib/firebase/pos'
+  listReceivables,
+  createCustomerPayment,
+  updateCustomerPayment,
+  getSaleById,
+  type CreateCustomerPaymentPayload,
+} from '@/lib/laravel/saleService'
 import Link from 'next/link'
 import { format, isBefore, startOfDay } from 'date-fns'
 import { Badge } from '@/components/ui/badge'
@@ -95,17 +95,24 @@ export default function AccountsReceivablePage() {
   const { selectedBranch } = useBranches()
   const { toast } = useToast()
 
-  const [receivables, setReceivables] = useState<PosTransaction[]>([])
-  const [filteredReceivables, setFilteredReceivables] = useState<
-    PosTransaction[]
-  >([])
+  const [receivables, setReceivables] = useState<Sale[]>([])
+  const [filteredReceivables, setFilteredReceivables] = useState<Sale[]>([])
   const [loading, setLoading] = useState(true)
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
-  const [selectedTransaction, setSelectedTransaction] =
-    useState<PosTransaction | null>(null)
+  const [selectedTransaction, setSelectedTransaction] = useState<Sale | null>(
+    null
+  )
+  const [editingPaymentIdx, setEditingPaymentIdx] = useState<number | null>(
+    null
+  )
 
   const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<PaymentStatus | 'all'>('all')
+  const [statusFilter, setStatusFilter] = useState<
+    PaymentStatus | 'all' | 'overdue'
+  >('all')
+  const [startDate, setStartDate] = useState<Date | null>(null)
+  const [endDate, setEndDate] = useState<Date | null>(null)
+  const [limit, setLimit] = useState<number>(50)
 
   const paymentForm = useForm<PaymentFormValues>({
     resolver: zodResolver(paymentFormSchema),
@@ -125,12 +132,17 @@ export default function AccountsReceivablePage() {
       return
     }
     setLoading(true)
-    const fetchedReceivables = await getOutstandingCreditSalesByBranch(
-      selectedBranch.id
-    )
-    setReceivables(fetchedReceivables)
+    const res = await listReceivables({
+      branchId: selectedBranch.id,
+      limit,
+      page: 1,
+      status: 'all',
+      startDate: startDate ? format(startDate, 'yyyy-MM-dd') : undefined,
+      endDate: endDate ? format(endDate, 'yyyy-MM-dd') : undefined,
+    })
+    setReceivables(res.data)
     setLoading(false)
-  }, [selectedBranch])
+  }, [selectedBranch, startDate, endDate, limit])
 
   useEffect(() => {
     fetchReceivables()
@@ -139,36 +151,44 @@ export default function AccountsReceivablePage() {
   useEffect(() => {
     let filtered = receivables
     if (statusFilter !== 'all') {
-      filtered = filtered.filter(
-        (r) =>
-          r.paymentStatus === statusFilter ||
-          (statusFilter === 'overdue' &&
-            r.creditDueDate &&
-            isBefore(r.creditDueDate.toDate(), startOfDay(new Date())) &&
-            r.paymentStatus !== 'paid' &&
-            r.paymentStatus !== 'returned')
-      )
+      if (statusFilter === 'overdue') {
+        filtered = filtered.filter((r) => {
+          if (!r.credit_due_date) return false
+          const due = new Date(r.credit_due_date)
+          return (
+            isBefore(due, startOfDay(new Date())) &&
+            r.payment_status !== 'paid' &&
+            r.status !== 'returned'
+          )
+        })
+      } else {
+        filtered = filtered.filter((r) => r.payment_status === statusFilter)
+      }
     }
     if (searchTerm) {
       const lowerSearchTerm = searchTerm.toLowerCase()
       filtered = filtered.filter(
         (r) =>
-          r.invoiceNumber.toLowerCase().includes(lowerSearchTerm) ||
-          r.customerName?.toLowerCase().includes(lowerSearchTerm)
+          r.transaction_number.toLowerCase().includes(lowerSearchTerm) ||
+          (r.customer_name || '').toLowerCase().includes(lowerSearchTerm)
       )
     }
     setFilteredReceivables(filtered)
   }, [receivables, statusFilter, searchTerm])
 
-  const handleOpenPaymentDialog = (transaction: PosTransaction) => {
-    setSelectedTransaction(transaction)
+  const handleOpenPaymentDialog = async (transaction: Sale) => {
+    // Fetch latest sale including payments
+    const full = await getSaleById(transaction.id)
+    setSelectedTransaction(full || transaction)
     paymentForm.reset({
       paymentDate: new Date(),
-      amountPaid: transaction.outstandingAmount || 0,
+      amountPaid:
+        (full?.outstanding_amount ?? transaction.outstanding_amount) || 0,
       paymentMethod: 'cash',
       notes: '',
     })
     setIsPaymentDialogOpen(true)
+    setEditingPaymentIdx(null)
   }
 
   const onSubmitPayment: SubmitHandler<PaymentFormValues> = async (values) => {
@@ -180,7 +200,10 @@ export default function AccountsReceivablePage() {
       })
       return
     }
-    if (values.amountPaid > (selectedTransaction.outstandingAmount || 0)) {
+    if (
+      values.amountPaid >
+      ((selectedTransaction.outstanding_amount as number) || 0)
+    ) {
       toast({
         title: 'Jumlah Tidak Valid',
         description: 'Jumlah bayar melebihi sisa tagihan.',
@@ -193,44 +216,53 @@ export default function AccountsReceivablePage() {
       return
     }
 
-    const paymentDetails: Omit<TransactionPayment, 'paymentDate'> & {
-      paymentDate: Date
-      recordedByUserId: string
-    } = {
-      amountPaid: values.amountPaid,
-      paymentMethod: values.paymentMethod,
-      notes: values.notes,
-      paymentDate: values.paymentDate,
-      recordedByUserId: currentUser.uid,
-    }
-
-    const result = await recordPaymentForCreditSale(
-      selectedTransaction.id,
-      paymentDetails
-    )
-
-    if (result && 'error' in result) {
-      toast({
-        title: 'Gagal Mencatat Pembayaran',
-        description: result.error,
-        variant: 'destructive',
-      })
-    } else {
-      toast({
-        title: 'Pembayaran Dicatat',
-        description: `Pembayaran untuk invoice ${selectedTransaction.invoiceNumber} berhasil dicatat.`,
-      })
+    try {
+      if (
+        editingPaymentIdx !== null &&
+        selectedTransaction?.customer_payments
+      ) {
+        const payment = selectedTransaction.customer_payments[editingPaymentIdx]
+        await updateCustomerPayment(payment.id, {
+          payment_date: values.paymentDate.toISOString().slice(0, 10),
+          amount_paid: values.amountPaid,
+          payment_method:
+            values.paymentMethod === 'other'
+              ? 'cash'
+              : (values.paymentMethod as any),
+          notes: values.notes,
+        })
+        toast({ title: 'Pembayaran diperbarui' })
+      } else {
+        const payload: CreateCustomerPaymentPayload = {
+          sale_id: selectedTransaction.id,
+          payment_date: values.paymentDate.toISOString().slice(0, 10), // YYYY-MM-DD
+          amount_paid: values.amountPaid,
+          payment_method:
+            values.paymentMethod === 'other'
+              ? 'cash'
+              : (values.paymentMethod as any),
+          notes: values.notes,
+        }
+        await createCustomerPayment(payload)
+        toast({
+          title: 'Pembayaran Dicatat',
+          description: `Pembayaran untuk transaksi ${selectedTransaction.transaction_number} berhasil dicatat.`,
+        })
+      }
       setIsPaymentDialogOpen(false)
       await fetchReceivables()
+    } catch (e: any) {
+      toast({
+        title: 'Gagal Mencatat Pembayaran',
+        description: e?.response?.data?.message || 'Terjadi kesalahan.',
+        variant: 'destructive',
+      })
     }
   }
 
-  const formatDateIntl = (
-    timestamp: Timestamp | undefined,
-    includeTime = false
-  ) => {
-    if (!timestamp) return 'N/A'
-    const date = timestamp.toDate()
+  const formatDateIntl = (dateStr?: string, includeTime = false) => {
+    if (!dateStr) return 'N/A'
+    const date = new Date(dateStr)
     return format(date, includeTime ? 'dd MMM yyyy, HH:mm' : 'dd MMM yyyy')
   }
 
@@ -243,7 +275,7 @@ export default function AccountsReceivablePage() {
 
   const getStatusBadge = (
     status: PaymentStatus | undefined,
-    dueDate?: Timestamp
+    dueDate?: string | null
   ) => {
     let variant: 'default' | 'secondary' | 'destructive' | 'outline' =
       'secondary'
@@ -266,7 +298,7 @@ export default function AccountsReceivablePage() {
     if (
       dueDate &&
       (status === 'unpaid' || status === 'partially_paid') &&
-      isBefore(dueDate.toDate(), startOfDay(new Date()))
+      isBefore(new Date(dueDate), startOfDay(new Date()))
     ) {
       variant = 'destructive'
       text = 'Jatuh Tempo'
@@ -298,7 +330,7 @@ export default function AccountsReceivablePage() {
             <CardHeader className='p-3 pb-2'>
               <CardTitle className='text-base'>Filter Piutang</CardTitle>
             </CardHeader>
-            <CardContent className='p-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 items-end'>
+            <CardContent className='p-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 items-end'>
               <div>
                 <Label htmlFor='searchTermAR' className='text-xs'>
                   Cari Invoice/Pelanggan
@@ -312,6 +344,54 @@ export default function AccountsReceivablePage() {
                   className='h-8 text-xs mt-0.5'
                   disabled={!selectedBranch || loading}
                 />
+              </div>
+              <div>
+                <Label className='text-xs'>Tanggal Awal</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant='outline'
+                      className='h-8 text-xs mt-0.5 w-full'
+                    >
+                      <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
+                      {startDate
+                        ? format(startDate, 'dd MMM yyyy')
+                        : 'Pilih tanggal'}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className='w-auto p-0'>
+                    <Calendar
+                      mode='single'
+                      selected={startDate ?? undefined}
+                      onSelect={(d) => setStartDate(d ?? null)}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div>
+                <Label className='text-xs'>Tanggal Akhir</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant='outline'
+                      className='h-8 text-xs mt-0.5 w-full'
+                    >
+                      <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
+                      {endDate
+                        ? format(endDate, 'dd MMM yyyy')
+                        : 'Pilih tanggal'}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className='w-auto p-0'>
+                    <Calendar
+                      mode='single'
+                      selected={endDate ?? undefined}
+                      onSelect={(d) => setEndDate(d ?? null)}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
               <div>
                 <Label htmlFor='statusFilter' className='text-xs'>
@@ -346,10 +426,30 @@ export default function AccountsReceivablePage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label className='text-xs'>Baris per Halaman</Label>
+                <Select
+                  value={String(limit)}
+                  onValueChange={(v) => setLimit(parseInt(v))}
+                >
+                  <SelectTrigger className='h-8 text-xs mt-0.5'>
+                    <SelectValue placeholder='Per halaman' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[25, 50, 100].map((n) => (
+                      <SelectItem key={n} value={String(n)} className='text-xs'>
+                        {n}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Button
                 onClick={() => {
                   setSearchTerm('')
                   setStatusFilter('all')
+                  setStartDate(null)
+                  setEndDate(null)
                 }}
                 variant='outline'
                 size='sm'
@@ -413,27 +513,30 @@ export default function AccountsReceivablePage() {
                   {filteredReceivables.map((tx) => (
                     <TableRow key={tx.id}>
                       <TableCell className='py-2 text-xs font-medium'>
-                        {tx.invoiceNumber}
+                        {tx.transaction_number}
                       </TableCell>
                       <TableCell className='py-2 text-xs hidden sm:table-cell'>
-                        {tx.customerName || '-'}
+                        {tx.customer_name || '-'}
                       </TableCell>
                       <TableCell className='py-2 text-xs'>
-                        {formatDateIntl(tx.timestamp)}
+                        {formatDateIntl(tx.created_at)}
                       </TableCell>
                       <TableCell className='py-2 text-xs hidden md:table-cell'>
-                        {tx.creditDueDate
-                          ? formatDateIntl(tx.creditDueDate)
+                        {tx.credit_due_date
+                          ? formatDateIntl(tx.credit_due_date)
                           : '-'}
                       </TableCell>
                       <TableCell className='text-right py-2 text-xs'>
-                        {formatCurrency(tx.totalAmount)}
+                        {formatCurrency(tx.total_amount)}
                       </TableCell>
                       <TableCell className='text-right py-2 text-xs font-semibold'>
-                        {formatCurrency(tx.outstandingAmount)}
+                        {formatCurrency(tx.outstanding_amount || 0)}
                       </TableCell>
                       <TableCell className='text-center py-2 text-xs'>
-                        {getStatusBadge(tx.paymentStatus, tx.creditDueDate)}
+                        {getStatusBadge(
+                          tx.payment_status as any,
+                          tx.credit_due_date
+                        )}
                       </TableCell>
                       <TableCell className='text-center py-2'>
                         <Button
@@ -442,8 +545,8 @@ export default function AccountsReceivablePage() {
                           className='h-7 text-xs mr-1'
                           onClick={() => handleOpenPaymentDialog(tx)}
                           disabled={
-                            tx.paymentStatus === 'paid' ||
-                            tx.paymentStatus === 'returned'
+                            tx.payment_status === 'paid' ||
+                            tx.status === 'returned'
                           }
                         >
                           <DollarSign className='mr-1 h-3 w-3' /> Bayar
@@ -454,10 +557,27 @@ export default function AccountsReceivablePage() {
                           className='h-7 w-7'
                           asChild
                         >
-                          <Link href={`/invoice/${tx.id}/view`} target='_blank'>
-                            <Eye className='h-3.5 w-3.5' />
-                            <span className='sr-only'>Lihat Invoice</span>
+                          <Link
+                            href={`/invoice/${tx.id}/print`}
+                            target='_blank'
+                          >
+                            <svg
+                              xmlns='http://www.w3.org/2000/svg'
+                              viewBox='0 0 24 24'
+                              className='h-3.5 w-3.5 fill-current'
+                            >
+                              <path d='M19 8H5c-1.654 0-3 1.346-3 3v3h4v4h12v-4h4v-3c0-1.654-1.346-3-3-3zM16 18H8v-4h8v4zm3-8c.552 0 1 .449 1 1v1h-2v-2h1zM18 3H6v4h12V3z' />
+                            </svg>
+                            <span className='sr-only'>Cetak Invoice</span>
                           </Link>
+                        </Button>
+                        <Button
+                          variant='ghost'
+                          size='sm'
+                          className='h-7 text-xs'
+                          asChild
+                        >
+                          <Link href={`/sales/${tx.id}`}>Detail</Link>
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -478,11 +598,11 @@ export default function AccountsReceivablePage() {
                 Catat Pembayaran Piutang
               </DialogTitle>
               <DialogDescription className='text-xs'>
-                Invoice: {selectedTransaction?.invoiceNumber} <br />
-                Pelanggan: {selectedTransaction?.customerName || '-'} <br />
+                Invoice: {selectedTransaction?.transaction_number} <br />
+                Pelanggan: {selectedTransaction?.customer_name || '-'} <br />
                 Sisa Tagihan:{' '}
                 <span className='font-semibold'>
-                  {formatCurrency(selectedTransaction?.outstandingAmount)}
+                  {formatCurrency(selectedTransaction?.outstanding_amount || 0)}
                 </span>
               </DialogDescription>
             </DialogHeader>
@@ -615,27 +735,46 @@ export default function AccountsReceivablePage() {
               </DialogFooter>
             </form>
             {selectedTransaction &&
-              selectedTransaction.paymentsMade &&
-              selectedTransaction.paymentsMade.length > 0 && (
+              selectedTransaction.customer_payments &&
+              selectedTransaction.customer_payments.length > 0 && (
                 <div className='mt-4 pt-3 border-t'>
                   <h4 className='text-sm font-medium mb-1.5'>
                     Riwayat Pembayaran Invoice Ini:
                   </h4>
                   <ScrollArea className='h-32'>
                     <ul className='space-y-1.5 text-xs'>
-                      {selectedTransaction.paymentsMade.map((pmt, idx) => (
+                      {selectedTransaction.customer_payments.map((pmt, idx) => (
                         <li key={idx} className='p-1.5 bg-muted/50 rounded-md'>
                           <p>
                             <strong>Tgl:</strong>{' '}
-                            {formatDateIntl(pmt.paymentDate, true)} -{' '}
-                            <strong>{formatCurrency(pmt.amountPaid)}</strong> (
-                            {pmt.paymentMethod})
+                            {formatDateIntl(pmt.payment_date, true)} -{' '}
+                            <strong>{formatCurrency(pmt.amount_paid)}</strong> (
+                            {pmt.payment_method})
                           </p>
                           {pmt.notes && (
                             <p className='text-muted-foreground italic text-[0.7rem]'>
                               Catatan: {pmt.notes}
                             </p>
                           )}
+                          <div className='mt-1'>
+                            <Button
+                              variant='outline'
+                              size='sm'
+                              className='h-7 text-xs'
+                              onClick={() => {
+                                setEditingPaymentIdx(idx)
+                                paymentForm.reset({
+                                  paymentDate: new Date(pmt.payment_date),
+                                  amountPaid: pmt.amount_paid,
+                                  paymentMethod:
+                                    (pmt.payment_method as any) ?? 'cash',
+                                  notes: pmt.notes ?? '',
+                                })
+                              }}
+                            >
+                              Edit
+                            </Button>
+                          </div>
                         </li>
                       ))}
                     </ul>

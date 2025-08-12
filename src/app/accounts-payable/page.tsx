@@ -40,28 +40,12 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { Calendar } from '@/components/ui/calendar'
-import {
-  PlusCircle,
-  Search,
-  Eye,
-  DollarSign,
-  CalendarIcon,
-  FilterX,
-  Info,
-} from 'lucide-react'
+import { Eye, DollarSign, CalendarIcon, FilterX } from 'lucide-react'
 import { useForm, Controller, type SubmitHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  getOutstandingPurchaseOrdersByBranch,
-  recordPaymentToSupplier,
-  type PurchaseOrder,
-  type PaymentToSupplier,
-  type PurchaseOrderPaymentStatus,
-  SupplierPaymentDocument,
-} from '@/lib/appwrite/purchaseOrders'
 import Link from 'next/link'
 import { format, isBefore, startOfDay } from 'date-fns'
 import { Badge } from '@/components/ui/badge'
@@ -70,12 +54,20 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Card,
   CardContent,
-  CardDescription as CardDesc,
   CardHeader,
   CardTitle as CardTtl,
-  CardFooter as CardFtr,
-} from '@/components/ui/card' // Aliased to avoid conflict
+} from '@/components/ui/card'
 import { formatCurrency, formatDateIntlTwo } from '@/lib/helper'
+
+// Laravel service imports
+import {
+  listOutstandingPurchaseOrdersByBranch,
+  getPurchaseOrderDetailAP,
+  recordSupplierPayment,
+  updateSupplierPayment,
+  type AP_PurchaseOrder,
+  type RecordSupplierPaymentInput,
+} from '@/lib/laravel/purchaseOrderService'
 
 const paymentToSupplierFormSchema = z.object({
   paymentDate: z.date({ required_error: 'Tanggal pembayaran harus diisi.' }),
@@ -94,15 +86,20 @@ export default function AccountsPayablePage() {
   const { currentUser } = useAuth()
   const { selectedBranch } = useBranches()
 
-  const [payables, setPayables] = useState<PurchaseOrder[]>([])
-  const [filteredPayables, setFilteredPayables] = useState<PurchaseOrder[]>([])
+  const [payables, setPayables] = useState<AP_PurchaseOrder[]>([])
+  const [filteredPayables, setFilteredPayables] = useState<AP_PurchaseOrder[]>(
+    []
+  )
   const [loading, setLoading] = useState(true)
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
-  const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null)
+  const [selectedPO, setSelectedPO] = useState<AP_PurchaseOrder | null>(null)
+  const [editingPaymentIdx, setEditingPaymentIdx] = useState<number | null>(
+    null
+  )
   const [limit, setLimit] = useState(10) // Default limit for pagination
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<
-    PurchaseOrderPaymentStatus | 'all'
+    'unpaid' | 'partially_paid' | 'paid' | 'overdue' | 'all'
   >('all')
 
   const paymentForm = useForm<PaymentToSupplierFormValues>({
@@ -123,46 +120,36 @@ export default function AccountsPayablePage() {
       return
     }
     setLoading(true)
-    const result = await getOutstandingPurchaseOrdersByBranch({
-      branchId: selectedBranch.id,
-      options: {
-        limit: 10, // Adjust as needed
-      },
-    })
-    setPayables(result.documents)
-    setLoading(false)
-  }, [selectedBranch])
+    try {
+      const res = await listOutstandingPurchaseOrdersByBranch(
+        selectedBranch.id,
+        {
+          limit,
+          searchTerm,
+          paymentStatus:
+            statusFilter === 'all' || statusFilter === 'overdue'
+              ? undefined
+              : statusFilter,
+        }
+      )
+      setPayables(res.data)
+      setFilteredPayables(res.data)
+    } catch (e) {
+      toast.error('Gagal memuat utang usaha')
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedBranch, limit, searchTerm, statusFilter])
 
   useEffect(() => {
     fetchPayables()
   }, [fetchPayables])
 
-  useEffect(() => {
-    let filtered = payables
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(
-        (p) =>
-          p.paymentStatusOnPO === statusFilter ||
-          (statusFilter === 'overdue' &&
-            p.paymentDueDateOnPO &&
-            isBefore(p.paymentDueDateOnPO, startOfDay(new Date())) &&
-            p.paymentStatusOnPO !== 'paid')
-      )
-    }
-    if (searchTerm) {
-      const lowerSearchTerm = searchTerm.toLowerCase()
-      filtered = filtered.filter(
-        (p) =>
-          p.poNumber.toLowerCase().includes(lowerSearchTerm) ||
-          p.supplierName.toLowerCase().includes(lowerSearchTerm) ||
-          p.supplierInvoiceNumber?.toLowerCase().includes(lowerSearchTerm)
-      )
-    }
-    setFilteredPayables(filtered)
-  }, [payables, statusFilter, searchTerm])
-
-  const handleOpenPaymentDialog = (po: PurchaseOrder) => {
-    setSelectedPO(po)
+  const handleOpenPaymentDialog = async (po: AP_PurchaseOrder) => {
+    // Fetch detailed PO to include payments
+    const detail = await getPurchaseOrderDetailAP(po.id)
+    setSelectedPO(detail || po)
+    setEditingPaymentIdx(null)
     paymentForm.reset({
       paymentDate: new Date(),
       amountPaid: po.outstandingPOAmount || 0,
@@ -172,16 +159,55 @@ export default function AccountsPayablePage() {
     setIsPaymentDialogOpen(true)
   }
 
+  const handleEditPayment = (idx: number) => {
+    if (!selectedPO?.payments) return
+    const p = selectedPO.payments[idx]
+    setEditingPaymentIdx(idx)
+    paymentForm.reset({
+      paymentDate: new Date(p.paymentDate),
+      amountPaid: p.amountPaid,
+      paymentMethod: (p.paymentMethod as any) || 'transfer',
+      notes: p.notes || '',
+    })
+  }
+
+  // Client-side filtering for 'overdue' and extra search matching
+  useEffect(() => {
+    let filtered = payables
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(
+        (p) =>
+          p.paymentStatusOnPO === statusFilter ||
+          (statusFilter === 'overdue' &&
+            p.paymentDueDateOnPO &&
+            isBefore(new Date(p.paymentDueDateOnPO), startOfDay(new Date())) &&
+            p.paymentStatusOnPO !== 'paid')
+      )
+    }
+    if (searchTerm) {
+      const lower = searchTerm.toLowerCase()
+      filtered = filtered.filter(
+        (p) =>
+          (p.poNumber || '').toLowerCase().includes(lower) ||
+          (p.supplierName || '').toLowerCase().includes(lower)
+      )
+    }
+    setFilteredPayables(filtered)
+  }, [payables, statusFilter, searchTerm])
+
   const onSubmitPayment: SubmitHandler<PaymentToSupplierFormValues> = async (
     values
   ) => {
-    if (!selectedPO || !currentUser) {
+    if (!selectedPO || !currentUser || !selectedBranch) {
       toast.error('Ada kesalahan', {
-        description: 'Pesanan Pembelian atau pengguna tidak valid.',
+        description: 'PO, cabang, atau pengguna tidak valid.',
       })
       return
     }
-    if (values.amountPaid > (selectedPO.outstandingPOAmount || 0)) {
+    if (
+      editingPaymentIdx === null &&
+      values.amountPaid > (selectedPO.outstandingPOAmount || 0)
+    ) {
       toast.error('Jumlah tidak valid', {
         description: 'Jumlah bayar melebihi sisa tagihan.',
       })
@@ -192,50 +218,48 @@ export default function AccountsPayablePage() {
       return
     }
 
-    const paymentDetails: Omit<
-      SupplierPaymentDocument,
-      '$id' | 'poId' | 'branchId' | 'supplierId'
-    > = {
-      amountPaid: values.amountPaid,
-      paymentMethod: values.paymentMethod,
-      notes: values.notes,
-      paymentDate: values.paymentDate.toISOString(),
-      recordedByUserId: currentUser.$id,
-    }
-
-    const result = await recordPaymentToSupplier(selectedPO.$id, paymentDetails)
-
-    if (result && 'error' in result) {
-      toast.error('Gagal Mencatat Pembayaran', {
-        description: result.error,
-      })
-    } else {
-      toast.success('Pembayaran berhasil dicatat', {
-        description: `Pembayaran untuk PO ${selectedPO.poNumber} berhasil dicatat.`,
-      })
+    try {
+      if (editingPaymentIdx !== null && selectedPO?.payments) {
+        const paymentAny = (selectedPO as any).payments[editingPaymentIdx]
+        const paymentId = paymentAny?.id
+        if (!paymentId) {
+          toast.error('Tidak dapat mengedit pembayaran ini')
+          return
+        }
+        await updateSupplierPayment(paymentId, {
+          payment_date: values.paymentDate.toISOString().slice(0, 10),
+          amount_paid: values.amountPaid,
+          payment_method: values.paymentMethod,
+          notes: values.notes || null,
+        })
+        toast.success('Pembayaran berhasil diperbarui')
+      } else {
+        const payload: RecordSupplierPaymentInput = {
+          purchase_order_id: selectedPO.id,
+          branch_id: selectedBranch.id,
+          supplier_id: selectedPO.supplierId,
+          payment_date: values.paymentDate.toISOString().slice(0, 10),
+          amount_paid: values.amountPaid,
+          payment_method: values.paymentMethod,
+          notes: values.notes || null,
+          recorded_by_user_id:
+            (currentUser as any)?.id || (currentUser as any)?.$id,
+        }
+        await recordSupplierPayment(payload)
+        toast.success('Pembayaran berhasil dicatat')
+      }
       setIsPaymentDialogOpen(false)
       await fetchPayables()
+    } catch (err: any) {
+      let message = 'Terjadi kesalahan pada server.'
+      if (err.response?.data?.message) message = err.response.data.message
+      toast.error('Gagal Mencatat Pembayaran', { description: message })
     }
   }
 
-  // const getStatusBadge = (status: PurchaseOrderPaymentStatus | undefined, dueDate?: Timestamp) => {
-  //   let variant: "default" | "secondary" | "destructive" | "outline" = "secondary";
-  //   let text = status ? status.charAt(0).toUpperCase() + status.slice(1) : "N/A";
-
-  //   if (status === 'paid') { variant = 'default'; text = "Lunas"; }
-  //   else if (status === 'unpaid') { variant = 'destructive'; text = "Belum Bayar"; }
-  //   else if (status === 'partially_paid') { variant = 'outline'; text = "Bayar Sebagian"; }
-
-  //   if (dueDate && (status === 'unpaid' || status === 'partially_paid') && isBefore(dueDate.toDate(), startOfDay(new Date()))) {
-  //     variant = 'destructive';
-  //     text = "Jatuh Tempo";
-  //   }
-  //   return <Badge variant={variant} className={cn(variant === 'default' && 'bg-green-600 hover:bg-green-700 text-white', variant === 'outline' && 'border-yellow-500 text-yellow-600')}>{text}</Badge>;
-  // };
-
   const getStatusBadge = (
-    status: PurchaseOrderPaymentStatus | undefined,
-    dueDateMillis?: number
+    status: 'unpaid' | 'partially_paid' | 'paid' | undefined,
+    dueDateString?: string | null
   ) => {
     let variant: 'default' | 'secondary' | 'destructive' | 'outline' =
       'secondary'
@@ -252,10 +276,7 @@ export default function AccountsPayablePage() {
       text = 'Bayar Sebagian'
     }
 
-    // Convert milliseconds to a Date object before comparison
-    const dueDate =
-      dueDateMillis !== undefined ? new Date(dueDateMillis) : undefined
-
+    const dueDate = dueDateString ? new Date(dueDateString) : undefined
     if (
       dueDate &&
       (status === 'unpaid' || status === 'partially_paid') &&
@@ -291,10 +312,10 @@ export default function AccountsPayablePage() {
             <CardHeader className='p-3 pb-2'>
               <CardTtl className='text-base'>Filter Utang</CardTtl>
             </CardHeader>
-            <CardContent className='p-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 items-end'>
+            <CardContent className='p-3 grid grid-cols-1 sm:grid-cols-3 gap-2 items-end'>
               <div>
                 <Label htmlFor='searchTermAP' className='text-xs'>
-                  Cari PO/Pemasok/Inv. Pemasok
+                  Cari PO/Pemasok
                 </Label>
                 <Input
                   id='searchTermAP'
@@ -312,9 +333,7 @@ export default function AccountsPayablePage() {
                 </Label>
                 <Select
                   value={statusFilter}
-                  onValueChange={(value) =>
-                    setStatusFilter(value as PurchaseOrderPaymentStatus | 'all')
-                  }
+                  onValueChange={(v) => setStatusFilter(v as any)}
                   disabled={!selectedBranch || loading}
                 >
                   <SelectTrigger className='h-8 text-xs mt-0.5'>
@@ -368,9 +387,7 @@ export default function AccountsPayablePage() {
           ) : filteredPayables.length === 0 ? (
             <div className='border rounded-lg shadow-sm overflow-hidden p-10 text-center'>
               <p className='text-sm text-muted-foreground'>
-                {payables.length === 0
-                  ? 'Belum ada data utang untuk cabang ini.'
-                  : 'Tidak ada utang yang cocok dengan filter Anda.'}
+                Tidak ada utang yang cocok dengan filter Anda.
               </p>
             </div>
           ) : (
@@ -404,7 +421,7 @@ export default function AccountsPayablePage() {
                 </TableHeader>
                 <TableBody>
                   {filteredPayables.map((po) => (
-                    <TableRow key={po.$id}>
+                    <TableRow key={po.id}>
                       <TableCell className='py-2 text-xs font-medium'>
                         {po.poNumber}
                       </TableCell>
@@ -426,7 +443,10 @@ export default function AccountsPayablePage() {
                         {formatCurrency(po.outstandingPOAmount)}
                       </TableCell>
                       <TableCell className='text-center py-2 text-xs'>
-                        {getStatusBadge(po.paymentStatusOnPO)}
+                        {getStatusBadge(
+                          po.paymentStatusOnPO,
+                          po.paymentDueDateOnPO
+                        )}
                       </TableCell>
                       <TableCell className='text-center py-2'>
                         <Button
@@ -444,7 +464,7 @@ export default function AccountsPayablePage() {
                           className='h-7 w-7'
                           asChild
                         >
-                          <Link href={`/purchase-orders/${po.$id}`}>
+                          <Link href={`/purchase-orders/${po.id}`}>
                             <Eye className='h-3.5 w-3.5' />
                             <span className='sr-only'>Lihat PO</span>
                           </Link>
@@ -558,8 +578,7 @@ export default function AccountsPayablePage() {
                         </SelectItem>
                         <SelectItem value='card' className='text-xs'>
                           Kartu
-                        </SelectItem>{' '}
-                        {/* Maybe not common for AP but for consistency */}
+                        </SelectItem>
                         <SelectItem value='other' className='text-xs'>
                           Lainnya
                         </SelectItem>
@@ -615,18 +634,31 @@ export default function AccountsPayablePage() {
                   <ScrollArea className='h-32'>
                     <ul className='space-y-1.5 text-xs'>
                       {selectedPO.payments.map((pmt, idx) => (
-                        <li key={idx} className='p-1.5 bg-muted/50 rounded-md'>
-                          <p>
-                            <strong>Tgl:</strong>{' '}
-                            {formatDateIntlTwo(pmt.paymentDate, true)} -{' '}
-                            <strong>{formatCurrency(pmt.amountPaid)}</strong> (
-                            {pmt.paymentMethod})
-                          </p>
-                          {pmt.notes && (
-                            <p className='text-muted-foreground italic text-[0.7rem]'>
-                              Catatan: {pmt.notes}
+                        <li
+                          key={idx}
+                          className='p-1.5 bg-muted/50 rounded-md flex items-center justify-between gap-2'
+                        >
+                          <div>
+                            <p>
+                              <strong>Tgl:</strong>{' '}
+                              {formatDateIntlTwo(pmt.paymentDate, true)} -{' '}
+                              <strong>{formatCurrency(pmt.amountPaid)}</strong>{' '}
+                              ({pmt.paymentMethod})
                             </p>
-                          )}
+                            {pmt.notes && (
+                              <p className='text-muted-foreground italic text-[0.7rem]'>
+                                Catatan: {pmt.notes}
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            className='h-7 text-xs'
+                            onClick={() => handleEditPayment(idx)}
+                          >
+                            Edit
+                          </Button>
                         </li>
                       ))}
                     </ul>

@@ -4,7 +4,9 @@ import type {
   CreateSalePayload,
   SaleRequestActionPayload,
   SaleActionParams,
-} from '@/lib/types' // Asumsi tipe ini dari types.ts
+  CustomerPayment,
+  PaymentMethod,
+} from '@/lib/types'
 
 // Tipe untuk hasil paginasi dari Laravel
 interface PaginatedSales {
@@ -77,6 +79,72 @@ export const listSales = async (
     console.error('Laravel API Error :: listSales :: ', error)
     throw error
   }
+}
+
+export interface ListReceivablesParams {
+  branchId?: string | number
+  page?: number
+  limit?: number
+  searchTerm?: string
+  startDate?: string
+  endDate?: string
+  status?: 'all' | 'unpaid' | 'partially_paid' | 'paid' | 'overdue'
+}
+
+export const listReceivables = async (
+  params: ListReceivablesParams
+): Promise<PaginatedSales> => {
+  const response = await api.get('/api/sales', {
+    params: {
+      branch_id: params.branchId,
+      page: params.page,
+      limit: params.limit,
+      search: params.searchTerm,
+      start_date: params.startDate,
+      end_date: params.endDate,
+      is_credit_sale: true,
+      has_outstanding:
+        params.status && params.status !== 'paid' && params.status !== 'all'
+          ? true
+          : undefined,
+      payment_status:
+        params.status && params.status !== 'overdue' && params.status !== 'all'
+          ? params.status
+          : undefined,
+    },
+  })
+  return response.data
+}
+
+export type CreateCustomerPaymentPayload = {
+  sale_id: number
+  payment_date: string // YYYY-MM-DD
+  amount_paid: number
+  payment_method: PaymentMethod
+  notes?: string
+}
+
+export type UpdateCustomerPaymentPayload = Partial<
+  Omit<CreateCustomerPaymentPayload, 'sale_id'>
+>
+
+export const createCustomerPayment = async (
+  payload: CreateCustomerPaymentPayload
+): Promise<CustomerPayment> => {
+  const res = await api.post('/api/customer-payments', payload)
+  return res.data
+}
+
+export const updateCustomerPayment = async (
+  id: number,
+  payload: UpdateCustomerPaymentPayload
+): Promise<CustomerPayment> => {
+  const res = await api.put(`/api/customer-payments/${id}`, payload)
+  return res.data
+}
+
+export const deleteCustomerPayment = async (id: number): Promise<void> => {
+  await api.delete(`/api/customer-payments/${id}`)
 }
 
 /**

@@ -151,6 +151,7 @@ import { is } from 'date-fns/locale'
 
 type ViewMode = 'card' | 'table'
 const LOCALSTORAGE_POS_VIEW_MODE_KEY = 'branchwise_posViewMode'
+type TaxMode = 'no_tax' | 'add_tax' | 'price_includes_tax'
 
 export default function POSPage() {
   const { selectedBranch } = useBranches()
@@ -244,6 +245,7 @@ export default function POSPage() {
   const [shippingCostInput, setShippingCostInput] = useState('')
   const [voucherCodeInput, setVoucherCodeInput] = useState('')
   const [voucherDiscountInput, setVoucherDiscountInput] = useState('')
+  const [taxMode, setTaxMode] = useState<TaxMode>('no_tax')
 
   const [isItemDiscountDialogOpen, setIsItemDiscountDialogOpen] =
     useState(false)
@@ -277,6 +279,23 @@ export default function POSPage() {
   const tax_rate = selectedBranch?.tax_rate
     ? selectedBranch.tax_rate / 100
     : 0.0
+
+  const computeTaxForSubtotal = (netSubtotal: number) => {
+    switch (taxMode) {
+      case 'no_tax':
+        return { tax: 0, total: netSubtotal }
+      case 'add_tax':
+        return {
+          tax: netSubtotal * tax_rate,
+          total: netSubtotal * (1 + tax_rate),
+        }
+      case 'price_includes_tax':
+        return {
+          tax: netSubtotal - netSubtotal / (1 + tax_rate),
+          total: netSubtotal,
+        }
+    }
+  }
 
   const handleNextPage = () => {
     // Cek jika halaman saat ini belum mencapai halaman terakhir
@@ -774,10 +793,20 @@ export default function POSPage() {
     () => cartItems.reduce((sum, item) => sum + Number(item.subtotal), 0),
     [cartItems]
   )
-  const tax = useMemo(
-    () => subtotalAfterItemDiscounts * tax_rate,
-    [subtotalAfterItemDiscounts, tax_rate]
-  )
+  // Hitung pajak dan subtotal+tax berdasarkan mode pajak yang dipilih
+  const { tax, total: subtotalWithTax } = useMemo(() => {
+    return computeTaxForSubtotal(subtotalAfterItemDiscounts)
+  }, [subtotalAfterItemDiscounts, tax_rate, taxMode])
+
+  // Subtotal yang ditampilkan di UI: jika harga termasuk pajak, tampilkan subtotal sebelum pajak
+  const displaySubtotal = useMemo(() => {
+    if (taxMode === 'price_includes_tax') {
+      return tax_rate > 0
+        ? subtotalAfterItemDiscounts / (1 + tax_rate)
+        : subtotalAfterItemDiscounts
+    }
+    return subtotalAfterItemDiscounts
+  }, [subtotalAfterItemDiscounts, taxMode, tax_rate])
 
   const shippingCost = parseFloat(shippingCostInput) || 0
   const voucherDiscount = parseFloat(voucherDiscountInput) || 0
@@ -788,8 +817,8 @@ export default function POSPage() {
   )
 
   const total = useMemo(() => {
-    return subtotalAfterItemDiscounts + tax + shippingCost - voucherDiscount
-  }, [subtotalAfterItemDiscounts, tax, shippingCost, voucherDiscount])
+    return subtotalWithTax + shippingCost - voucherDiscount
+  }, [subtotalWithTax, shippingCost, voucherDiscount])
 
   const totalCost = useMemo(
     () =>
@@ -847,6 +876,9 @@ export default function POSPage() {
         payment_method: 'cash',
         amount_paid: amountPaidNum,
         change_given: change,
+        shipping_cost: shippingCost,
+        voucher_discount_amount: voucherDiscount,
+        tax_amount: tax,
         is_credit_sale: false,
         notes: '',
         customer_id: Number(selectedCustomerId),
@@ -927,6 +959,9 @@ export default function POSPage() {
         shift_id: activeShift.id,
         payment_method: 'transfer',
         amount_paid: total,
+        tax_amount: tax,
+        shipping_cost: shippingCost,
+        voucher_discount_amount: voucherDiscount,
         is_credit_sale: false,
         notes: '',
         customer_id: Number(selectedCustomerId),
@@ -1081,8 +1116,12 @@ export default function POSPage() {
       const payload: CreateSalePayload = {
         shift_id: activeShift!.id,
         payment_method: 'credit',
-        amount_paid: total,
+        amount_paid: 0,
+        tax_amount: tax,
+        shipping_cost: shippingCost,
+        outstanding_amount: total,
         is_credit_sale: true,
+        credit_due_date: creditDueDate?.toISOString(),
         notes: '',
         customer_id: Number(selectedCustomerId),
         items: cartItems,
@@ -1776,7 +1815,7 @@ export default function POSPage() {
                   <CardFooter className='flex flex-col gap-1.5 border-t p-3'>
                     <div className='flex justify-between text-xs w-full'>
                       <span>Subtotal (Stlh Diskon Item):</span>
-                      <span>{formatCurrency(subtotalAfterItemDiscounts)}</span>
+                      <span>{formatCurrency(displaySubtotal)}</span>
                     </div>
                     <div className='flex justify-between text-xs w-full'>
                       <span>
@@ -1789,6 +1828,36 @@ export default function POSPage() {
                         {currencySymbol}
                         {tax.toLocaleString('id-ID')}
                       </span>
+                    </div>
+
+                    {/* Pilihan Mode Pajak */}
+                    <div className='w-full mt-2'>
+                      <Label className='text-xs font-medium mb-1 block'>
+                        Mode Pajak
+                      </Label>
+                      <Select
+                        value={taxMode}
+                        onValueChange={(v) => setTaxMode(v as TaxMode)}
+                        disabled={!activeShift || cartItems.length === 0}
+                      >
+                        <SelectTrigger className='h-8 text-xs'>
+                          <SelectValue placeholder='Pilih mode pajak' />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value='no_tax' className='text-xs'>
+                            Tanpa Pajak
+                          </SelectItem>
+                          <SelectItem value='add_tax' className='text-xs'>
+                            Tambah Pajak ({(tax_rate * 100).toFixed(0)}%)
+                          </SelectItem>
+                          <SelectItem
+                            value='price_includes_tax'
+                            className='text-xs'
+                          >
+                            Harga Termasuk Pajak
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className='w-full grid grid-cols-2 gap-x-3 gap-y-1.5 mt-1'>

@@ -200,6 +200,8 @@ export interface Sale {
   returned_at?: string | null
   returned_by_user_id?: number | null
   returned_by_user_name?: string | null
+  // Payments history
+  customer_payments?: CustomerPayment[]
 }
 
 export interface SaleDetail {
@@ -215,6 +217,20 @@ export interface SaleDetail {
   created_at: string
   updated_at: string
   product?: Product // Relasi
+}
+
+export interface CustomerPayment {
+  id: number
+  sale_id: number
+  branch_id: number | null
+  customer_id: number | null
+  payment_date: string
+  amount_paid: number
+  payment_method: PaymentMethod
+  notes: string | null
+  recorded_by_user_id: number
+  created_at: string
+  updated_at: string
 }
 
 export interface PurchaseOrder {
@@ -377,10 +393,13 @@ export interface CreateSalePayload {
   amount_paid?: number // Untuk kredit, ini bisa dianggap sebagai DP (Down Payment)
   items: CartItem[]
   change_given?: number
+  tax_amount?: number
+  shipping_cost?: number
+  voucher_discount_amount?: number
   // -- Field Opsional untuk Kredit --
   is_credit_sale?: boolean // Kirim `true` jika ini penjualan kredit
   credit_due_date?: string // Opsional, tanggal jatuh tempo (format: 'YYYY-MM-DD')
-
+  outstanding_amount?: number
   customer_id?: number
   notes?: string
 }
