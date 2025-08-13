@@ -64,6 +64,7 @@ import {
   Trash2,
   FileText,
   CheckCircle,
+  Loader2Icon,
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -71,6 +72,7 @@ export default function SaleDetailPage() {
   const params = useParams<{ id: string }>()
   const [sale, setSale] = useState<Sale | null>(null)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
+  const [isPaymentLoading, setIsPaymentLoading] = useState(false)
   const [editingPaymentId, setEditingPaymentId] = useState<number | null>(null)
   const [paymentDate, setPaymentDate] = useState<Date>(new Date())
   const [paymentAmount, setPaymentAmount] = useState<string>('0')
@@ -117,6 +119,7 @@ export default function SaleDetailPage() {
       return
     }
     try {
+      setIsPaymentLoading(true)
       if (editingPaymentId) {
         await updateCustomerPayment(editingPaymentId, {
           payment_date: paymentDate.toISOString().slice(0, 10),
@@ -140,6 +143,8 @@ export default function SaleDetailPage() {
       setSale(refreshed)
     } catch (e: any) {
       toast.error(e?.response?.data?.message || 'Gagal menyimpan pembayaran')
+    } finally {
+      setIsPaymentLoading(false)
     }
   }
 
@@ -165,7 +170,7 @@ export default function SaleDetailPage() {
             </h1>
             <div className='flex gap-2'>
               <Button variant='outline' asChild>
-                <Link href='/sales'>Kembali ke Daftar</Link>
+                <Link href='/sales-history'>Kembali ke Daftar</Link>
               </Button>
               <Button variant='secondary' asChild>
                 <Link href={`/invoice/${sale?.id}/print`} target='_blank'>
@@ -301,7 +306,7 @@ export default function SaleDetailPage() {
               </CardHeader>
               <CardContent>
                 <Button
-                  className='w-full'
+                  className='w-full text-xs h-8'
                   onClick={openCreatePayment}
                   disabled={
                     sale?.payment_status === 'paid' ||
@@ -398,7 +403,7 @@ export default function SaleDetailPage() {
                         variant='outline'
                         className='h-9 text-xs w-full mt-1'
                       >
-                        <CalendarIcon className='h-3.5 w-3.5 mr-1.5' />
+                        <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
                         {format(paymentDate, 'dd MMM yyyy')}
                       </Button>
                     </PopoverTrigger>
@@ -463,9 +468,17 @@ export default function SaleDetailPage() {
                     Batal
                   </Button>
                 </DialogClose>
-                <Button className='h-8 text-xs' onClick={handleSubmitPayment}>
-                  Simpan
-                </Button>
+
+                {!isPaymentLoading ? (
+                  <Button className='h-8 text-xs' onClick={handleSubmitPayment}>
+                    Simpan
+                  </Button>
+                ) : (
+                  <Button size='sm' disabled>
+                    <Loader2Icon className='animate-spin' />
+                    Please wait
+                  </Button>
+                )}
               </DialogModalFooter>
             </DialogContent>
           </Dialog>

@@ -1,7 +1,7 @@
 'use client'
 
 import MainLayout from '@/components/layout/main-layout'
-import { useBranches, type ReportPeriodPreset } from '@/contexts/branch-context' // Import ReportPeriodPreset
+import { useBranches } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -28,20 +28,16 @@ import {
   format,
   startOfMonth,
   endOfMonth,
-  startOfWeek,
-  endOfWeek,
   startOfDay,
   endOfDay,
 } from 'date-fns' // Added more date-fns
 import React, { useState, useEffect } from 'react' // Added useEffect
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
-import { useToast } from '@/hooks/use-toast'
-import {
-  getTransactionsByDateRangeAndBranch,
-  type PosTransaction,
-} from '@/lib/firebase/pos'
-import { getExpenses, type Expense } from '@/lib/firebase/expenses'
-import type { PaymentMethod } from '@/lib/firebase/types'
+import { toast } from 'sonner'
+import { listSales } from '@/lib/laravel/saleService'
+import { listExpenses } from '@/lib/laravel/expenseService'
+import { generateReport, getReport } from '@/lib/laravel/reportService'
+import type { PaymentMethod, Sale, Expense } from '@/lib/types'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
 
@@ -73,48 +69,41 @@ interface IncomeStatementData {
 
 export default function ReportsPage() {
   const { selectedBranch } = useBranches()
-  const { toast } = useToast()
 
   const [reportType, setReportType] = useState<ReportType>('sales_summary')
-  const [startDate, setStartDate] = useState<Date | undefined>(undefined)
-  const [endDate, setEndDate] = useState<Date | undefined>(undefined)
+  type PeriodMode = 'daily' | 'monthly' | 'ytd2025' | 'custom'
+  const [periodMode, setPeriodMode] = useState<PeriodMode>('monthly')
+  const [startDate, setStartDate] = useState<Date>()
+  const [endDate, setEndDate] = useState<Date>()
+  const [loadingGenerate, setLoadingGenerate] = useState(false)
   const [loadingReport, setLoadingReport] = useState(false)
+  const [loadingView, setLoadingView] = useState(false)
   const [salesSummaryData, setSalesSummaryData] =
     useState<SalesSummaryData | null>(null)
   const [incomeStatementData, setIncomeStatementData] =
     useState<IncomeStatementData | null>(null)
 
   useEffect(() => {
-    if (selectedBranch && selectedBranch.defaultReportPeriod) {
-      const now = new Date()
-      let newStart: Date, newEnd: Date
-      switch (selectedBranch.defaultReportPeriod) {
-        case 'thisWeek':
-          newStart = startOfWeek(now, { weekStartsOn: 1 })
-          newEnd = endOfWeek(now, { weekStartsOn: 1 })
-          break
-        case 'today':
-          newStart = startOfDay(now)
-          newEnd = endOfDay(now)
-          break
-        case 'thisMonth':
-        default:
-          newStart = startOfMonth(now)
-          newEnd = endOfMonth(now)
-          break
+    // Apply period presets when branch changes or when periodMode changes
+    const now = new Date()
+    if (periodMode === 'daily') {
+      setStartDate(startOfDay(now))
+      setEndDate(endOfDay(now))
+    } else if (periodMode === 'monthly') {
+      setStartDate(startOfMonth(now))
+      setEndDate(endOfMonth(now))
+    } else if (periodMode === 'ytd2025') {
+      // Year-to-date starting from 01 Jan 2025 to today
+      setStartDate(new Date(2025, 0, 1))
+      setEndDate(endOfDay(now))
+    } else if (periodMode === 'custom') {
+      // If custom and dates not set yet (e.g., first load), default to current month
+      if (!startDate || !endDate) {
+        setStartDate(startOfMonth(now))
+        setEndDate(endOfMonth(now))
       }
-      setStartDate(newStart)
-      setEndDate(newEnd)
-    } else if (!selectedBranch) {
-      // Clear dates if no branch is selected, or set to a default if preferred
-      setStartDate(startOfMonth(new Date()))
-      setEndDate(endOfMonth(new Date()))
-    } else {
-      // If selectedBranch exists but no defaultReportPeriod (or it's invalid), set a sensible default
-      setStartDate(startOfMonth(new Date()))
-      setEndDate(endOfMonth(new Date()))
     }
-  }, [selectedBranch])
+  }, [selectedBranch, periodMode])
 
   const formatCurrency = (amount: number) => {
     return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString(
@@ -123,85 +112,126 @@ export default function ReportsPage() {
     )}`
   }
 
-  const handleGenerateReport = async () => {
-    if (!selectedBranch) {
-      toast({
-        title: 'Pilih Cabang',
-        description: 'Silakan pilih cabang terlebih dahulu.',
-        variant: 'destructive',
-      })
-      return
-    }
+  const validateFilters = () => {
     if (!startDate || !endDate) {
-      toast({
-        title: 'Tanggal Tidak Lengkap',
+      toast.error('Tanggal Tidak Lengkap', {
         description: 'Silakan pilih tanggal mulai dan tanggal akhir.',
-        variant: 'destructive',
       })
-      return
+      return false
     }
     if (endDate < startDate) {
-      toast({
-        title: 'Rentang Tanggal Tidak Valid',
+      toast.error('Rentang Tanggal Tidak Valid', {
         description: 'Tanggal akhir tidak boleh sebelum tanggal mulai.',
-        variant: 'destructive',
       })
-      return
+      return false
     }
+    return true
+  }
 
-    setLoadingReport(true)
+  const handleGenerateReport = async () => {
+    if (!selectedBranch) {
+      toast.error('Pilih Cabang', {
+        description: 'Silakan pilih cabang terlebih dahulu.',
+      })
+      return false
+    }
+    if (!validateFilters()) return
+
+    setLoadingGenerate(true)
     setSalesSummaryData(null)
     setIncomeStatementData(null)
 
     try {
-      const allTransactions = await getTransactionsByDateRangeAndBranch(
-        selectedBranch.id,
-        startDate,
-        endDate
-      )
-      const completedTransactions = allTransactions.filter(
-        (tx) => tx.status !== 'returned'
-      )
-      const returnedTransactions = allTransactions.filter(
-        (tx) => tx.status === 'returned'
-      )
+      // Helper to format dates for Laravel API (YYYY-MM-DD)
+      const apiStart = format(startDate!, 'yyyy-MM-dd')
+      const apiEnd = format(endDate!, 'yyyy-MM-dd')
 
-      const totalValueReturned = returnedTransactions.reduce(
-        (sum, tx) => sum + tx.totalAmount,
-        0
-      )
-      const cogsOfReturnedItems = returnedTransactions.reduce(
-        (sum, tx) => sum + (tx.totalCost || 0),
-        0
-      )
+      // Generate and persist on backend
+      const generated = await generateReport({
+        branch_id: Number(selectedBranch.id),
+        report_type: reportType,
+        start_date: apiStart,
+        end_date: apiEnd,
+      })
+
+      // Optionally display immediately after generate for good UX
+      const stored = await getReport({
+        branch_id: Number(selectedBranch.id),
+        report_type: reportType,
+        start_date: apiStart,
+        end_date: apiEnd,
+      })
+
+      const data = stored?.data || {}
+
+      // Legacy client-side fetch kept as fallback (optional)
+      const fetchAllSales = async (): Promise<Sale[]> => {
+        const pageSize = 100
+        let page = 1
+        let collected: Sale[] = []
+        while (true) {
+          const res = await listSales({
+            branchId: String(selectedBranch.id),
+            startDate: apiStart,
+            endDate: apiEnd,
+            page,
+            limit: pageSize,
+          })
+          collected = collected.concat(res.data)
+          const total = res.total ?? collected.length
+          if (collected.length >= total || (res.data?.length ?? 0) < pageSize) {
+            break
+          }
+          page += 1
+        }
+        return collected
+      }
+
+      // Fetch ALL expenses within date range (iterate pagination)
+      const fetchAllExpenses = async (): Promise<Expense[]> => {
+        const pageSize = 100
+        let page = 1
+        let collected: Expense[] = []
+        while (true) {
+          const res = await listExpenses({
+            branchId: Number(selectedBranch.id),
+            startDate: apiStart,
+            endDate: apiEnd,
+            page,
+            limit: pageSize,
+          } as any)
+          collected = collected.concat(res.data)
+          const total = res.total ?? collected.length
+          if (collected.length >= total || (res.data?.length ?? 0) < pageSize) {
+            break
+          }
+          page += 1
+        }
+        return collected
+      }
+
+      // If backend returned data, prefer it; otherwise fallback to client computation
+      const allSales = [] as Sale[]
+      const completedTransactions = [] as Sale[]
+      const returnedTransactions = [] as Sale[]
+      const totalValueReturned = data?.totalValueReturned ?? 0
+      const cogsOfReturnedItems = data?.cogsOfReturnedItems ?? 0
 
       if (reportType === 'sales_summary') {
-        const netRevenue = completedTransactions.reduce(
-          (sum, tx) => sum + tx.totalAmount,
-          0
-        )
-        const grossRevenueBeforeReturns = netRevenue + totalValueReturned
+        const netRevenue = data?.netRevenue ?? 0
+        const grossRevenueBeforeReturns =
+          data?.grossRevenueBeforeReturns ?? netRevenue + totalValueReturned
 
         const salesByPaymentMethod: Record<PaymentMethod, number> = {
-          cash: 0,
-          card: 0,
-          transfer: 0,
+          cash: data?.salesByPaymentMethod?.cash ?? 0,
+          card: data?.salesByPaymentMethod?.card ?? 0,
+          transfer: data?.salesByPaymentMethod?.transfer ?? 0,
+          qris: 0 as any,
+          credit: 0 as any,
         }
-        completedTransactions.forEach((tx) => {
-          if (
-            tx.paymentTerms === 'cash' ||
-            tx.paymentTerms === 'card' ||
-            tx.paymentTerms === 'transfer'
-          ) {
-            salesByPaymentMethod[tx.paymentTerms as PaymentMethod] =
-              (salesByPaymentMethod[tx.paymentTerms as PaymentMethod] || 0) +
-              tx.totalAmount
-          }
-        })
 
-        const totalNetTransactions = completedTransactions.length
-        const averageTransactionValue =
-          totalNetTransactions > 0 ? netRevenue / totalNetTransactions : 0
+        const totalNetTransactions = data?.totalNetTransactions ?? 0
+        const averageTransactionValue = data?.averageTransactionValue ?? 0
 
         setSalesSummaryData({
           grossRevenueBeforeReturns,
@@ -211,48 +241,29 @@ export default function ReportsPage() {
           averageTransactionValue,
           salesByPaymentMethod,
         })
-        if (allTransactions.length === 0) {
-          toast({
-            title: 'Tidak Ada Data',
+        if (!data || Object.keys(data).length === 0) {
+          toast.error('Tidak Ada Data', {
             description:
               'Tidak ada transaksi (selesai maupun retur) ditemukan untuk rentang tanggal dan cabang yang dipilih.',
-            variant: 'default',
+          })
+        } else {
+          toast.success('Laporan Diperbarui', {
+            description: 'Laporan berhasil digenerate dan disimpan.',
           })
         }
       } else if (reportType === 'income_statement') {
-        const netRevenue = completedTransactions.reduce(
-          (sum, tx) => sum + tx.totalAmount,
-          0
-        )
-        const netCOGS = completedTransactions.reduce(
-          (sum, tx) => sum + (tx.totalCost || 0),
-          0
-        )
+        const netRevenue = data?.netRevenue ?? 0
+        const netCOGS = data?.netCOGS ?? 0
+        const grossRevenueBeforeReturns =
+          data?.grossRevenueBeforeReturns ?? netRevenue + totalValueReturned
+        const grossCOGSBeforeReturns =
+          data?.grossCOGSBeforeReturns ?? netCOGS + cogsOfReturnedItems
 
-        const grossRevenueBeforeReturns = netRevenue + totalValueReturned
-        const grossCOGSBeforeReturns = netCOGS + cogsOfReturnedItems
+        const totalExpenses = data?.totalExpenses ?? 0
+        const expensesBreakdown = data?.expensesBreakdown ?? []
 
-        const expenses = await getExpenses(selectedBranch.id, {
-          startDate,
-          endDate,
-        })
-        let totalExpenses = 0
-        const expensesBreakdown: { category: string; amount: number }[] = []
-        const expenseCategoryMap = new Map<string, number>()
-
-        expenses.forEach((exp) => {
-          totalExpenses += exp.amount
-          expenseCategoryMap.set(
-            exp.category,
-            (expenseCategoryMap.get(exp.category) || 0) + exp.amount
-          )
-        })
-        expenseCategoryMap.forEach((amount, category) => {
-          expensesBreakdown.push({ category, amount })
-        })
-
-        const grossProfit = netRevenue - netCOGS
-        const netProfit = grossProfit - totalExpenses
+        const grossProfit = data?.grossProfit ?? netRevenue - netCOGS
+        const netProfit = data?.netProfit ?? grossProfit - totalExpenses
 
         setIncomeStatementData({
           grossRevenueBeforeReturns,
@@ -267,34 +278,126 @@ export default function ReportsPage() {
           expensesBreakdown,
         })
 
-        if (
-          completedTransactions.length === 0 &&
-          expenses.length === 0 &&
-          returnedTransactions.length === 0
-        ) {
-          toast({
-            title: 'Tidak Ada Data',
+        if (!data || Object.keys(data).length === 0) {
+          toast.error('Tidak Ada Data', {
             description:
               'Tidak ada data transaksi penjualan, retur, maupun pengeluaran ditemukan untuk periode ini.',
-            variant: 'default',
+          })
+        } else {
+          toast.success('Laporan Diperbarui', {
+            description: 'Laporan berhasil digenerate dan disimpan.',
           })
         }
       } else {
-        toast({
-          title: 'Fitur Belum Tersedia',
+        toast.info('Fitur Belum Tersedia', {
           description: `Pembuatan laporan "${reportType}" belum diimplementasikan.`,
-          variant: 'default',
         })
       }
     } catch (error) {
       console.error('Error generating report:', error)
-      toast({
-        title: 'Gagal Membuat Laporan',
+      toast.error('Gagal Membuat Laporan', {
         description: 'Terjadi kesalahan saat mengambil data.',
-        variant: 'destructive',
       })
     }
-    setLoadingReport(false)
+    setLoadingGenerate(false)
+  }
+
+  const handleViewReport = async () => {
+    if (!selectedBranch) {
+      toast.error('Pilih Cabang', {
+        description: 'Silakan pilih cabang terlebih dahulu.',
+      })
+      return false
+    }
+    if (!validateFilters()) return
+
+    setLoadingView(true)
+    setSalesSummaryData(null)
+    setIncomeStatementData(null)
+
+    try {
+      const apiStart = format(startDate!, 'yyyy-MM-dd')
+      const apiEnd = format(endDate!, 'yyyy-MM-dd')
+
+      const stored = await getReport({
+        branch_id: Number(selectedBranch.id),
+        report_type: reportType,
+        start_date: apiStart,
+        end_date: apiEnd,
+      })
+
+      const data = stored?.data || {}
+
+      if (reportType === 'sales_summary') {
+        const netRevenue = data?.netRevenue ?? 0
+        const totalValueReturned = data?.totalValueReturned ?? 0
+        const grossRevenueBeforeReturns =
+          data?.grossRevenueBeforeReturns ?? netRevenue + totalValueReturned
+        const salesByPaymentMethod: Record<PaymentMethod, number> = {
+          cash: data?.salesByPaymentMethod?.cash ?? 0,
+          card: data?.salesByPaymentMethod?.card ?? 0,
+          transfer: data?.salesByPaymentMethod?.transfer ?? 0,
+          qris: 0 as any,
+          credit: 0 as any,
+        }
+        const totalNetTransactions = data?.totalNetTransactions ?? 0
+        const averageTransactionValue = data?.averageTransactionValue ?? 0
+
+        setSalesSummaryData({
+          grossRevenueBeforeReturns,
+          totalValueReturned,
+          netRevenue,
+          totalNetTransactions,
+          averageTransactionValue,
+          salesByPaymentMethod,
+        })
+      } else if (reportType === 'income_statement') {
+        const netRevenue = data?.netRevenue ?? 0
+        const totalValueReturned = data?.totalValueReturned ?? 0
+        const netCOGS = data?.netCOGS ?? 0
+        const cogsOfReturnedItems = data?.cogsOfReturnedItems ?? 0
+        const grossRevenueBeforeReturns =
+          data?.grossRevenueBeforeReturns ?? netRevenue + totalValueReturned
+        const grossCOGSBeforeReturns =
+          data?.grossCOGSBeforeReturns ?? netCOGS + cogsOfReturnedItems
+        const totalExpenses = data?.totalExpenses ?? 0
+        const expensesBreakdown = data?.expensesBreakdown ?? []
+        const grossProfit = data?.grossProfit ?? netRevenue - netCOGS
+        const netProfit = data?.netProfit ?? grossProfit - totalExpenses
+
+        setIncomeStatementData({
+          grossRevenueBeforeReturns,
+          totalValueReturned,
+          netRevenue,
+          grossCOGSBeforeReturns,
+          cogsOfReturnedItems,
+          netCOGS,
+          grossProfit,
+          totalExpenses,
+          netProfit,
+          expensesBreakdown,
+        })
+      }
+
+      if (!data || Object.keys(data).length === 0) {
+        toast.info('Laporan Tidak Ditemukan', {
+          description:
+            'Belum ada laporan tersimpan untuk periode ini. Gunakan Generate Laporan terlebih dahulu.',
+        })
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 404) {
+        toast.info('Laporan Tidak Ditemukan', {
+          description:
+            'Belum ada laporan tersimpan untuk periode ini. Gunakan Generate Laporan terlebih dahulu.',
+        })
+      } else {
+        toast.error('Gagal Memuat Laporan', {
+          description: 'Terjadi kesalahan saat mengambil data.',
+        })
+      }
+    }
+    setLoadingView(false)
   }
 
   return (
@@ -328,7 +431,7 @@ export default function ReportsPage() {
                 Pilih jenis laporan dan filter untuk membuat laporan.
               </CardDescription>
             </CardHeader>
-            <CardContent className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end p-4 pt-0'>
+            <CardContent className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end p-4 pt-0'>
               <div>
                 <label
                   htmlFor='reportType'
@@ -363,6 +466,39 @@ export default function ReportsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <label
+                  htmlFor='periodMode'
+                  className='block text-xs font-medium mb-1'
+                >
+                  Periode
+                </label>
+                <Select
+                  value={periodMode}
+                  onValueChange={(v) => setPeriodMode(v as PeriodMode)}
+                >
+                  <SelectTrigger
+                    id='periodMode'
+                    className='rounded-md h-9 text-xs'
+                  >
+                    <SelectValue placeholder='Pilih periode' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='daily' className='text-xs'>
+                      Harian
+                    </SelectItem>
+                    <SelectItem value='monthly' className='text-xs'>
+                      Bulanan
+                    </SelectItem>
+                    <SelectItem value='ytd2025' className='text-xs'>
+                      S/D 2025 (YTD)
+                    </SelectItem>
+                    <SelectItem value='custom' className='text-xs'>
+                      Kustom
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className='lg:col-span-1'>
                 <label
                   htmlFor='branch'
@@ -370,18 +506,19 @@ export default function ReportsPage() {
                 >
                   Cabang
                 </label>
-                <Select value={selectedBranch?.id || ''} disabled>
+                <Select
+                  value={selectedBranch ? String(selectedBranch.id) : undefined}
+                >
                   <SelectTrigger id='branch' className='rounded-md h-9 text-xs'>
                     <SelectValue placeholder='Pilih Cabang' />
                   </SelectTrigger>
                   <SelectContent>
-                    {selectedBranch ? (
-                      <SelectItem value={selectedBranch.id} className='text-xs'>
+                    {selectedBranch && (
+                      <SelectItem
+                        value={String(selectedBranch.id)}
+                        className='text-xs'
+                      >
                         {selectedBranch.name}
-                      </SelectItem>
-                    ) : (
-                      <SelectItem value='' className='text-xs' disabled>
-                        Pilih cabang dari sidebar
                       </SelectItem>
                     )}
                   </SelectContent>
@@ -412,7 +549,10 @@ export default function ReportsPage() {
                     <Calendar
                       mode='single'
                       selected={startDate}
-                      onSelect={setStartDate}
+                      onSelect={(d) => {
+                        if (d) setStartDate(d)
+                        setPeriodMode('custom')
+                      }}
                       initialFocus
                       className='text-xs'
                     />
@@ -444,7 +584,10 @@ export default function ReportsPage() {
                     <Calendar
                       mode='single'
                       selected={endDate}
-                      onSelect={setEndDate}
+                      onSelect={(d) => {
+                        if (d) setEndDate(d)
+                        setPeriodMode('custom')
+                      }}
                       initialFocus
                       className='text-xs'
                       disabled={(date) =>
@@ -454,18 +597,29 @@ export default function ReportsPage() {
                   </PopoverContent>
                 </Popover>
               </div>
-              <Button
-                size='sm'
-                className='w-full sm:w-auto self-end rounded-md text-xs h-9'
-                onClick={handleGenerateReport}
-                disabled={loadingReport || !selectedBranch}
-              >
-                {loadingReport ? 'Memuat...' : 'Buat Laporan'}
-              </Button>
+              <div className='flex gap-2'>
+                <Button
+                  size='sm'
+                  className='w-full sm:w-auto self-end rounded-md text-xs h-9'
+                  onClick={handleGenerateReport}
+                  disabled={loadingGenerate || !selectedBranch}
+                >
+                  {loadingGenerate ? 'Menggenerate...' : 'Generate Laporan'}
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='w-full sm:w-auto self-end rounded-md text-xs h-9'
+                  onClick={handleViewReport}
+                  disabled={loadingView || !selectedBranch}
+                >
+                  {loadingView ? 'Memuat...' : 'Lihat Laporan'}
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
-          {loadingReport && (
+          {(loadingGenerate || loadingView) && (
             <Card className='shadow-sm'>
               <CardHeader className='p-4'>
                 <Skeleton className='h-6 w-1/2' />
@@ -480,7 +634,8 @@ export default function ReportsPage() {
           )}
 
           {salesSummaryData &&
-            !loadingReport &&
+            !loadingGenerate &&
+            !loadingView &&
             reportType === 'sales_summary' && (
               <Card className='shadow-sm'>
                 <CardHeader className='p-4'>
@@ -571,7 +726,8 @@ export default function ReportsPage() {
             )}
 
           {incomeStatementData &&
-            !loadingReport &&
+            !loadingGenerate &&
+            !loadingView &&
             reportType === 'income_statement' && (
               <Card className='shadow-sm'>
                 <CardHeader className='p-4'>
@@ -666,11 +822,11 @@ export default function ReportsPage() {
                       incomeStatementData.expensesBreakdown.map((exp) => (
                         <div
                           key={exp.category}
-                          className='flex justify-between'
+                          className='flex items-center justify-between'
                         >
-                          <span>{exp.category}:</span>
-                          <span className='font-medium text-destructive'>
-                            ({formatCurrency(exp.amount)})
+                          <span className='truncate pr-2'>{exp.category}:</span>
+                          <span className='font-medium text-destructive whitespace-nowrap'>
+                            - {formatCurrency(exp.amount)}
                           </span>
                         </div>
                       ))
@@ -706,16 +862,18 @@ export default function ReportsPage() {
               </Card>
             )}
 
-          {!(salesSummaryData || incomeStatementData) && !loadingReport && (
-            <Card className='shadow-sm'>
-              <CardContent className='p-10 text-center'>
-                <p className='text-sm text-muted-foreground'>
-                  Pilih filter di atas dan klik "Buat Laporan" untuk melihat
-                  hasilnya.
-                </p>
-              </CardContent>
-            </Card>
-          )}
+          {!(salesSummaryData || incomeStatementData) &&
+            !loadingGenerate &&
+            !loadingView && (
+              <Card className='shadow-sm'>
+                <CardContent className='p-10 text-center'>
+                  <p className='text-sm text-muted-foreground'>
+                    Pilih filter di atas dan klik "Generate Laporan" untuk
+                    melihat hasilnya.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
         </div>
       </MainLayout>
     </ProtectedRoute>

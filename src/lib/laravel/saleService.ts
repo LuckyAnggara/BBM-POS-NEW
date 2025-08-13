@@ -24,6 +24,7 @@ interface ListSalesParams {
   endDate?: string
   shiftId?: string
   status?: string
+  paymentStatusTerm?: string
 }
 
 interface ListSalesRequestParams {
@@ -72,6 +73,7 @@ export const listSales = async (
         start_date: params.startDate,
         end_date: params.endDate,
         shift_id: params.shiftId,
+        payment_status_term: params.paymentStatusTerm,
       },
     })
     return response.data

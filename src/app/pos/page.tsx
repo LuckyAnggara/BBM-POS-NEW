@@ -145,7 +145,11 @@ import { format, parseISO, isValid } from 'date-fns' // Added parseISO and isVal
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useDebounce } from '@uidotdev/usehooks'
-import { formatCurrency, formatDateIntlIntl } from '@/lib/helper'
+import {
+  formatCurrency,
+  formatDateIntl,
+  formatDateIntlIntl,
+} from '@/lib/helper'
 import { handlePrint } from '@/lib/printHelper'
 import { is } from 'date-fns/locale'
 
@@ -987,6 +991,7 @@ export default function POSPage() {
       setSelectedbank_name('')
       setBankRefNumberInput('')
       setcustomer_nameInputBank('')
+      setSelectedCustomerId('')
       fetchItemsData(currentPage, debouncedSearchTerm)
     } catch (error) {
       // 3. Blok `catch`: Menangkap semua jenis error
@@ -1034,6 +1039,7 @@ export default function POSPage() {
     if (selectedPaymentTerms === 'transfer') {
       setSelectedbank_name('')
       setBankRefNumberInput('')
+      setSelectedCustomerId('')
       setcustomer_nameInputBank('')
       setShowBankPaymentModal(true)
       return
@@ -3042,7 +3048,7 @@ export default function POSPage() {
           open={showCreditConfirmationDialog}
           onOpenChange={setShowCreditConfirmationDialog}
         >
-          <DialogContent className='sm:max-w-xs'>
+          <DialogContent className='sm:max-w-md'>
             <DialogHeader>
               <DialogTitle>Konfirmasi Penjualan Kredit</DialogTitle>
               <DialogDescription>
@@ -3050,22 +3056,20 @@ export default function POSPage() {
               </DialogDescription>
             </DialogHeader>
             <div className='py-3 space-y-2'>
-              <div className='flex justify-between text-sm'>
+              <div className='flex justify-between text-xs'>
                 <span>Pelanggan:</span>
                 <span className='font-semibold'>
                   {allCustomers.find((c) => String(c.id) === selectedCustomerId)
                     ?.name || '-'}
                 </span>
               </div>
-              <div className='flex justify-between text-sm'>
+              <div className='flex justify-between text-xs'>
                 <span>Jatuh Tempo:</span>
                 <span className='font-semibold'>
-                  {creditDueDate
-                    ? new Date(creditDueDate).toLocaleDateString('id-ID')
-                    : '-'}
+                  {creditDueDate ? formatDateIntlIntl(creditDueDate) : '-'}
                 </span>
               </div>
-              <div className='flex justify-between text-base font-bold border-t pt-2'>
+              <div className='flex justify-between text-sm font-bold border-t pt-2'>
                 <span>Total:</span>
                 <span>{formatCurrency(total)}</span>
               </div>
@@ -3073,13 +3077,17 @@ export default function POSPage() {
             <DialogFooter className='flex flex-row gap-2 pt-2'>
               <Button
                 variant='outline'
+                className='text-xs h-8'
                 onClick={() => setShowCreditConfirmationDialog(false)}
                 disabled={isCreditSaleProcessing}
               >
                 Batal
               </Button>
               {!isCreditSaleProcessing ? (
-                <Button variant='default' onClick={handleConfirmCreditSale}>
+                <Button
+                  className='text-xs h-8'
+                  onClick={handleConfirmCreditSale}
+                >
                   Konfirmasi
                 </Button>
               ) : (

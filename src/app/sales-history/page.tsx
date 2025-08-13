@@ -19,6 +19,7 @@ import {
   SaleRequestActionPayload,
   SaleStatus,
   SaleActionParams,
+  PURCHASE_ORDER_PAYMENT_TERMS,
 } from '@/lib/types'
 import {
   Table,
@@ -43,6 +44,8 @@ import {
   Send,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  BanknoteIcon,
 } from 'lucide-react'
 import Link from 'next/link'
 import {
@@ -114,6 +117,9 @@ export default function SalesHistoryPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [itemsPerPage, setItemsPerPage] = useState<number>(
     ITEMS_PER_PAGE_OPTIONS[0]
+  )
+  const [statusFilter, setStatusFilter] = useState<string>(
+    PURCHASE_ORDER_PAYMENT_TERMS[0]
   )
   const [totalItems, setTotalItems] = useState(0)
   const totalPages = Math.ceil(totalItems / itemsPerPage)
@@ -249,6 +255,42 @@ export default function SalesHistoryPage() {
     )
   }
 
+  const getCreditStatus = (status: SaleStatus) => {
+    if (status === 'returned') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> Diretur
+        </span>
+      )
+    }
+    if (status === 'voided') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> Dibatalkan
+        </span>
+      )
+    }
+    if (status === 'pending_return') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> Menunggu Retur
+        </span>
+      )
+    }
+    if (status === 'pending_void') {
+      return (
+        <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-red-700'>
+          <XCircle className='mr-1 h-3 w-3' /> MenungguDibatalkan
+        </span>
+      )
+    }
+    return (
+      <span className='inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700'>
+        <CheckCircle className='mr-1 h-3 w-3' /> Selesai
+      </span>
+    )
+  }
+
   const fetchTransactions = useCallback(
     async (page: number, currentSearchTerm: string) => {
       if (!currentUser || !selectedBranch || !startDate || !endDate) {
@@ -263,6 +305,7 @@ export default function SalesHistoryPage() {
         search: currentSearchTerm || undefined,
         start_date: startDate,
         end_date: endDate,
+
         page: page || 1,
       }
 
@@ -284,6 +327,7 @@ export default function SalesHistoryPage() {
         startDate: finalStartDate.toISOString(),
         endDate: finalEndDate.toISOString(),
         searchTerm: debouncedSearchTerm,
+        paymentStatusTerm: statusFilter,
         limit: itemsPerPage,
         page: currentPage,
       })
@@ -306,6 +350,7 @@ export default function SalesHistoryPage() {
       startDate,
       endDate,
       debouncedSearchTerm,
+      statusFilter,
       itemsPerPage,
       currentPage,
     ]
@@ -371,6 +416,32 @@ export default function SalesHistoryPage() {
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className='h-9 text-xs'
                   />
+                </div>
+                <div className='space-y-2'>
+                  <Label htmlFor='statusFilter' className='text-xs'>
+                    Status
+                  </Label>
+                  <Select
+                    value={statusFilter}
+                    onValueChange={(value) => {
+                      setStatusFilter(value)
+                    }}
+                  >
+                    <SelectTrigger className='h-9 text-xs w-32'>
+                      <SelectValue placeholder='Pilih jumlah' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PURCHASE_ORDER_PAYMENT_TERMS.map((option) => (
+                        <SelectItem
+                          key={option}
+                          value={option.toString()}
+                          className='text-xs'
+                        >
+                          {option.toUpperCase()}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className='flex flex-col space-y-2 justify-end'>
                   <Label className='text-xs'>Filter Tanggal</Label>
@@ -584,6 +655,11 @@ export default function SalesHistoryPage() {
                                 )}
                             </TableCell>
                             <TableCell className='text-xs text-center py-2'>
+                              <Button asChild variant='ghost' size='icon'>
+                                <Link href={`/sales/${tx.id}`}>
+                                  <Eye className=' h-3.5 w-3.5' />
+                                </Link>
+                              </Button>
                               <Button asChild variant='ghost' size='icon'>
                                 <Link
                                   href={`/invoice/${tx.id}/view`}

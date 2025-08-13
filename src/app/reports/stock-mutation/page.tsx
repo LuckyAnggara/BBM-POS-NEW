@@ -41,70 +41,52 @@ import {
   startOfMonth,
   endOfMonth,
   startOfWeek,
+  endOfWeek,
   endOfDay,
   startOfDay,
-  subDays,
 } from 'date-fns'
 import { Skeleton } from '@/components/ui/skeleton'
-import { getInventoryItems, type InventoryItem } from '@/lib/firebase/inventory'
 import {
-  getStockLevelAtDate,
-  getMutationsForProductInRange,
-  type StockMutation,
-} from '@/lib/firebase/stockMutations'
+  generateStockMutationReport,
+  getStockMutationReport,
+  getLiveStockMutationReport,
+  type StockMutationReportItem,
+} from '@/lib/laravel/stockMutationReportService'
+import { ITEMS_PER_PAGE_OPTIONS } from '@/lib/types'
 
-interface StockMutationReportItem {
-  productId: string
-  productName: string
-  sku?: string
-  categoryName?: string
-  initialStock: number
-  stockInFromPO: number
-  stockSold: number
-  stockReturned: number
-  finalStockCalculated: number // Renamed from finalStock
-  currentLiveStock: number // Stock from inventoryItems
-}
+// Types imported from service
 
 export default function StockMutationReportPage() {
   const { selectedBranch } = useBranches()
   const { toast } = useToast()
 
-  const [startDate, setStartDate] = useState<Date | undefined>(undefined)
+  // Start date is fixed at 01 Jan 2025 by backend; remove UI for start date
+  const fixedStart = new Date('2025-01-01T00:00:00')
   const [endDate, setEndDate] = useState<Date | undefined>(undefined)
-  const [loadingReport, setLoadingReport] = useState(false)
+  const [loadingGenerate, setLoadingGenerate] = useState(false)
+  const [loadingView, setLoadingView] = useState(false)
   const [reportData, setReportData] = useState<
     StockMutationReportItem[] | null
   >(null)
+  const [perPage, setPerPage] = useState<number>(
+    ITEMS_PER_PAGE_OPTIONS[1] || 20
+  )
+  const [page, setPage] = useState<number>(1)
+
+  const paginated = React.useMemo(() => {
+    if (!reportData) return []
+    const start = (page - 1) * perPage
+    return reportData.slice(start, start + perPage)
+  }, [reportData, page, perPage])
+  const totalPages = React.useMemo(() => {
+    if (!reportData || perPage <= 0) return 1
+    return Math.max(1, Math.ceil(reportData.length / perPage))
+  }, [reportData, perPage])
 
   useEffect(() => {
-    if (selectedBranch && selectedBranch.defaultReportPeriod) {
-      const now = new Date()
-      let newStart: Date, newEnd: Date
-      switch (selectedBranch.defaultReportPeriod) {
-        case 'thisWeek':
-          newStart = startOfWeek(now, { weekStartsOn: 1 })
-          newEnd = endOfWeek(now, { weekStartsOn: 1 })
-          break
-        case 'today':
-          newStart = startOfDay(now)
-          newEnd = endOfDay(now)
-          break
-        case 'thisMonth':
-        default:
-          newStart = startOfMonth(now)
-          newEnd = endOfMonth(now)
-          break
-      }
-      setStartDate(newStart)
-      setEndDate(newEnd)
-    } else if (!selectedBranch) {
-      setStartDate(startOfMonth(new Date()))
-      setEndDate(endOfMonth(new Date()))
-    } else {
-      setStartDate(startOfMonth(new Date()))
-      setEndDate(endOfMonth(new Date()))
-    }
+    // Default end date to end of month whenever branch changes or on mount
+    const now = new Date()
+    setEndDate(endOfMonth(now))
   }, [selectedBranch])
 
   const handleGenerateReport = useCallback(async () => {
@@ -116,115 +98,45 @@ export default function StockMutationReportPage() {
       })
       return
     }
-    if (!startDate || !endDate) {
+    if (!endDate) {
       toast({
         title: 'Tanggal Tidak Lengkap',
-        description: 'Silakan pilih tanggal mulai dan tanggal akhir.',
+        description: 'Silakan pilih tanggal akhir.',
         variant: 'destructive',
       })
       return
     }
-    if (endDate < startDate) {
-      toast({
-        title: 'Rentang Tanggal Tidak Valid',
-        description: 'Tanggal akhir tidak boleh sebelum tanggal mulai.',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    setLoadingReport(true)
+    setLoadingGenerate(true)
     setReportData(null)
+    setPage(1)
 
     try {
-      const inventoryItemsResult = await getInventoryItems(selectedBranch.id)
-      const itemsArrayForReport = inventoryItemsResult.items
+      const apiEnd = format(endDate, 'yyyy-MM-dd')
 
-      if (itemsArrayForReport.length === 0) {
+      await generateStockMutationReport({
+        branch_id: Number(selectedBranch.id),
+        end_date: apiEnd,
+      })
+
+      const stored = await getStockMutationReport({
+        branch_id: Number(selectedBranch.id),
+        end_date: apiEnd,
+      })
+
+      const items: StockMutationReportItem[] = stored?.data || []
+      setReportData(items)
+
+      if (!items || items.length === 0) {
         toast({
-          title: 'Tidak Ada Produk',
+          title: 'Tidak Ada Data',
           description:
-            'Tidak ada produk inventaris ditemukan untuk cabang ini.',
+            'Tidak ada produk atau mutasi stok pada periode ini untuk cabang terpilih.',
           variant: 'default',
         })
-        setLoadingReport(false)
-        return
-      }
-
-      const processedData: StockMutationReportItem[] = []
-
-      for (const item of itemsArrayForReport) {
-        const dateBeforeStartDate = subDays(startDate, 1) // Get stock at end of day before startDate
-        const initialStock = await getStockLevelAtDate(
-          item.id,
-          selectedBranch.id,
-          dateBeforeStartDate
-        )
-
-        const mutationsInPeriod = await getMutationsForProductInRange(
-          item.id,
-          selectedBranch.id,
-          startDate,
-          endDate
-        )
-
-        let stockInFromPO = 0
-        let stockSold = 0
-        let stockReturned = 0
-        // Can add other mutation types here like ADJUSTMENT_IN, ADJUSTMENT_OUT
-
-        mutationsInPeriod.forEach((mutation) => {
-          switch (mutation.type) {
-            case 'PURCHASE_RECEIPT':
-              stockInFromPO += mutation.quantityChange
-              break
-            case 'SALE':
-              stockSold += Math.abs(mutation.quantityChange) // quantityChange is negative
-              break
-            case 'SALE_RETURN':
-              stockReturned += mutation.quantityChange
-              break
-            case 'TRANSACTION_DELETED_SALE_RESTOCK':
-              // This is effectively a "return" or "inflow" from a sale perspective
-              stockReturned += mutation.quantityChange
-              break
-            // Add cases for ADJUSTMENT_IN, ADJUSTMENT_OUT etc. if needed
-          }
-        })
-
-        const finalStockCalculated =
-          initialStock + stockInFromPO - stockSold + stockReturned
-
-        processedData.push({
-          productId: item.id,
-          productName: item.name,
-          sku: item.sku,
-          categoryName: item.categoryName,
-          initialStock: initialStock,
-          stockInFromPO: stockInFromPO,
-          stockSold: stockSold,
-          stockReturned: stockReturned,
-          finalStockCalculated: finalStockCalculated,
-          currentLiveStock: item.quantity, // This is the current live stock from inventoryItems
-        })
-      }
-
-      setReportData(processedData)
-
-      if (
-        processedData.length > 0 &&
-        processedData.every(
-          (p) =>
-            p.initialStock === p.finalStockCalculated &&
-            p.stockInFromPO === 0 &&
-            p.stockSold === 0 &&
-            p.stockReturned === 0
-        )
-      ) {
+      } else {
         toast({
-          title: 'Tidak Ada Mutasi',
-          description:
-            'Tidak ada pergerakan stok signifikan (penjualan, retur, atau penerimaan PO) untuk produk pada periode ini.',
+          title: 'Laporan Diperbarui',
+          description: 'Laporan berhasil digenerate dan disimpan.',
           variant: 'default',
         })
       }
@@ -232,13 +144,149 @@ export default function StockMutationReportPage() {
       console.error('Error generating stock mutation report:', error)
       toast({
         title: 'Gagal Membuat Laporan',
-        description: 'Terjadi kesalahan saat mengambil data.',
+        description: 'Terjadi kesalahan saat membuat laporan.',
         variant: 'destructive',
       })
     } finally {
-      setLoadingReport(false)
+      setLoadingGenerate(false)
     }
-  }, [selectedBranch, startDate, endDate, toast])
+  }, [selectedBranch, endDate, toast])
+
+  const handleViewReport = useCallback(async () => {
+    if (!selectedBranch) {
+      toast({
+        title: 'Pilih Cabang',
+        description: 'Silakan pilih cabang terlebih dahulu.',
+        variant: 'destructive',
+      })
+      return
+    }
+    if (!endDate) {
+      toast({
+        title: 'Tanggal Tidak Lengkap',
+        description: 'Silakan pilih tanggal akhir.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setLoadingView(true)
+    setReportData(null)
+    setPage(1)
+    try {
+      const apiEnd = format(endDate, 'yyyy-MM-dd')
+      const stored = await getStockMutationReport({
+        branch_id: Number(selectedBranch.id),
+        end_date: apiEnd,
+      })
+      const items: StockMutationReportItem[] = stored?.data || []
+      setReportData(items)
+
+      if (!items || items.length === 0) {
+        toast({
+          title: 'Laporan Tidak Ditemukan',
+          description:
+            'Belum ada laporan tersimpan untuk periode ini. Gunakan Generate Laporan terlebih dahulu.',
+          variant: 'default',
+        })
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 404) {
+        toast({
+          title: 'Laporan Tidak Ditemukan',
+          description:
+            'Belum ada laporan tersimpan untuk periode ini. Gunakan Generate Laporan terlebih dahulu.',
+          variant: 'default',
+        })
+      } else {
+        toast({
+          title: 'Gagal Memuat Laporan',
+          description: 'Terjadi kesalahan saat mengambil data.',
+          variant: 'destructive',
+        })
+      }
+    } finally {
+      setLoadingView(false)
+    }
+  }, [selectedBranch, endDate, toast])
+
+  const handleLiveReport = useCallback(async () => {
+    if (!selectedBranch) {
+      toast({
+        title: 'Pilih Cabang',
+        description: 'Silakan pilih cabang terlebih dahulu.',
+        variant: 'destructive',
+      })
+      return
+    }
+    setLoadingView(true)
+    setReportData(null)
+    setPage(1)
+    try {
+      const live = await getLiveStockMutationReport(Number(selectedBranch.id))
+      const items: StockMutationReportItem[] = live?.data || []
+      setReportData(items)
+      if (!items || items.length === 0) {
+        toast({
+          title: 'Tidak Ada Data',
+          description: 'Tidak ada data untuk laporan live hari ini.',
+          variant: 'default',
+        })
+      }
+    } catch (e) {
+      toast({
+        title: 'Gagal Memuat Laporan',
+        description: 'Terjadi kesalahan saat mengambil laporan live.',
+        variant: 'destructive',
+      })
+    } finally {
+      setLoadingView(false)
+    }
+  }, [selectedBranch, toast])
+
+  const handleExportCsv = useCallback(() => {
+    if (!reportData || reportData.length === 0) return
+    const headers = [
+      'Produk',
+      'SKU',
+      'Kategori',
+      'Stok Awal Periode',
+      'Masuk (PO) (+)',
+      'Terjual (-)',
+      'Retur Jual (+)',
+      'Stok Akhir Periode (Hit.)',
+      'Stok Live Saat Ini',
+    ]
+    const rows = reportData.map((r) => [
+      r.productName,
+      r.sku ?? '',
+      r.categoryName ?? '',
+      r.initialStock,
+      r.stockInFromPO,
+      r.stockSold,
+      r.stockReturned,
+      r.finalStockCalculated,
+      r.currentLiveStock,
+    ])
+    const csv = [headers, ...rows]
+      .map((arr) =>
+        arr
+          .map((v) => String(v).replaceAll('"', '""'))
+          .map((v) => `"${v}"`)
+          .join(',')
+      )
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const endLabel = endDate ? format(endDate, 'yyyy-MM-dd') : 'live'
+    a.href = url
+    a.download = `mutasi-stok-${
+      selectedBranch?.name || 'cabang'
+    }-${endLabel}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [reportData, selectedBranch, endDate])
 
   return (
     <ProtectedRoute>
@@ -249,15 +297,14 @@ export default function StockMutationReportPage() {
               Laporan Mutasi Stok{' '}
               {selectedBranch ? `- ${selectedBranch.name}` : ''}
             </h1>
-            {reportData && !loadingReport && (
+            {reportData && !loadingGenerate && !loadingView && (
               <Button
                 variant='outline'
                 size='sm'
                 className='rounded-md text-xs'
-                disabled
+                onClick={handleExportCsv}
               >
-                <Download className='mr-1.5 h-3.5 w-3.5' /> Ekspor ke CSV/PDF
-                (Segera)
+                <Download className='mr-1.5 h-3.5 w-3.5' /> Ekspor CSV
               </Button>
             )}
           </div>
@@ -268,10 +315,12 @@ export default function StockMutationReportPage() {
                 Filter Laporan
               </CardTitle>
               <CardDescription className='text-xs'>
-                Pilih rentang tanggal untuk melihat mutasi stok.
+                Laporan backdate otomatis dibuat setiap malam. Anda dapat
+                melihat laporan tersimpan (01 Jan 2025 s.d. tanggal akhir) atau
+                melihat laporan live hari ini.
               </CardDescription>
             </CardHeader>
-            <CardContent className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end p-4 pt-0'>
+            <CardContent className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end p-4 pt-0'>
               <div className='lg:col-span-1'>
                 <label
                   htmlFor='branch'
@@ -279,55 +328,28 @@ export default function StockMutationReportPage() {
                 >
                   Cabang
                 </label>
-                <Select value={selectedBranch?.id || ''} disabled>
+                <Select
+                  defaultValue={
+                    selectedBranch ? String(selectedBranch.id) : undefined
+                  }
+                  disabled
+                >
                   <SelectTrigger id='branch' className='rounded-md h-9 text-xs'>
                     <SelectValue placeholder='Pilih Cabang' />
                   </SelectTrigger>
                   <SelectContent>
-                    {selectedBranch ? (
-                      <SelectItem value={selectedBranch.id} className='text-xs'>
+                    {selectedBranch && (
+                      <SelectItem
+                        value={String(selectedBranch.id)}
+                        className='text-xs'
+                      >
                         {selectedBranch.name}
-                      </SelectItem>
-                    ) : (
-                      <SelectItem value='' className='text-xs' disabled>
-                        Pilih cabang dari sidebar
                       </SelectItem>
                     )}
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <label
-                  htmlFor='startDate'
-                  className='block text-xs font-medium mb-1'
-                >
-                  Tanggal Mulai
-                </label>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant={'outline'}
-                      className='w-full justify-start text-left font-normal rounded-md h-9 text-xs'
-                    >
-                      <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
-                      {startDate ? (
-                        format(startDate, 'dd MMM yyyy')
-                      ) : (
-                        <span>Pilih tanggal</span>
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className='w-auto p-0'>
-                    <Calendar
-                      mode='single'
-                      selected={startDate}
-                      onSelect={setStartDate}
-                      initialFocus
-                      className='text-xs'
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
+              {/* Start date removed: fixed to 01 Jan 2025 */}
               <div>
                 <label
                   htmlFor='endDate'
@@ -356,23 +378,35 @@ export default function StockMutationReportPage() {
                       onSelect={setEndDate}
                       initialFocus
                       className='text-xs'
-                      disabled={{ before: startDate }}
+                      disabled={(date) => date < fixedStart}
                     />
                   </PopoverContent>
                 </Popover>
               </div>
-              <Button
-                size='sm'
-                className='w-full sm:w-auto self-end rounded-md text-xs h-9'
-                onClick={handleGenerateReport}
-                disabled={loadingReport || !selectedBranch}
-              >
-                {loadingReport ? 'Memuat...' : 'Buat Laporan'}
-              </Button>
+              <div className='flex gap-2'>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='w-full sm:w-auto self-end rounded-md text-xs h-9'
+                  onClick={handleViewReport}
+                  disabled={loadingView || !selectedBranch}
+                >
+                  {loadingView ? 'Memuat...' : 'Lihat Laporan'}
+                </Button>
+                <Button
+                  variant='secondary'
+                  size='sm'
+                  className='w-full sm:w-auto self-end rounded-md text-xs h-9'
+                  onClick={handleLiveReport}
+                  disabled={loadingView || !selectedBranch}
+                >
+                  Laporan Live (Hari Ini)
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
-          {loadingReport && (
+          {(loadingGenerate || loadingView) && (
             <Card className='shadow-sm'>
               <CardHeader className='p-4'>
                 <Skeleton className='h-6 w-1/2' />
@@ -387,7 +421,7 @@ export default function StockMutationReportPage() {
             </Card>
           )}
 
-          {reportData && !loadingReport && (
+          {reportData && !loadingGenerate && !loadingView && (
             <Card className='shadow-sm'>
               <CardHeader className='p-4'>
                 <CardTitle className='text-base font-semibold'>
@@ -395,12 +429,47 @@ export default function StockMutationReportPage() {
                 </CardTitle>
                 <CardDescription className='text-xs'>
                   Untuk cabang: {selectedBranch?.name || 'N/A'} <br />
-                  Periode:{' '}
-                  {startDate ? format(startDate, 'dd MMM yyyy') : 'N/A'} -{' '}
-                  {endDate ? format(endDate, 'dd MMM yyyy') : 'N/A'}
+                  Periode: {format(fixedStart, 'dd MMM yyyy')} -{' '}
+                  {endDate
+                    ? format(endDate, 'dd MMM yyyy')
+                    : format(new Date(), 'dd MMM yyyy')}
                 </CardDescription>
               </CardHeader>
-              <CardContent className='p-4 overflow-x-auto'>
+              <CardContent className='p-4 overflow-x-auto space-y-3'>
+                {/* Top controls: per-page selector and count */}
+                <div className='flex items-center justify-between gap-3'>
+                  <div className='text-xs text-muted-foreground'>
+                    Menampilkan {paginated.length} dari {reportData.length} item
+                  </div>
+                  <div className='flex items-center gap-2'>
+                    <span className='text-xs'>Tampil</span>
+                    <Select
+                      value={String(perPage)}
+                      onValueChange={(v) => {
+                        const n = parseInt(v, 10)
+                        setPerPage(n)
+                        setPage(1)
+                      }}
+                    >
+                      <SelectTrigger className='h-8 w-24 rounded-md text-xs'>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ITEMS_PER_PAGE_OPTIONS.map((opt) => (
+                          <SelectItem
+                            key={opt}
+                            value={String(opt)}
+                            className='text-xs'
+                          >
+                            {opt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <span className='text-xs'>per halaman</span>
+                  </div>
+                </div>
+
                 {reportData.length > 0 ? (
                   <Table>
                     <TableHeader>
@@ -433,7 +502,7 @@ export default function StockMutationReportPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {reportData.map((item) => (
+                      {paginated.map((item) => (
                         <TableRow key={item.productId}>
                           <TableCell className='text-xs font-medium py-1.5'>
                             {item.productName}
@@ -508,16 +577,64 @@ export default function StockMutationReportPage() {
                     cabang ini atau tidak ada mutasi pada periode terpilih.
                   </p>
                 )}
+
+                {/* Pagination controls */}
+                {reportData.length > 0 && (
+                  <div className='flex items-center justify-between pt-1'>
+                    <div className='text-xs text-muted-foreground'>
+                      Halaman {page} dari {totalPages}
+                    </div>
+                    <div className='flex items-center gap-2'>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        className='h-8 rounded-md text-xs'
+                        onClick={() => setPage(1)}
+                        disabled={page === 1}
+                      >
+                        « Pertama
+                      </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        className='h-8 rounded-md text-xs'
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        disabled={page === 1}
+                      >
+                        ‹ Sebelumnya
+                      </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        className='h-8 rounded-md text-xs'
+                        onClick={() =>
+                          setPage((p) => Math.min(totalPages, p + 1))
+                        }
+                        disabled={page >= totalPages}
+                      >
+                        Berikutnya ›
+                      </Button>
+                      <Button
+                        variant='outline'
+                        size='sm'
+                        className='h-8 rounded-md text-xs'
+                        onClick={() => setPage(totalPages)}
+                        disabled={page >= totalPages}
+                      >
+                        Terakhir »
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
 
-          {!reportData && !loadingReport && (
+          {!reportData && !loadingGenerate && !loadingView && (
             <Card className='shadow-sm'>
               <CardContent className='p-10 text-center'>
                 <p className='text-sm text-muted-foreground'>
-                  Pilih filter di atas dan klik "Buat Laporan" untuk melihat
-                  hasilnya.
+                  Laporan belum tersedia
                 </p>
               </CardContent>
             </Card>

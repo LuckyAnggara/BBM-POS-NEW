@@ -49,6 +49,8 @@ import {
   Filter,
   FilterX,
   Info,
+  Icon,
+  Printer,
 } from 'lucide-react'
 import { useForm, Controller, type SubmitHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -540,17 +542,23 @@ export default function AccountsReceivablePage() {
                       </TableCell>
                       <TableCell className='text-center py-2'>
                         <Button
-                          variant='outline'
+                          variant='ghost'
                           size='sm'
-                          className='h-7 text-xs mr-1'
                           onClick={() => handleOpenPaymentDialog(tx)}
                           disabled={
                             tx.payment_status === 'paid' ||
                             tx.status === 'returned'
                           }
                         >
-                          <DollarSign className='mr-1 h-3 w-3' /> Bayar
+                          <DollarSign className='h-3.5 w-3.5' />
                         </Button>
+
+                        <Button asChild variant='ghost' size='icon'>
+                          <Link href={`/sales/${tx.id}`}>
+                            <Eye className=' h-3.5 w-3.5' />
+                          </Link>
+                        </Button>
+
                         <Button
                           variant='ghost'
                           size='icon'
@@ -561,23 +569,8 @@ export default function AccountsReceivablePage() {
                             href={`/invoice/${tx.id}/print`}
                             target='_blank'
                           >
-                            <svg
-                              xmlns='http://www.w3.org/2000/svg'
-                              viewBox='0 0 24 24'
-                              className='h-3.5 w-3.5 fill-current'
-                            >
-                              <path d='M19 8H5c-1.654 0-3 1.346-3 3v3h4v4h12v-4h4v-3c0-1.654-1.346-3-3-3zM16 18H8v-4h8v4zm3-8c.552 0 1 .449 1 1v1h-2v-2h1zM18 3H6v4h12V3z' />
-                            </svg>
-                            <span className='sr-only'>Cetak Invoice</span>
+                            <Printer className=' h-3.5 w-3.5' />
                           </Link>
-                        </Button>
-                        <Button
-                          variant='ghost'
-                          size='sm'
-                          className='h-7 text-xs'
-                          asChild
-                        >
-                          <Link href={`/sales/${tx.id}`}>Detail</Link>
                         </Button>
                       </TableCell>
                     </TableRow>

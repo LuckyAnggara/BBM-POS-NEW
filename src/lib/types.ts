@@ -41,6 +41,7 @@ export type PurchaseOrderPaymentStatus =
   | 'paid'
   | 'overdue'
 export type PurchaseOrderPaymentTerms = 'cash' | 'credit'
+export const PURCHASE_ORDER_PAYMENT_TERMS = ['all', 'cash', 'credit']
 
 // ========================================================================
 // Definisi Interface Model Utama (sesuai Model Laravel)

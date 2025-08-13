@@ -66,7 +66,7 @@ export function NavUser() {
     if (!userData.branch_id) return 'Belum ada cabang'
     const foundBranch = branches.find((b) => b.id === userData.branch_id)
     return foundBranch?.name || 'ID Cabang tidak valid'
-  }, [userData, branches, isLoadingBranches])
+  }, [userData, branches, selectedBranch, isLoadingBranches])
 
   return (
     <SidebarMenu>
