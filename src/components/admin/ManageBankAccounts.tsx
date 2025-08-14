@@ -55,14 +55,14 @@ import {
   updateBankAccount,
   deleteBankAccount,
 } from '@/lib/laravel/bankAccounts' // Pastikan path ini benar
-import { Branch, type BankAccount, type BankAccountInput } from '@/lib/types' // Pastikan path ini benar
+import { Branch, type BankAccount, type BankAccountInput } from '@/lib/types'
 import { toast } from 'sonner'
 
 interface BankAccountFormState {
   bank_name: string
   account_number: string
   account_holder_name: string
-  branch_id?: number | string | null
+  branch_id: number | null
   is_active: boolean
 }
 
@@ -70,7 +70,7 @@ const initialBankAccountFormState: BankAccountFormState = {
   bank_name: '',
   account_number: '',
   account_holder_name: '',
-  branch_id: 'NONE',
+  branch_id: null,
   is_active: true,
 }
 
@@ -98,9 +98,14 @@ export default function ManageBankAccounts({
 
   const fetchBankAccounts = useCallback(async () => {
     setLoadingBankAccounts(true)
-    const fetchedBankAccounts = await listBankAccounts()
-    setBankAccounts(fetchedBankAccounts)
-    setLoadingBankAccounts(false)
+    try {
+      const fetchedBankAccounts = await listBankAccounts()
+      setBankAccounts(fetchedBankAccounts)
+    } catch (e: any) {
+      toast.error('Gagal memuat rekening bank', { description: e.message })
+    } finally {
+      setLoadingBankAccounts(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -117,10 +122,10 @@ export default function ManageBankAccounts({
     }))
   }
 
-  const handleBankAccountFormSelectChange = (name: string, value: string) => {
+  const handleBankAccountFormSelectChange = (value: string) => {
     setBankAccountForm((prev) => ({
       ...prev,
-      [name]: value === 'NONE' ? null : value,
+      branch_id: value === 'NONE' ? null : Number(value),
     }))
   }
 
@@ -133,23 +138,36 @@ export default function ManageBankAccounts({
         bank_name: bankAccount.bank_name,
         account_number: bankAccount.account_number,
         account_holder_name: bankAccount.account_holder_name,
-        branch_id: bankAccount.branch_id ? bankAccount.branch_id : 'NONE',
+        branch_id: bankAccount.branch_id ? Number(bankAccount.branch_id) : null,
         is_active: bankAccount.is_active,
       })
-    } else {
-      setBankAccountForm(initialBankAccountFormState)
-    }
+    } else setBankAccountForm(initialBankAccountFormState)
     setIsBankAccountModalOpen(true)
   }
 
   const handleSubmitBankAccount = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSubmittingBankAccount(true)
-    const dataInput: BankAccountInput = {
-      ...bankAccountForm,
-      branch_id: bankAccountForm.branch_id || 'NONE', // Ensure branch_id is null if not selected
-      is_default: false, // Default to false, handled in backend logic
+    // Basic validation
+    if (
+      !bankAccountForm.bank_name.trim() ||
+      !bankAccountForm.account_number.trim() ||
+      !bankAccountForm.account_holder_name.trim()
+    ) {
+      toast.error('Kolom wajib masih kosong', {
+        description: 'Nama bank, nomor rekening, dan atas nama wajib diisi.',
+      })
+      setIsSubmittingBankAccount(false)
+      return
     }
+    const dataInput: BankAccountInput = {
+      bank_name: bankAccountForm.bank_name.trim(),
+      account_number: bankAccountForm.account_number.trim(),
+      account_holder_name: bankAccountForm.account_holder_name.trim(),
+      branch_id: bankAccountForm.branch_id, // API expects number|null
+      is_active: bankAccountForm.is_active,
+      is_default: false,
+    } as any
     try {
       let result: BankAccount | { error: string }
       if (editingBankAccount) {
@@ -162,9 +180,7 @@ export default function ManageBankAccounts({
       if ('error' in result) {
         toast.error(
           editingBankAccount ? 'Gagal Memperbarui' : 'Gagal Menambah',
-          {
-            description: result.error,
-          }
+          { description: String(result.error) }
         )
         return // Stop execution if there's a validation error
       }
@@ -396,10 +412,12 @@ export default function ManageBankAccounts({
                 Tautkan ke Cabang (Opsional)
               </Label>
               <Select
-                value={String(bankAccountForm.branch_id) || 'NONE'}
-                onValueChange={(value) =>
-                  handleBankAccountFormSelectChange('branch_id', value)
+                value={
+                  bankAccountForm.branch_id === null
+                    ? 'NONE'
+                    : String(bankAccountForm.branch_id)
                 }
+                onValueChange={handleBankAccountFormSelectChange}
                 disabled={loadingBranches}
               >
                 <SelectTrigger className='h-9 text-xs mt-1'>

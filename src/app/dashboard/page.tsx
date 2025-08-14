@@ -14,30 +14,24 @@ import {
   DollarSign,
   TrendingUp,
   Activity,
-  Layers,
-  AlertTriangle as AlertTriangleIconLucide,
   Info,
-  Package,
   Archive as ArchiveIcon,
-} from 'lucide-react' // Added ArchiveIcon
+} from 'lucide-react'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
-import { getExpenses } from '@/lib/appwrite/expenses'
-import { getInventoryItems } from '@/lib/appwrite/inventory'
+// Replaced Appwrite services with Laravel endpoints
+import { getDashboardSummary } from '@/lib/laravel/dashboard'
 import {
   startOfMonth,
   endOfMonth,
   format,
-  subDays,
   startOfDay,
   endOfDay,
   startOfWeek,
   endOfWeek,
-  parseISO,
-  isValid,
-} from 'date-fns' // Added parseISO, isValid
+} from 'date-fns'
 import { id as localeID } from 'date-fns/locale'
 import {
   BarChart,
@@ -59,9 +53,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { getActiveShift, getTransactions } from '@/lib/appwrite/pos'
-import clsx from 'clsx' // PERBAIKAN: Impor clsx untuk conditional class yang bersih
-import { ShiftDocument } from '@/lib/appwrite/types'
+import { getActiveShift } from '@/lib/laravel/shiftService' // TODO: migrate to Laravel shift endpoint later
+import { Shift } from '@/lib/types'
+import { formatCurrency } from '@/lib/helper'
+import { useShiftUnloadWarning } from '@/hooks/useShiftUnloadWarning'
 
 interface DashboardStats {
   grossRevenueBeforeReturns: number
@@ -76,14 +71,6 @@ interface DashboardStats {
 interface InventorySummary {
   totalUniqueProducts: number
   lowStockItemsCount: number
-}
-
-interface ActiveShiftSummary {
-  initialCash: number
-  estimatedCashInDrawer: number
-  totalCashSalesShift: number
-  totalCardSalesShift: number
-  totalTransferSalesShift: number
 }
 
 interface ChartDataPoint {
@@ -118,29 +105,50 @@ export default function DashboardPage() {
   )
   const [inventorySummary, setInventorySummary] =
     useState<InventorySummary | null>(null)
-  const [activeShiftSummary, setActiveShiftSummary] =
-    useState<ShiftDocument | null>(null)
+  const [activeShiftSummary, setActiveShiftSummary] = useState<Shift | null>(
+    null
+  )
   const [loadingShift, setLoadingShift] = useState(true)
   const [chartSalesData, setChartSalesData] = useState<ChartDataPoint[]>([])
+  const [chartProfitData, setChartProfitData] = useState<ChartDataPoint[]>([])
+  const [topProducts, setTopProducts] = useState<
+    {
+      product_id: number
+      product_name: string
+      qty: number
+      total_sales: number
+    }[]
+  >([])
 
   const [loadingStats, setLoadingStats] = useState(true)
   const [loadingInventorySummary, setLoadingInventorySummary] = useState(true)
   const [loadingActiveShift, setLoadingActiveShift] = useState(true)
   const [loadingChartSales, setLoadingChartSales] = useState(true)
 
-  const [isShiftFromPreviousDay, setIsShiftFromPreviousDay] = useState(false)
+  // Polling interval (ms) for refreshing active shift info
+  const SHIFT_POLL_INTERVAL = 60_000
 
   const fetchActiveShift = useCallback(async () => {
     if (currentUser && selectedBranch) {
       setLoadingShift(true)
-      const shift = await getActiveShift(currentUser.id, selectedBranch.id)
-      setActiveShiftSummary(shift)
-      setLoadingShift(false)
+      try {
+        const shift = await getActiveShift()
+        setActiveShiftSummary(shift)
+      } finally {
+        setLoadingShift(false)
+      }
     }
   }, [currentUser, selectedBranch])
 
+  // Global unload warning for active shift
+  useShiftUnloadWarning(activeShiftSummary)
+
   useEffect(() => {
     fetchActiveShift()
+    const id = setInterval(() => {
+      fetchActiveShift()
+    }, SHIFT_POLL_INTERVAL)
+    return () => clearInterval(id)
   }, [fetchActiveShift])
 
   const isCashierWithoutBranch =
@@ -158,13 +166,6 @@ export default function DashboardPage() {
     }
     return `Dashboard ${selectedBranch ? `- ${selectedBranch.name}` : ''}`
   }, [isCashierWithoutBranch, userData, selectedBranch])
-
-  const formatCurrency = (amount: number): string => {
-    return `${selectedBranch?.currency || 'Rp'}${amount.toLocaleString(
-      'id-ID',
-      { minimumFractionDigits: 0, maximumFractionDigits: 0 }
-    )}`
-  }
 
   const formatYAxisTick = (value: number) => {
     const currency = selectedBranch?.currency || 'Rp'
@@ -206,167 +207,61 @@ export default function DashboardPage() {
   }, [selectedRangePreset])
 
   const fetchDashboardData = useCallback(async () => {
-    if (
-      !selectedBranch ||
-      !currentUser ||
-      !currentDisplayRange ||
-      isCashierWithoutBranch
-    ) {
+    if (!selectedBranch || !currentDisplayRange || isCashierWithoutBranch) {
       setDashboardStats(null)
-      setActiveShiftSummary(null)
       setChartSalesData([])
+      setChartProfitData([])
+      setTopProducts([])
+      setInventorySummary(null)
       setLoadingStats(false)
-      setLoadingActiveShift(false)
       setLoadingChartSales(false)
-      if (!selectedBranch || isCashierWithoutBranch) {
-        setInventorySummary(null)
-        setLoadingInventorySummary(false)
-      }
+      setLoadingInventorySummary(false)
       return
     }
-
     setLoadingStats(true)
-    setLoadingActiveShift(true)
     setLoadingChartSales(true)
-
-    if (loadingInventorySummary) {
-      setLoadingInventorySummary(true)
-      getInventoryItems(selectedBranch.id)
-        .then((result) => {
-          const itemsArray = result.items
-          const totalUniqueProducts = itemsArray.length
-          const lowStockItemsCount = itemsArray.filter(
-            (item) => item.quantity < LOW_STOCK_THRESHOLD
-          ).length
-          setInventorySummary({ totalUniqueProducts, lowStockItemsCount })
-          setLoadingInventorySummary(false)
-        })
-        .catch((e) => {
-          console.error('Error fetching inventory:', e)
-          setLoadingInventorySummary(false)
-        })
-    }
-
-    const { start, end } = currentDisplayRange
-
+    setLoadingInventorySummary(true)
     try {
-      const [
-        transactionDocument, // Now ClientPosTransaction[]
-        rangeExpenses,
-        activeShiftData, // Now ClientPosShift | null
-      ] = await Promise.all([
-        getTransactions({
-          branchId: selectedBranch.id,
-          options: {
-            startDate: start.toISOString(),
-            endDate: end.toISOString(),
-          },
-        }),
-        getExpenses(selectedBranch.id, { startDate: start, endDate: end }),
-        getActiveShift(currentUser.id, selectedBranch.id),
-      ])
-
-      let grossRevenueBeforeReturns = 0
-      let netRevenue = 0
-      let netTransactionCount = 0
-
-      transactionDocument.documents.forEach((tx) => {
-        if (tx.status === 'completed') {
-          grossRevenueBeforeReturns += tx.totalAmount
-          netRevenue += tx.totalAmount
-          netTransactionCount++
-        } else if (tx.status === 'returned') {
-          netRevenue -= tx.totalAmount
-        }
+      const { start, end } = currentDisplayRange
+      const summary = await getDashboardSummary({
+        branch_id: selectedBranch.id,
+        start_date: start.toISOString().slice(0, 10),
+        end_date: end.toISOString().slice(0, 10),
       })
-
-      const totalExpenses = rangeExpenses.reduce(
-        (sum, exp) => sum + exp.amount,
-        0
-      )
       setDashboardStats({
-        grossRevenueBeforeReturns,
-        netRevenue,
-        totalExpenses,
-        netTransactionCount,
+        grossRevenueBeforeReturns: summary.gross_revenue_before_returns,
+        netRevenue: summary.net_revenue,
+        totalExpenses: summary.total_expenses,
+        netTransactionCount: summary.net_transaction_count,
         revenueChangePercentage: 'N/A',
         expenseChangePercentage: 'N/A',
         transactionChangePercentage: 'N/A',
       })
-      setLoadingStats(false)
-
-      const salesByDay: { [key: string]: { total: number; dateObj: Date } } = {}
-      let currentDateIterator = startOfDay(start)
-      while (currentDateIterator <= endOfDay(end)) {
-        const dateKey = format(currentDateIterator, 'yyyy-MM-dd')
-        salesByDay[dateKey] = {
-          total: 0,
-          dateObj: new Date(currentDateIterator),
-        }
-        currentDateIterator = startOfDay(subDays(currentDateIterator, -1))
-      }
-
-      transactionDocument.documents.forEach((tx) => {
-        const txDate = parseISO(tx.$createdAt) // Parse ISO string to Date
-        if (isValid(tx.$createdAt)) {
-          const dateStr = format(tx.$createdAt, 'yyyy-MM-dd')
-          if (salesByDay[dateStr]) {
-            if (tx.status === 'completed') {
-              salesByDay[dateStr].total += tx.totalAmount
-            } else if (tx.status === 'returned') {
-              salesByDay[dateStr].total -= tx.totalAmount
-            }
-          }
-        }
-      })
-
-      const formattedChartSales = Object.entries(salesByDay)
-        .map(([_, value]) => ({
-          name: format(value.dateObj, 'd MMM', { locale: localeID }),
-          total: value.total,
+      setChartSalesData(
+        summary.daily_sales.map((d) => ({
+          name: format(new Date(d.date), 'd MMM', { locale: localeID }),
+          total: d.total,
         }))
-        .sort((a, b) => {
-          const dateAEntry = Object.values(salesByDay).find(
-            (d) =>
-              d.dateObj &&
-              format(d.dateObj, 'd MMM', { locale: localeID }) === a.name
-          )
-          const dateBEntry = Object.values(salesByDay).find(
-            (d) =>
-              d.dateObj &&
-              format(d.dateObj, 'd MMM', { locale: localeID }) === b.name
-          )
-          const dateA = dateAEntry ? dateAEntry.dateObj : null
-          const dateB = dateBEntry ? dateBEntry.dateObj : null
-          if (dateA && dateB) return dateA.getTime() - dateB.getTime()
-          return 0
-        })
-
-      setChartSalesData(formattedChartSales)
-      setLoadingChartSales(false)
-
-      if (activeShiftData) {
-        const shiftTransactions = await getTransactions({
-          branchId: selectedBranch.id,
-          shiftId: activeShiftData.$id,
-        }) // Returns ClientPosTransaction[]
-      } else {
-        setActiveShiftSummary(null)
-      }
-      setLoadingActiveShift(false)
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error)
+      )
+      setChartProfitData(
+        summary.daily_profit.map((d) => ({
+          name: format(new Date(d.date), 'd MMM', { locale: localeID }),
+          total: d.profit,
+        }))
+      )
+      setTopProducts(summary.top_products)
+      setInventorySummary({
+        totalUniqueProducts: summary.inventory.total_unique_products,
+        lowStockItemsCount: summary.inventory.low_stock_items_count,
+      })
+    } catch (e) {
+      console.error('Error loading dashboard summary', e)
+    } finally {
       setLoadingStats(false)
-      setLoadingActiveShift(false)
       setLoadingChartSales(false)
+      setLoadingInventorySummary(false)
     }
-  }, [
-    selectedBranch,
-    currentUser,
-    currentDisplayRange,
-    loadingInventorySummary,
-    isCashierWithoutBranch,
-  ])
+  }, [selectedBranch, currentDisplayRange, isCashierWithoutBranch])
 
   useEffect(() => {
     if (currentDisplayRange && (selectedBranch || isCashierWithoutBranch)) {
@@ -543,9 +438,7 @@ export default function DashboardPage() {
                       <Skeleton className='h-7 w-1/2' />
                     ) : (
                       <div className='text-lg font-bold'>
-                        {(
-                          dashboardStats?.netTransactionCount ?? 0
-                        ).toLocaleString('id-ID')}
+                        {dashboardStats?.netTransactionCount ?? 0}
                       </div>
                     )}
                     {loadingStats ? (
@@ -576,7 +469,7 @@ export default function DashboardPage() {
                           Modal Awal:
                         </p>
                         <p className='font-medium text-blue-700 dark:text-blue-200'>
-                          {formatCurrency(activeShiftSummary.startingBalance)}
+                          {formatCurrency(activeShiftSummary.starting_balance)}
                         </p>
                       </div>
                       {/* <div>
@@ -628,7 +521,7 @@ export default function DashboardPage() {
                 <Card className='lg:col-span-2'>
                   <CardHeader>
                     <CardTitle className='text-base font-semibold'>
-                      Tren Penjualan
+                      Tren Penjualan (Omset)
                     </CardTitle>
                     <CardDescription className='text-xs'>
                       Total penjualan bersih harian untuk periode terpilih.
@@ -704,44 +597,137 @@ export default function DashboardPage() {
                 <Card className='lg:col-span-2'>
                   <CardHeader>
                     <CardTitle className='text-base font-semibold'>
-                      Status Inventaris
+                      Tren Laba / Rugi Harian
                     </CardTitle>
                     <CardDescription className='text-xs'>
-                      Ringkasan level stok terkini (tidak terpengaruh filter
-                      tanggal).
+                      Laba (positif) atau rugi (negatif) bersih per hari.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className='space-y-3'>
-                    <div className='flex items-center justify-between p-2.5 bg-muted/20 rounded-md'>
-                      <div>
+                  <CardContent className='h-[300px] sm:h-[340px] pl-0 pr-4 pb-6'>
+                    {loadingChartSales ? (
+                      <Skeleton className='h-full w-full' />
+                    ) : chartProfitData.length > 0 ? (
+                      <ChartContainer
+                        config={chartConfig}
+                        className='w-full h-full'
+                      >
+                        <BarChart
+                          data={chartProfitData}
+                          margin={{ top: 5, right: 5, left: 15, bottom: 5 }}
+                        >
+                          <CartesianGrid
+                            vertical={false}
+                            strokeDasharray='3 3'
+                          />
+                          <XAxis
+                            dataKey='name'
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            className='text-xs sm:text-sm'
+                          />
+                          <YAxis
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            tickFormatter={formatYAxisTick}
+                            className='text-xs sm:text-sm'
+                            width={70}
+                          />
+                          <RechartsTooltip
+                            cursor={{ fill: 'hsl(var(--muted))' }}
+                            content={
+                              <ChartTooltipContent
+                                formatter={(value, name, props) => (
+                                  <div className='flex flex-col'>
+                                    <span className='text-xs text-muted-foreground'>
+                                      {props.payload.name}
+                                    </span>
+                                    <span className='font-bold'>
+                                      {formatCurrency(value as number)}
+                                    </span>
+                                  </div>
+                                )}
+                                indicator='dot'
+                              />
+                            }
+                          />
+                          <Bar
+                            dataKey='total'
+                            fill='var(--color-penjualan)'
+                            radius={4}
+                          />
+                        </BarChart>
+                      </ChartContainer>
+                    ) : (
+                      <div className='flex items-center justify-center h-full'>
+                        <p className='text-sm text-muted-foreground'>
+                          Tidak ada data laba/rugi untuk periode ini.
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card className='lg:col-span-2'>
+                  <CardHeader>
+                    <CardTitle className='text-base font-semibold'>
+                      Status Inventaris & Produk Terlaris
+                    </CardTitle>
+                    <CardDescription className='text-xs'>
+                      Snapshot inventaris saat ini & 10 produk paling laris di
+                      periode.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className='space-y-4'>
+                    <div className='grid grid-cols-2 gap-3'>
+                      <div className='p-2.5 bg-muted/20 rounded-md'>
                         <h3 className='font-medium text-xs'>
-                          Stok Hampir Habis ({'<'} {LOW_STOCK_THRESHOLD})
+                          Stok Hampir Habis (&lt; {LOW_STOCK_THRESHOLD})
                         </h3>
                         {loadingInventorySummary ? (
-                          <Skeleton className='h-5 w-20' />
+                          <Skeleton className='h-5 w-16' />
                         ) : (
                           <p className='text-base font-bold text-destructive'>
                             {inventorySummary?.lowStockItemsCount ?? 0} item
                           </p>
                         )}
                       </div>
-                      <AlertTriangleIconLucide className='h-5 w-5 text-destructive' />
-                    </div>
-                    <div className='flex items-center justify-between p-2.5 bg-muted/20 rounded-md'>
-                      <div>
+                      <div className='p-2.5 bg-muted/20 rounded-md'>
                         <h3 className='font-medium text-xs'>
                           Total Produk Unik
                         </h3>
                         {loadingInventorySummary ? (
-                          <Skeleton className='h-5 w-24' />
+                          <Skeleton className='h-5 w-20' />
                         ) : (
                           <p className='text-base font-bold text-primary'>
-                            {inventorySummary?.totalUniqueProducts ?? 0} produk
-                            terdaftar
+                            {inventorySummary?.totalUniqueProducts ?? 0}
                           </p>
                         )}
                       </div>
-                      <Package className='h-5 w-5 text-primary' />
+                    </div>
+                    <div>
+                      <h4 className='text-xs font-semibold mb-2'>Top Produk</h4>
+                      {loadingStats ? (
+                        <Skeleton className='h-24 w-full' />
+                      ) : topProducts.length > 0 ? (
+                        <ul className='divide-y border rounded-md overflow-hidden'>
+                          {topProducts.map((p, idx) => (
+                            <li
+                              key={p.product_id}
+                              className='flex items-center justify-between text-xs px-2 py-1.5'
+                            >
+                              <span className='truncate'>
+                                {idx + 1}. {p.product_name}
+                              </span>
+                              <span className='font-medium'>{p.qty}x</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className='text-xs text-muted-foreground'>
+                          Tidak ada data penjualan produk.
+                        </p>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

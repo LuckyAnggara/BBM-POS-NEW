@@ -13,14 +13,14 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import {
-  getNotifications,
-  markNotificationAsRead,
-  markAllNotificationsAsRead,
-  markNotificationAsDismissed, // Ditambahkan
-  type AppNotification,
-} from '@/lib/firebase/notifications'
+  fetchNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  dismissNotification,
+  type NotificationItem,
+} from '@/lib/laravel/notifications'
 import { useAuth } from '@/contexts/auth-context'
-import { format } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import { id as localeID } from 'date-fns/locale'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -41,58 +41,58 @@ import {
 } from '@/components/ui/alert-dialog'
 
 export default function NotificationsPage() {
-  const { currentUser, userData, refreshAuthContextState } = useAuth() // refreshAuthContextState ditambahkan
+  const authCtx = useAuth()
+  // Backward compatibility if refreshAuthContextState not provided
+  // @ts-ignore
+  const refreshAuthContextState: (() => Promise<void>) | undefined = (
+    authCtx as any
+  ).refreshAuthContextState
+  const { currentUser, userData } = authCtx
   const { toast } = useToast()
-  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(true)
   const [notificationToDelete, setNotificationToDelete] =
-    useState<AppNotification | null>(null)
+    useState<NotificationItem | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const fetchUserNotifications = useCallback(async () => {
-    if (!currentUser?.uid) {
+    if (!currentUser) {
       setLoading(false)
       return
     }
     setLoading(true)
-    const fetchedNotifications = await getNotifications({
-      limitResults: 50,
-      userId: currentUser.uid,
-    })
-    setNotifications(fetchedNotifications)
+    const fetched = await fetchNotifications({ limit: 50 })
+    setNotifications(fetched.data)
     setLoading(false)
-  }, [currentUser?.uid])
+  }, [currentUser])
 
   useEffect(() => {
     fetchUserNotifications()
   }, [fetchUserNotifications])
 
   const handleMarkAsRead = async (
-    notificationId: string,
+    notificationId: number,
     linkUrl?: string | null
   ) => {
-    if (!currentUser?.uid || !notificationId) return
-
+    if (!currentUser || !notificationId) return
     const notification = notifications.find((n) => n.id === notificationId)
-    if (notification && notification.isRead && !linkUrl) return
-
-    await markNotificationAsRead(currentUser.uid, notificationId)
+    if (notification && notification.is_read && !linkUrl) return
+    await markNotificationRead(notificationId)
     setNotifications((prev) =>
-      prev.map((n) => (n.id === notificationId ? { ...n, isRead: true } : n))
+      prev.map((n) =>
+        n.id === notificationId
+          ? { ...n, is_read: true, read_at: new Date().toISOString() }
+          : n
+      )
     )
-    await refreshAuthContextState() // Refresh unread count in sidebar
-
-    if (linkUrl) {
-      window.open(linkUrl, '_blank', 'noopener,noreferrer')
-    }
+    if (refreshAuthContextState) await refreshAuthContextState()
+    if (linkUrl) window.open(linkUrl, '_blank', 'noopener,noreferrer')
   }
 
   const handleMarkAllRead = async () => {
-    if (!currentUser?.uid || notifications.length === 0) return
-    const unreadNotificationIds = notifications
-      .filter((n) => !n.isRead)
-      .map((n) => n.id)
-    if (unreadNotificationIds.length === 0) {
+    if (!currentUser || notifications.length === 0) return
+    const hasUnread = notifications.some((n) => !n.is_read)
+    if (!hasUnread) {
       toast({
         title: 'Tidak Ada Notifikasi Baru',
         description: 'Semua notifikasi sudah terbaca.',
@@ -101,30 +101,36 @@ export default function NotificationsPage() {
     }
 
     setLoading(true)
-    await markAllNotificationsAsRead(currentUser.uid, unreadNotificationIds)
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
+    await markAllNotificationsRead()
+    setNotifications((prev) =>
+      prev.map((n) => ({
+        ...n,
+        is_read: true,
+        read_at: n.read_at || new Date().toISOString(),
+      }))
+    )
     setLoading(false)
-    await refreshAuthContextState() // Refresh unread count
+    if (refreshAuthContextState) await refreshAuthContextState()
     toast({
       title: 'Notifikasi Ditandai',
       description: 'Semua notifikasi telah ditandai sebagai sudah dibaca.',
     })
   }
 
-  const handleOpenDeleteConfirm = (notification: AppNotification) => {
+  const handleOpenDeleteConfirm = (notification: NotificationItem) => {
     setNotificationToDelete(notification)
     setShowDeleteConfirm(true)
   }
 
   const handleConfirmDismiss = async () => {
-    if (!currentUser?.uid || !notificationToDelete) return
+    if (!currentUser || !notificationToDelete) return
 
-    await markNotificationAsDismissed(currentUser.uid, notificationToDelete.id)
+    await dismissNotification(notificationToDelete.id)
     // Optimistically update UI
     setNotifications((prev) =>
       prev.filter((n) => n.id !== notificationToDelete.id)
     )
-    await refreshAuthContextState() // Refresh unread count
+    if (refreshAuthContextState) await refreshAuthContextState()
     toast({
       title: 'Notifikasi Dihapus',
       description: `Notifikasi "${notificationToDelete.title}" telah dihapus dari tampilan Anda.`,
@@ -133,9 +139,10 @@ export default function NotificationsPage() {
     setNotificationToDelete(null)
   }
 
-  const formatDateIntl = (timestamp: Date | undefined) => {
-    if (!timestamp) return 'N/A'
-    return format(timestamp, 'eeee, dd MMMM yyyy - HH:mm', { locale: localeID })
+  const formatDateIntl = (isoString?: string | null) => {
+    if (!isoString) return 'N/A'
+    const date = parseISO(isoString)
+    return format(date, 'eeee, dd MMMM yyyy - HH:mm', { locale: localeID })
   }
 
   return (
@@ -149,7 +156,7 @@ export default function NotificationsPage() {
                 Notifikasi & Pengumuman
               </h1>
             </div>
-            {notifications.some((n) => !n.isRead) && !loading && (
+            {notifications.some((n) => !n.is_read) && !loading && (
               <Button
                 onClick={handleMarkAllRead}
                 size='sm'
@@ -197,21 +204,21 @@ export default function NotificationsPage() {
                     key={notif.id}
                     className={cn(
                       'shadow-sm hover:shadow-md transition-shadow',
-                      !notif.isRead &&
+                      !notif.is_read &&
                         'bg-primary/5 dark:bg-primary/10 border-primary/30'
                     )}
                   >
                     <CardHeader className='pb-2 pt-3 px-4'>
                       <div className='flex justify-between items-start gap-2'>
-                        {notif.linkUrl ? (
+                        {notif.link_url ? (
                           <Link
-                            href={notif.linkUrl}
+                            href={notif.link_url}
                             target='_blank'
                             rel='noopener noreferrer'
                             className='text-sm font-semibold leading-tight hover:underline hover:text-primary group cursor-pointer'
                             onClick={(e) => {
                               e.stopPropagation()
-                              handleMarkAsRead(notif.id, notif.linkUrl)
+                              handleMarkAsRead(notif.id, notif.link_url)
                             }}
                           >
                             {notif.title}
@@ -227,10 +234,10 @@ export default function NotificationsPage() {
                         )}
                         <div className='flex items-center gap-1'>
                           <Badge
-                            variant={notif.isRead ? 'secondary' : 'default'}
+                            variant={notif.is_read ? 'secondary' : 'default'}
                             className='text-xs shrink-0'
                           >
-                            {notif.isRead ? 'Dibaca' : 'Baru'}
+                            {notif.is_read ? 'Dibaca' : 'Baru'}
                           </Badge>
                           <Button
                             variant='ghost'
@@ -250,13 +257,14 @@ export default function NotificationsPage() {
                         className='text-xs pt-0.5 cursor-pointer'
                         onClick={() => handleMarkAsRead(notif.id)}
                       >
-                        Oleh: {notif.createdByName} ({notif.category}) <br />{' '}
-                        {formatDateIntl(notif.createdAt?.toDate())}
+                        Oleh: {notif.created_by_name || 'System'} (
+                        {notif.category}) <br />{' '}
+                        {formatDateIntl(notif.created_at)}
                       </CardDescription>
                     </CardHeader>
                     <CardContent
                       className='px-4 pb-3 cursor-pointer'
-                      onClick={() => handleMarkAsRead(notif.id, notif.linkUrl)}
+                      onClick={() => handleMarkAsRead(notif.id, notif.link_url)}
                     >
                       <p className='text-xs text-foreground/90 whitespace-pre-wrap'>
                         {notif.message}

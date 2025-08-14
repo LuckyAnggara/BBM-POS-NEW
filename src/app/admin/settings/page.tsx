@@ -84,7 +84,7 @@ export default function AdminSettingsPage() {
                   value='system-utilities'
                   className='text-xs px-3 py-1.5 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm'
                 >
-                  Utilitas Sistem
+                  Tutup Saldo Persediaan
                 </TabsTrigger>
               </TabsList>
 
@@ -93,8 +93,6 @@ export default function AdminSettingsPage() {
                   branches={branches}
                   loadingBranches={loadingBranches}
                   adminSelectedBranch={adminSelectedBranch}
-                  setAdminSelectedBranchId={setAdminSelectedBranchId}
-                  toast={toast}
                   fetchUsers={async () => {}} // Placeholder, ManageUsers will fetch its own
                 />
               </TabsContent>
@@ -114,7 +112,6 @@ export default function AdminSettingsPage() {
               <TabsContent value='system-utilities' className='mt-0'>
                 <SystemUtilities
                   adminSelectedBranch={adminSelectedBranch}
-                  currentUser={currentUser}
                   userData={userData}
                   toast={toast}
                 />

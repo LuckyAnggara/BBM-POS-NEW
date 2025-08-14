@@ -22,23 +22,23 @@ import {
 } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
-  getNotifications,
-  type AppNotification,
-} from '@/lib/firebase/notifications'
+  fetchSentNotifications,
+  type NotificationItem,
+} from '@/lib/laravel/notifications'
 import { format } from 'date-fns'
 import { id as localeID } from 'date-fns/locale'
 import { Badge } from '@/components/ui/badge'
 
 export default function NotificationHistoryPage() {
   const { userData } = useAuth()
-  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchNotificationHistory = useCallback(async () => {
     setLoading(true)
     // Fetch all notifications, admin might want to see everything sent
-    const fetchedNotifications = await getNotifications({ limitResults: 100 })
-    setNotifications(fetchedNotifications)
+    const fetched = await fetchSentNotifications({ limit: 100 })
+    setNotifications(fetched?.data || [])
     setLoading(false)
   }, [])
 
@@ -48,9 +48,11 @@ export default function NotificationHistoryPage() {
     }
   }, [fetchNotificationHistory, userData])
 
-  const formatDateIntl = (timestamp: Date | undefined) => {
-    if (!timestamp) return 'N/A'
-    return format(timestamp, 'dd MMM yyyy, HH:mm', { locale: localeID })
+  const formatDateIntl = (iso: string | undefined) => {
+    if (!iso) return 'N/A'
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return 'N/A'
+    return format(d, 'dd MMM yyyy, HH:mm', { locale: localeID })
   }
 
   if (userData?.role !== 'admin') {
@@ -127,10 +129,10 @@ export default function NotificationHistoryPage() {
                             </Badge>
                           </TableCell>
                           <TableCell className='py-2 text-xs'>
-                            {formatDateIntl(notif.createdAt?.toDate())}
+                            {formatDateIntl(notif.created_at)}
                           </TableCell>
                           <TableCell className='py-2 text-xs hidden md:table-cell'>
-                            {notif.createdByName}
+                            {notif.created_by_name}
                           </TableCell>
                           <TableCell
                             className='py-2 text-xs hidden lg:table-cell max-w-xs truncate'

@@ -1,170 +1,338 @@
+'use client'
 
-"use client";
+import React, { useState, useEffect } from 'react'
+import MainLayout from '@/components/layout/main-layout'
+import ProtectedRoute from '@/components/auth/ProtectedRoute'
+import { useAuth } from '@/contexts/auth-context'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from '@/components/ui/card'
+import { Send, Link as LinkIcon } from 'lucide-react'
+import { useForm, Controller, type SubmitHandler } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { useToast } from '@/hooks/use-toast'
+// Laravel migration: replace firebase notification sending with backend API call
+import { createNotification } from '@/lib/laravel/notifications'
+import api from '@/lib/api'
+import { useRouter } from 'next/navigation'
 
-import React, { useState } from "react";
-import MainLayout from "@/components/layout/main-layout";
-import ProtectedRoute from "@/components/auth/ProtectedRoute";
-import { useAuth } from "@/contexts/auth-context";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Send, Link as LinkIcon } from "lucide-react";
-import { useForm, Controller, type SubmitHandler } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { useToast } from "@/hooks/use-toast";
-import { sendNotification, NOTIFICATION_CATEGORIES, type NotificationCategory, type AppNotificationInput } from "@/lib/firebase/notifications";
-import { useRouter } from "next/navigation";
-
+const NOTIFICATION_CATEGORIES = [
+  'general',
+  'info',
+  'warning',
+  'system',
+] as const
 const notificationFormSchema = z.object({
-  title: z.string().min(5, { message: "Judul minimal 5 karakter." }).max(100, { message: "Judul maksimal 100 karakter."}),
-  message: z.string().min(10, { message: "Pesan minimal 10 karakter." }).max(1000, { message: "Pesan maksimal 1000 karakter."}), // Increased max length for message
-  category: z.enum(NOTIFICATION_CATEGORIES, { required_error: "Kategori harus dipilih." }),
-  linkUrl: z.string().url({ message: "URL Link tidak valid. Contoh: https://domain.com/path" }).optional().or(z.literal('')),
-});
+  title: z
+    .string()
+    .min(5, { message: 'Judul minimal 5 karakter.' })
+    .max(100, { message: 'Judul maksimal 100 karakter.' }),
+  message: z
+    .string()
+    .min(10, { message: 'Pesan minimal 10 karakter.' })
+    .max(1000, { message: 'Pesan maksimal 1000 karakter.' }),
+  category: z.enum(NOTIFICATION_CATEGORIES, {
+    required_error: 'Kategori harus dipilih.',
+  }),
+  linkUrl: z
+    .string()
+    .url({ message: 'URL Link tidak valid. Contoh: https://domain.com/path' })
+    .optional()
+    .or(z.literal('')),
+  branchId: z.string(), // empty = all branches
+})
 
-type NotificationFormValues = z.infer<typeof notificationFormSchema>;
+type NotificationFormValues = z.infer<typeof notificationFormSchema>
 
 export default function SendNotificationPage() {
-  const { userData, currentUser } = useAuth();
-  const { toast } = useToast();
-  const router = useRouter();
-  const [isSending, setIsSending] = useState(false);
+  const { userData, currentUser } = useAuth()
+  const { toast } = useToast()
+  const router = useRouter()
+  const [isSending, setIsSending] = useState(false)
+  const [branches, setBranches] = useState<{ id: number; name: string }[]>([])
+  const [loadingBranches, setLoadingBranches] = useState(false)
 
   const notificationForm = useForm<NotificationFormValues>({
     resolver: zodResolver(notificationFormSchema),
     defaultValues: {
-      title: "",
-      message: "",
+      title: '',
+      message: '',
       category: undefined,
-      linkUrl: "",
+      linkUrl: '',
+      branchId: 'all',
     },
-  });
+  })
 
-  const onSubmitNotification: SubmitHandler<NotificationFormValues> = async (values) => {
+  // Fetch branches (simple list) once
+  useEffect(() => {
+    const fetchBranches = async () => {
+      try {
+        setLoadingBranches(true)
+        const { data } = await api.get('/api/branches')
+        // Support both array or paginated { data: [...] }
+        const list = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.data)
+          ? data.data
+          : []
+        setBranches(
+          list.map((b: any) => ({
+            id: b.id,
+            name: b.name || b.nama || `Cabang ${b.id}`,
+          }))
+        )
+      } catch (e) {
+        // Silent fail; keep select minimal
+      } finally {
+        setLoadingBranches(false)
+      }
+    }
+    fetchBranches()
+  }, [])
+
+  const onSubmitNotification: SubmitHandler<NotificationFormValues> = async (
+    values
+  ) => {
     if (!currentUser || !userData || userData.role !== 'admin') {
-      toast({ title: "Akses Ditolak", description: "Anda tidak memiliki izin untuk mengirim notifikasi.", variant: "destructive" });
-      return;
+      toast({
+        title: 'Akses Ditolak',
+        description: 'Anda tidak memiliki izin untuk mengirim notifikasi.',
+        variant: 'destructive',
+      })
+      return
     }
-    setIsSending(true);
+    setIsSending(true)
 
-    const notificationData: AppNotificationInput = {
-      title: values.title,
-      message: values.message,
-      category: values.category,
-      createdByUid: currentUser.uid,
-      createdByName: userData.name || "Admin",
-      isGlobal: true, 
-      linkUrl: values.linkUrl || undefined,
-    };
-
-    const result = await sendNotification(notificationData);
-
-    if (result && "error" in result) {
-      toast({ title: "Gagal Mengirim Notifikasi", description: result.error, variant: "destructive" });
-    } else {
-      toast({ title: "Notifikasi Terkirim", description: `Notifikasi "${values.title}" berhasil dikirim.` });
-      notificationForm.reset();
-      router.push("/admin/notification-history"); 
+    try {
+      const res = await createNotification({
+        title: values.title,
+        message: values.message,
+        category: values.category,
+        link_url: values.linkUrl || undefined,
+        branch_id: values.branchId ? Number(values.branchId) : undefined,
+      })
+      if (res?.data) {
+        toast({
+          title: 'Notifikasi Terkirim',
+          description: `Notifikasi "${values.title}" berhasil dikirim.`,
+        })
+        notificationForm.reset()
+        router.push('/admin/notification-history')
+      } else {
+        toast({
+          title: 'Gagal Mengirim Notifikasi',
+          description: 'Terjadi kesalahan saat mengirim.',
+          variant: 'destructive',
+        })
+      }
+    } catch (e: any) {
+      toast({
+        title: 'Gagal Mengirim Notifikasi',
+        description: e?.message || 'Error tidak diketahui',
+        variant: 'destructive',
+      })
     }
-    setIsSending(false);
-  };
-  
-  if (userData?.role !== 'admin') {
-    return (
-        <ProtectedRoute>
-            <MainLayout>
-                <div className="p-4 text-center text-destructive">
-                    Hanya admin yang dapat mengakses halaman ini.
-                </div>
-            </MainLayout>
-        </ProtectedRoute>
-    );
+    setIsSending(false)
   }
 
+  if (userData?.role !== 'admin') {
+    return (
+      <ProtectedRoute>
+        <MainLayout>
+          <div className='p-4 text-center text-destructive'>
+            Hanya admin yang dapat mengakses halaman ini.
+          </div>
+        </MainLayout>
+      </ProtectedRoute>
+    )
+  }
 
   return (
     <ProtectedRoute>
       <MainLayout>
-        <div className="space-y-6">
-          <h1 className="text-xl md:text-2xl font-semibold font-headline">
+        <div className='space-y-6'>
+          <h1 className='text-xl md:text-2xl font-semibold font-headline'>
             Kirim Notifikasi Baru
           </h1>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base font-semibold">Buat dan Kirim Notifikasi Global</CardTitle>
-              <CardDescription className="text-xs">
-                Notifikasi ini akan dikirimkan ke semua pengguna aplikasi.
+              <CardTitle className='text-base font-semibold'>
+                Buat dan Kirim Notifikasi
+              </CardTitle>
+              <CardDescription className='text-xs'>
+                Pilih cabang tertentu atau kosongkan untuk kirim ke semua
+                (global).
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={notificationForm.handleSubmit(onSubmitNotification)} className="space-y-4">
+              <form
+                onSubmit={notificationForm.handleSubmit(onSubmitNotification)}
+                className='space-y-4'
+              >
                 <div>
-                  <Label htmlFor="title" className="text-xs">Judul Notifikasi*</Label>
-                  <Input 
-                    id="title" 
-                    {...notificationForm.register("title")} 
-                    className="h-9 text-sm mt-1" 
-                    placeholder="Contoh: Pembaruan Aplikasi Penting"
+                  <Label htmlFor='branchId' className='text-xs'>
+                    Target Cabang (Opsional)
+                  </Label>
+                  <Select
+                    value={notificationForm.watch('branchId')}
+                    onValueChange={(v) =>
+                      notificationForm.setValue('branchId', v)
+                    }
+                    disabled={isSending || loadingBranches}
+                  >
+                    <SelectTrigger
+                      id='branchId'
+                      aria-label='Target Cabang (Opsional)'
+                      className='h-9 text-xs mt-1'
+                    >
+                      <SelectValue
+                        placeholder={
+                          loadingBranches ? 'Memuat cabang...' : 'Semua Cabang'
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value='all' className='text-xs'>
+                        Semua Cabang
+                      </SelectItem>
+                      {branches.map((b) => (
+                        <SelectItem
+                          key={b.id}
+                          value={String(b.id)}
+                          className='text-xs'
+                        >
+                          {b.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor='title' className='text-xs'>
+                    Judul Notifikasi*
+                  </Label>
+                  <Input
+                    id='title'
+                    {...notificationForm.register('title')}
+                    className='h-9 text-sm mt-1'
+                    placeholder='Contoh: Pembaruan Aplikasi Penting'
                     disabled={isSending}
                   />
-                  {notificationForm.formState.errors.title && <p className="text-xs text-destructive mt-1">{notificationForm.formState.errors.title.message}</p>}
+                  {notificationForm.formState.errors.title && (
+                    <p className='text-xs text-destructive mt-1'>
+                      {notificationForm.formState.errors.title.message}
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <Label htmlFor="category" className="text-xs">Kategori Notifikasi*</Label>
+                  <Label htmlFor='category' className='text-xs'>
+                    Kategori Notifikasi*
+                  </Label>
                   <Controller
-                    name="category"
+                    name='category'
                     control={notificationForm.control}
                     render={({ field }) => (
-                      <Select onValueChange={field.onChange} value={field.value} disabled={isSending}>
-                        <SelectTrigger className="h-9 text-xs mt-1">
-                          <SelectValue placeholder="Pilih kategori" />
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value}
+                        disabled={isSending}
+                      >
+                        <SelectTrigger
+                          aria-label='Kategori Notifikasi*'
+                          className='h-9 text-xs mt-1'
+                        >
+                          <SelectValue placeholder='Pilih kategori' />
                         </SelectTrigger>
                         <SelectContent>
-                          {NOTIFICATION_CATEGORIES.map(cat => (
-                            <SelectItem key={cat} value={cat} className="text-xs">{cat}</SelectItem>
+                          {NOTIFICATION_CATEGORIES.map((cat) => (
+                            <SelectItem
+                              key={cat}
+                              value={cat}
+                              className='text-xs'
+                            >
+                              {cat}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     )}
                   />
-                  {notificationForm.formState.errors.category && <p className="text-xs text-destructive mt-1">{notificationForm.formState.errors.category.message}</p>}
+                  {notificationForm.formState.errors.category && (
+                    <p className='text-xs text-destructive mt-1'>
+                      {notificationForm.formState.errors.category.message}
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <Label htmlFor="message" className="text-xs">Pesan Notifikasi*</Label>
-                  <Textarea 
-                    id="message" 
-                    {...notificationForm.register("message")} 
-                    className="text-sm mt-1 min-h-[120px]" 
-                    placeholder="Tulis pesan notifikasi Anda di sini..."
+                  <Label htmlFor='message' className='text-xs'>
+                    Pesan Notifikasi*
+                  </Label>
+                  <Textarea
+                    id='message'
+                    {...notificationForm.register('message')}
+                    className='text-sm mt-1 min-h-[120px]'
+                    placeholder='Tulis pesan notifikasi Anda di sini...'
                     disabled={isSending}
                   />
-                  {notificationForm.formState.errors.message && <p className="text-xs text-destructive mt-1">{notificationForm.formState.errors.message.message}</p>}
+                  {notificationForm.formState.errors.message && (
+                    <p className='text-xs text-destructive mt-1'>
+                      {notificationForm.formState.errors.message.message}
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <Label htmlFor="linkUrl" className="text-xs">URL Link Terkait (Opsional)</Label>
-                  <div className="flex items-center gap-2 mt-1">
-                    <LinkIcon className="h-4 w-4 text-muted-foreground" />
-                    <Input 
-                      id="linkUrl" 
-                      {...notificationForm.register("linkUrl")} 
-                      className="h-9 text-sm" 
-                      placeholder="https://contoh.com/info-penting"
+                  <Label htmlFor='linkUrl' className='text-xs'>
+                    URL Link Terkait (Opsional)
+                  </Label>
+                  <div className='flex items-center gap-2 mt-1'>
+                    <LinkIcon className='h-4 w-4 text-muted-foreground' />
+                    <Input
+                      id='linkUrl'
+                      {...notificationForm.register('linkUrl')}
+                      className='h-9 text-sm'
+                      placeholder='https://contoh.com/info-penting'
                       disabled={isSending}
                     />
                   </div>
-                  {notificationForm.formState.errors.linkUrl && <p className="text-xs text-destructive mt-1">{notificationForm.formState.errors.linkUrl.message}</p>}
+                  {notificationForm.formState.errors.linkUrl && (
+                    <p className='text-xs text-destructive mt-1'>
+                      {notificationForm.formState.errors.linkUrl.message}
+                    </p>
+                  )}
                 </div>
-                
-                <Button type="submit" className="text-sm h-9" disabled={isSending || !notificationForm.formState.isValid}>
-                  {isSending ? "Mengirim..." : <><Send className="mr-2 h-4 w-4" /> Kirim Notifikasi</>}
+
+                <Button
+                  type='submit'
+                  className='text-sm h-9'
+                  disabled={isSending || !notificationForm.formState.isValid}
+                >
+                  {isSending ? (
+                    'Mengirim...'
+                  ) : (
+                    <>
+                      <Send className='mr-2 h-4 w-4' /> Kirim Notifikasi
+                    </>
+                  )}
                 </Button>
               </form>
             </CardContent>
@@ -172,5 +340,5 @@ export default function SendNotificationPage() {
         </div>
       </MainLayout>
     </ProtectedRoute>
-  );
+  )
 }

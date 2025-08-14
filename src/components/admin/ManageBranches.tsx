@@ -51,7 +51,7 @@ import {
 import { Branch } from '@/lib/types' // Pastikan path ini benar
 import { toast } from 'sonner'
 import { useBranches } from '@/contexts/branch-context'
-import { set } from 'date-fns'
+// removed unused import 'set' from date-fns
 
 interface BranchFormState {
   name: string
@@ -114,30 +114,40 @@ export default function ManageBranches({
 
   const handleCreateBranch = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!branchForm.name.trim()) {
+    const nameTrim = branchForm.name.trim()
+    if (!nameTrim) {
       toast.error('Nama cabang kosong', {
         description: 'Silakan masukkan nama cabang.',
       })
       return
     }
+    if (branchForm.tax_rate && Number(branchForm.tax_rate) < 0) {
+      toast.error('Tarif pajak tidak valid', {
+        description: 'Nilai pajak tidak boleh negatif.',
+      })
+      return
+    }
     setIsSubmittingBranch(true)
     const branchInput: BranchInput = {
-      name: branchForm.name,
-      invoice_name: branchForm.invoice_name || branchForm.name,
+      name: nameTrim,
+      invoice_name: branchForm.invoice_name.trim() || nameTrim,
       currency: branchForm.currency || 'IDR',
       tax_rate: parseFloat(branchForm.tax_rate) || 0,
       address: branchForm.address,
       phone: branchForm.phone,
       transaction_deletion_password:
         branchForm.transaction_deletion_password || '',
-    }
+      // Provide defaults for required properties not in form
+      printer_port: (branchForm as any).printer_port || '',
+      intl: (branchForm as any).intl || 'id-ID',
+    } as BranchInput
     try {
       const newBranch = await createBranch(branchInput)
       toast.success('Cabang Berhasil Dibuat', {
         description: `Cabang "${newBranch.name}" telah ditambahkan.`,
       })
       setBranchForm(initialBranchFormState)
-      refreshBranches()
+      await refreshBranches()
     } catch (error: any) {
       toast.error('Gagal Membuat Cabang', {
         description: error.message || 'Terjadi kesalahan saat membuat cabang.',
@@ -163,16 +173,24 @@ export default function ManageBranches({
   }
 
   const handleUpdateBranch = async () => {
-    if (!editingBranch || !editBranchForm.name.trim()) {
+    if (!editingBranch) return
+    const nameTrim = editBranchForm.name.trim()
+    if (!nameTrim) {
       toast.error('Data tidak lengkap', {
         description: 'Nama cabang tidak boleh kosong.',
       })
       return
     }
+    if (editBranchForm.tax_rate && Number(editBranchForm.tax_rate) < 0) {
+      toast.error('Tarif pajak tidak valid', {
+        description: 'Nilai pajak tidak boleh negatif.',
+      })
+      return
+    }
     setIsUpdatingBranch(true)
     const branchUpdates: Partial<BranchInput> = {
-      name: editBranchForm.name,
-      invoice_name: editBranchForm.invoice_name || editBranchForm.name,
+      name: nameTrim,
+      invoice_name: editBranchForm.invoice_name.trim() || nameTrim,
       currency: editBranchForm.currency || 'IDR',
       tax_rate: parseFloat(editBranchForm.tax_rate) || 0,
       address: editBranchForm.address,
@@ -181,13 +199,16 @@ export default function ManageBranches({
         editBranchForm.transaction_deletion_password,
     }
     try {
-      const updatedBranch = await updateBranch(editingBranch.id, branchUpdates)
+      const updatedBranch = await updateBranch(
+        String(editingBranch.id),
+        branchUpdates
+      )
       toast.success('Cabang Berhasil Diperbarui')
       setIsEditBranchModalOpen(false)
       setEditingBranch(null)
-      refreshBranches()
+      await refreshBranches()
       if (adminSelectedBranch && adminSelectedBranch.id === updatedBranch.id) {
-        setAdminSelectedBranchId(updatedBranch.id)
+        setAdminSelectedBranchId(String(updatedBranch.id))
       }
     } catch (error: any) {
       toast.error('Gagal Memperbarui Cabang', {
@@ -203,7 +224,7 @@ export default function ManageBranches({
     if (!branchToDelete) return
     setIsDeletingBranch(true)
     try {
-      await deleteBranch(branchToDelete.id)
+      await deleteBranch(String(branchToDelete.id))
       toast.success('Cabang Berhasil Dihapus')
       refreshBranches()
       await fetchUsers() // Refresh user list as their branch assignments might change
