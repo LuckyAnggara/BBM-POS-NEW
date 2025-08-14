@@ -90,6 +90,44 @@ export interface Branch {
   intl: string
 }
 
+// ================= Stock Opname =================
+export type StockOpnameStatus = 'DRAFT' | 'SUBMIT' | 'APPROVED' | 'REJECTED'
+
+export interface StockOpnameSession {
+  id: number
+  branch_id: number
+  created_by: number
+  submitted_by: number | null
+  approved_by: number | null
+  status: StockOpnameStatus
+  code: string
+  notes: string | null
+  admin_notes: string | null
+  total_items: number
+  total_positive_adjustment: number
+  total_negative_adjustment: number
+  submitted_at: string | null
+  approved_at: string | null
+  rejected_at: string | null
+  created_at: string
+  updated_at: string
+  items?: StockOpnameItem[]
+}
+
+export interface StockOpnameItem {
+  id: number
+  session_id: number
+  product_id: number
+  branch_id: number
+  product_name: string
+  system_quantity: number
+  counted_quantity: number
+  difference: number
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface Category {
   id: number
   name: string
@@ -462,4 +500,5 @@ export type SupplierPaymentEditInput = Omit<
 // }
 
 export const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
+export const STOCK_OPNAME_PAGE_SIZE_OPTIONS = [10, 25, 50]
 export const ADMIN_REQUEST_SALES_STATUS = ['return', 'void', 'all']

@@ -54,6 +54,12 @@ export const navMain = (unreadCount: number) => [
         icon: Archive,
         adminOnly: false,
       },
+      {
+        href: '/stock-opname',
+        label: 'Stock Opname',
+        icon: ListChecks,
+        adminOnly: false,
+      },
     ],
   },
   {

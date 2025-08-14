@@ -145,10 +145,6 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchActiveShift()
-    const id = setInterval(() => {
-      fetchActiveShift()
-    }, SHIFT_POLL_INTERVAL)
-    return () => clearInterval(id)
   }, [fetchActiveShift])
 
   const isCashierWithoutBranch =
