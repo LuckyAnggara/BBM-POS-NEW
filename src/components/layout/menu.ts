@@ -162,6 +162,12 @@ export const navAdmin = () => [
     adminOnly: true,
   },
   {
+    href: '/admin/stock-opname-review',
+    label: 'Review Stock Opname',
+    icon: ListChecks,
+    adminOnly: true,
+  },
+  {
     href: '/admin/settings',
     label: 'Pengaturan Admin',
     icon: Settings,

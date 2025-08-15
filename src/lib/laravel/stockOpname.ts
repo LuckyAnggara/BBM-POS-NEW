@@ -14,18 +14,56 @@ export interface AddItemPayload {
   notes?: string
 }
 
+export interface StockOpnamePaginatedResponse {
+  data: StockOpnameSession[]
+  total: number
+  per_page: number
+  current_page: number
+  last_page: number
+  next_page_url: string | null
+  prev_page_url: string | null
+}
+
 export const listStockOpname = async (options?: {
   status?: StockOpnameStatus | 'all'
   per_page?: number
   page?: number
-}): Promise<StockOpnameSession[]> => {
-  const { status, per_page, page } = options || {}
+  search?: string
+}): Promise<StockOpnamePaginatedResponse> => {
+  const { status, per_page, page, search } = options || {}
   const params: any = {}
   if (status && status !== 'all') params.status = status
   if (per_page) params.per_page = per_page
   if (page) params.page = page
+  if (search) params.search = search
   const res = await api.get('/api/stock-opname', { params })
-  return res.data.data || res.data
+  return res.data
+}
+
+// Admin review functions - untuk melihat semua stock opname dari semua branch
+export const listStockOpnameForReview = async (options?: {
+  status?: StockOpnameStatus | 'all'
+  per_page?: number
+  page?: number
+  search?: string
+  branch_id?: number | string | 'all'
+  start_date?: string
+  end_date?: string
+}): Promise<StockOpnamePaginatedResponse> => {
+  const { status, per_page, page, search, branch_id, start_date, end_date } =
+    options || {}
+  const params: any = {}
+  if (status && status !== 'all') params.status = status
+  if (per_page) params.per_page = per_page
+  if (page) params.page = page
+  if (search) params.search = search
+  if (branch_id && branch_id !== 'all') params.branch_id = branch_id
+  if (start_date) params.start_date = start_date
+  if (end_date) params.end_date = end_date
+
+  // Admin endpoint yang bisa melihat semua branch
+  const res = await api.get('/api/admin/stock-opname-review', { params })
+  return res.data
 }
 
 export const createStockOpname = async (
@@ -84,6 +122,31 @@ export const rejectStockOpname = async (
   admin_notes: string
 ): Promise<StockOpnameSession> => {
   const res = await api.post(`/api/stock-opname/${id}/reject`, { admin_notes })
+  return res.data
+}
+
+// Admin specific functions - untuk approve/reject melalui admin panel
+export const adminApproveStockOpname = async (
+  id: number
+): Promise<StockOpnameSession> => {
+  const res = await api.post(`/api/admin/stock-opname-review/${id}/approve`)
+  return res.data
+}
+
+export const adminRejectStockOpname = async (
+  id: number,
+  admin_notes: string
+): Promise<StockOpnameSession> => {
+  const res = await api.post(`/api/admin/stock-opname-review/${id}/reject`, {
+    admin_notes,
+  })
+  return res.data
+}
+
+export const getStockOpnameForReview = async (
+  id: number
+): Promise<StockOpnameSession> => {
+  const res = await api.get(`/api/admin/stock-opname-review/${id}`)
   return res.data
 }
 

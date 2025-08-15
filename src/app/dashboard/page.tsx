@@ -130,12 +130,12 @@ export default function DashboardPage() {
 
   const fetchActiveShift = useCallback(async () => {
     if (currentUser && selectedBranch) {
-      setLoadingShift(true)
+      setLoadingActiveShift(true)
       try {
         const shift = await getActiveShift()
         setActiveShiftSummary(shift)
       } finally {
-        setLoadingShift(false)
+        setLoadingActiveShift(false)
       }
     }
   }, [currentUser, selectedBranch])

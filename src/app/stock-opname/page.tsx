@@ -1,11 +1,13 @@
 'use client'
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Select,
   SelectTrigger,
@@ -14,32 +16,36 @@ import {
   SelectItem,
 } from '@/components/ui/select'
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
   Plus,
   Loader2,
   ClipboardList,
   RefreshCw,
-  Filter,
   Download,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  Info,
 } from 'lucide-react'
 import {
   listStockOpname,
   createStockOpname,
   exportCsvUrl,
+  StockOpnamePaginatedResponse,
 } from '@/lib/laravel/stockOpname'
 import {
   StockOpnameSession,
   StockOpnameStatus,
   STOCK_OPNAME_PAGE_SIZE_OPTIONS,
 } from '@/lib/types'
-// local simple debounce hook
-function useDebounce<T>(value: T, delay = 500): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delay)
-    return () => clearTimeout(id)
-  }, [value, delay])
-  return debounced
-}
+import { useDebounce } from '@uidotdev/usehooks'
 import { toast } from 'sonner'
 import Link from 'next/link'
 
@@ -51,183 +57,217 @@ const statusColors: Record<StockOpnameStatus, string> = {
 }
 
 export default function StockOpnameListPage() {
-  const [sessions, setSessions] = useState<StockOpnameSession[]>([])
+  const router = useRouter()
+  const [paginatedData, setPaginatedData] =
+    useState<StockOpnamePaginatedResponse>({
+      data: [],
+      total: 0,
+      per_page: STOCK_OPNAME_PAGE_SIZE_OPTIONS[0],
+      current_page: 1,
+      last_page: 1,
+      next_page_url: null,
+      prev_page_url: null,
+    })
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
-  const [pageSize, setPageSize] = useState<number>(
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(
     STOCK_OPNAME_PAGE_SIZE_OPTIONS[0]
   )
-  const debouncedSearch = useDebounce(search, 500)
+  const debouncedSearch = useDebounce(search, 1000)
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const data = await listStockOpname({
         status: statusFilter as any,
-        per_page: pageSize,
+        per_page: itemsPerPage,
+        page: currentPage,
+        search: debouncedSearch || undefined,
       })
-      setSessions(data)
+      setPaginatedData(data)
     } catch (e: any) {
       toast.error('Gagal memuat sesi opname', { description: e.message })
     }
     setLoading(false)
-  }
+  }, [statusFilter, itemsPerPage, currentPage, debouncedSearch])
 
   useEffect(() => {
     load()
-  }, [statusFilter, pageSize])
+  }, [load])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [statusFilter, itemsPerPage, debouncedSearch])
 
   const handleCreate = async () => {
     setCreating(true)
     try {
       const session = await createStockOpname({})
       toast.success('Draft dibuat')
-      load()
+      // Navigate to the detail page
+      router.push(`/stock-opname/${session.id}`)
     } catch (e: any) {
       toast.error('Gagal membuat draft', { description: e.message })
     }
     setCreating(false)
   }
 
-  const filtered = sessions.filter(
-    (s) =>
-      !debouncedSearch ||
-      s.code.toLowerCase().includes(debouncedSearch.toLowerCase())
-  )
+  const handleNextPage = () => {
+    if (currentPage < paginatedData.last_page) {
+      setCurrentPage(currentPage + 1)
+    }
+  }
+
+  const handlePrevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1)
+    }
+  }
 
   return (
     <MainLayout>
-      <div className='space-y-6'>
-        <div className='flex items-center gap-3'>
-          <ClipboardList className='h-6 w-6 text-primary' />
-          <h1 className='text-xl font-semibold'>Stock Opname</h1>
-        </div>
-        <Card>
-          <CardHeader className='flex flex-row items-center justify-between py-4'>
-            <CardTitle className='text-base'>Daftar Sesi</CardTitle>
-            <div className='flex gap-2'>
+      <div className='space-y-4'>
+        <div className='flex flex-col sm:flex-row justify-between items-center gap-3'>
+          <h1 className='text-xl md:text-2xl font-semibold font-headline'>
+            Stock Opname
+          </h1>
+          <div className='flex flex-wrap gap-2 w-full sm:w-auto justify-start sm:justify-end'>
+            <div className='relative flex-grow sm:flex-grow-0'>
+              <Search className='absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground' />
               <Input
-                placeholder='Cari kode...'
+                type='search'
+                placeholder='Cari kode sesi...'
+                className='pl-8 w-full sm:w-80 rounded-md h-9 text-xs'
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className='h-8 w-48 text-sm'
               />
-              <Select
-                value={statusFilter}
-                onValueChange={(v) => setStatusFilter(v)}
-              >
-                <SelectTrigger className='h-8 w-36 text-sm'>
-                  <SelectValue placeholder='Status' />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value='all'>Semua</SelectItem>
-                  <SelectItem value='DRAFT'>Draft</SelectItem>
-                  <SelectItem value='SUBMIT'>Submit</SelectItem>
-                  <SelectItem value='APPROVED'>Approved</SelectItem>
-                  <SelectItem value='REJECTED'>Rejected</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={String(pageSize)}
-                onValueChange={(v) => setPageSize(Number(v))}
-              >
-                <SelectTrigger className='h-8 w-28 text-sm'>
-                  <SelectValue placeholder='Per Hal' />
-                </SelectTrigger>
-                <SelectContent>
-                  {STOCK_OPNAME_PAGE_SIZE_OPTIONS.map((o) => (
-                    <SelectItem key={o} value={String(o)}>
-                      {o}/hal
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Button
-                variant='outline'
-                size='sm'
-                onClick={load}
-                disabled={loading}
-              >
-                <RefreshCw className='h-4 w-4' />
-              </Button>
-              <Button size='sm' onClick={handleCreate} disabled={creating}>
-                <Plus className='h-4 w-4 mr-1' />
-                Draft
-              </Button>
             </div>
-          </CardHeader>
-          <CardContent className='p-0'>
-            <div className='overflow-x-auto'>
-              <table className='w-full text-sm'>
-                <thead className='bg-muted/50'>
-                  <tr className='text-xs text-left'>
-                    <th className='px-3 py-2 font-medium'>Kode</th>
-                    <th className='px-3 py-2 font-medium'>Status</th>
-                    <th className='px-3 py-2 font-medium'>Items</th>
-                    <th className='px-3 py-2 font-medium'>+/-</th>
-                    <th className='px-3 py-2 font-medium'>Dibuat</th>
-                    <th className='px-3 py-2 font-medium'>Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading &&
-                    [...Array(5)].map((_, i) => (
-                      <tr key={i} className='border-t'>
-                        <td className='px-3 py-2'>
-                          <Skeleton className='h-4 w-24' />
-                        </td>
-                        <td className='px-3 py-2'>
-                          <Skeleton className='h-4 w-16' />
-                        </td>
-                        <td className='px-3 py-2'>
-                          <Skeleton className='h-4 w-10' />
-                        </td>
-                        <td className='px-3 py-2'>
-                          <Skeleton className='h-4 w-10' />
-                        </td>
-                        <td className='px-3 py-2'>
-                          <Skeleton className='h-4 w-32' />
-                        </td>
-                        <td className='px-3 py-2'>
-                          <Skeleton className='h-7 w-24' />
-                        </td>
-                      </tr>
-                    ))}
-                  {!loading && filtered.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className='px-3 py-10 text-center'>
-                        <div className='flex flex-col items-center gap-2 text-muted-foreground'>
-                          <ClipboardList className='h-6 w-6 opacity-40' />
-                          <div className='text-sm font-medium'>
-                            Belum ada sesi
-                          </div>
-                          <div className='text-[11px]'>
-                            Buat draft baru untuk memulai stock opname.
-                          </div>
-                          <Button
-                            size='sm'
-                            onClick={handleCreate}
-                            disabled={creating}
-                          >
-                            Buat Draft
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                  {filtered.map((s) => (
-                    <tr key={s.id} className='border-t hover:bg-muted/30'>
-                      <td className='px-3 py-2 font-medium'>
+            <Select
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v)}
+            >
+              <SelectTrigger className='h-9 text-xs rounded-md w-auto sm:w-[120px]'>
+                <SelectValue placeholder='Status' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>Semua</SelectItem>
+                <SelectItem value='DRAFT'>Draft</SelectItem>
+                <SelectItem value='SUBMIT'>Submit</SelectItem>
+                <SelectItem value='APPROVED'>Approved</SelectItem>
+                <SelectItem value='REJECTED'>Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={String(itemsPerPage)}
+              onValueChange={(v) => setItemsPerPage(Number(v))}
+            >
+              <SelectTrigger className='h-9 text-xs rounded-md w-auto sm:w-[100px]'>
+                <SelectValue placeholder='Tampil' />
+              </SelectTrigger>
+              <SelectContent>
+                {STOCK_OPNAME_PAGE_SIZE_OPTIONS.map((o) => (
+                  <SelectItem key={o} value={String(o)}>
+                    {o}/hal
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant='outline'
+              size='sm'
+              className='rounded-md text-xs h-9'
+              onClick={load}
+              disabled={loading}
+            >
+              <RefreshCw className='mr-1.5 h-3.5 w-3.5' /> Refresh
+            </Button>
+            <Button
+              size='sm'
+              className='rounded-md text-xs h-9'
+              onClick={handleCreate}
+              disabled={creating}
+            >
+              <Plus className='mr-1.5 h-3.5 w-3.5' /> Draft
+            </Button>
+          </div>
+        </div>
+
+        <Alert
+          variant='default'
+          className='bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700/50 dark:text-blue-300 text-xs'
+        >
+          <Info className='h-4 w-4 !text-blue-600 dark:!text-blue-400' />
+          <AlertDescription>
+            Stock Opname digunakan untuk mencocokkan jumlah fisik dengan sistem.
+            Draft dapat diedit, setelah submit hanya admin yang dapat
+            approve/reject.
+          </AlertDescription>
+        </Alert>
+        {loading ? (
+          <div className='space-y-2 border rounded-lg shadow-sm p-4'>
+            {[...Array(itemsPerPage)].map((_, i) => (
+              <Skeleton key={i} className='h-10 w-full' />
+            ))}
+          </div>
+        ) : paginatedData.data.length === 0 && debouncedSearch ? (
+          <div className='border rounded-lg shadow-sm overflow-hidden p-10 text-center'>
+            <p className='text-sm text-muted-foreground'>
+              Tidak ada sesi yang cocok dengan pencarian Anda.
+            </p>
+          </div>
+        ) : paginatedData.data.length === 0 ? (
+          <div className='border rounded-lg shadow-sm overflow-hidden p-10 text-center'>
+            <p className='text-sm text-muted-foreground'>
+              Belum ada sesi stock opname.
+            </p>
+            <Button
+              size='sm'
+              className='mt-4 text-xs'
+              onClick={handleCreate}
+              disabled={creating}
+            >
+              <Plus className='mr-1.5 h-3.5 w-3.5' /> Buat Sesi Pertama
+            </Button>
+          </div>
+        ) : (
+          <>
+            <div className='border rounded-lg shadow-sm overflow-hidden'>
+              <Table>
+                <TableHeader>
+                  <TableRow className='text-xs text-left'>
+                    <TableHead className='px-3 py-2 font-medium'>
+                      Kode
+                    </TableHead>
+                    <TableHead className='px-3 py-2 font-medium'>
+                      Status
+                    </TableHead>
+                    <TableHead className='px-3 py-2 font-medium'>
+                      Items
+                    </TableHead>
+                    <TableHead className='px-3 py-2 font-medium'>+/-</TableHead>
+                    <TableHead className='px-3 py-2 font-medium'>
+                      Dibuat
+                    </TableHead>
+                    <TableHead className='px-3 py-2 font-medium'>
+                      Aksi
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginatedData.data.map((s: StockOpnameSession) => (
+                    <TableRow key={s.id} className='hover:bg-muted/30'>
+                      <TableCell className='px-3 py-2 font-medium'>
                         <Link
                           href={`/stock-opname/${s.id}`}
                           className='hover:underline'
                         >
                           {s.code}
                         </Link>
-                      </td>
-                      <td className='px-3 py-2'>
+                      </TableCell>
+                      <TableCell className='px-3 py-2'>
                         <Badge
                           variant={
                             s.status === 'APPROVED'
@@ -242,16 +282,18 @@ export default function StockOpnameListPage() {
                         >
                           {s.status}
                         </Badge>
-                      </td>
-                      <td className='px-3 py-2'>{s.total_items}</td>
-                      <td className='px-3 py-2'>
+                      </TableCell>
+                      <TableCell className='px-3 py-2'>
+                        {s.total_items}
+                      </TableCell>
+                      <TableCell className='px-3 py-2'>
                         {s.total_positive_adjustment -
                           s.total_negative_adjustment}
-                      </td>
-                      <td className='px-3 py-2'>
+                      </TableCell>
+                      <TableCell className='px-3 py-2'>
                         {new Date(s.created_at).toLocaleString('id-ID')}
-                      </td>
-                      <td className='px-3 py-2'>
+                      </TableCell>
+                      <TableCell className='px-3 py-2'>
                         <div className='flex gap-2'>
                           <Button asChild size='sm' variant='outline'>
                             <a
@@ -266,14 +308,37 @@ export default function StockOpnameListPage() {
                             <Link href={`/stock-opname/${s.id}`}>Detail</Link>
                           </Button>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
-          </CardContent>
-        </Card>
+            <div className='flex justify-between items-center pt-2'>
+              <Button
+                variant='outline'
+                size='sm'
+                className='text-xs h-8'
+                onClick={handlePrevPage}
+                disabled={currentPage <= 1 || loading}
+              >
+                <ChevronLeft className='mr-1 h-4 w-4' /> Sebelumnya
+              </Button>
+              <span className='text-xs text-muted-foreground'>
+                Halaman {currentPage} dari {paginatedData.last_page}
+              </span>
+              <Button
+                variant='outline'
+                size='sm'
+                className='text-xs h-8'
+                onClick={handleNextPage}
+                disabled={currentPage >= paginatedData.last_page || loading}
+              >
+                Berikutnya <ChevronRight className='ml-1 h-4 w-4' />
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </MainLayout>
   )
