@@ -241,6 +241,7 @@ export default function POSPage() {
   const [loadingShiftTransactions, setLoadingShiftTransactions] =
     useState(false)
   const [showBankHistoryDialog, setShowBankHistoryDialog] = useState(false)
+  const [showCashHistoryDialog, setShowCashHistoryDialog] = useState(false)
   const [showShiftCashDetailsDialog, setShowShiftCashDetailsDialog] =
     useState(false)
   const [showAllShiftTransactionsDialog, setShowAllShiftTransactionsDialog] =
@@ -510,7 +511,7 @@ export default function POSPage() {
           if (tx.status === 'completed') {
             const method = tx.payment_method as PaymentMethod
             if (acc.hasOwnProperty(method)) {
-              acc[method] += tx.total_amount
+              acc[method] += Number(tx.total_amount)
             }
           }
           return acc
@@ -524,7 +525,8 @@ export default function POSPage() {
       0
     )
 
-    const expected = (activeShift.starting_balance || 0) + salesByPayment.cash
+    const expected =
+      Number(activeShift.starting_balance || 0) + salesByPayment.cash
     setEndingCashBalance(expected)
     setEndShiftCalculations({
       difference: expected - totalSales,
@@ -1243,13 +1245,13 @@ export default function POSPage() {
   const totalCashSalesInShift = useMemo(() => {
     return shiftTransactions
       .filter((tx) => tx.payment_method === 'cash' && tx.status === 'completed')
-      .reduce((sum, tx) => sum + tx.total_amount, 0)
+      .reduce((sum, tx) => sum + Number(tx.total_amount), 0)
   }, [shiftTransactions])
 
   const totalCardSalesInShift = useMemo(() => {
     return shiftTransactions
       .filter((tx) => tx.payment_method === 'card' && tx.status === 'completed')
-      .reduce((sum, tx) => sum + tx.total_amount, 0)
+      .reduce((sum, tx) => sum + Number(tx.total_amount), 0)
   }, [shiftTransactions])
 
   const totalCreditSalesInShift = useMemo(() => {
@@ -1257,7 +1259,7 @@ export default function POSPage() {
       .filter(
         (tx) => tx.payment_method === 'credit' && tx.status === 'completed'
       )
-      .reduce((sum, tx) => sum + tx.total_amount, 0)
+      .reduce((sum, tx) => sum + Number(tx.total_amount), 0)
   }, [shiftTransactions])
 
   const totalTransferSalesInShift = useMemo(() => {
@@ -1265,16 +1267,36 @@ export default function POSPage() {
       .filter(
         (tx) => tx.payment_method === 'transfer' && tx.status === 'completed'
       )
-      .reduce((sum, tx) => sum + tx.total_amount, 0)
+      .reduce((sum, tx) => sum + Number(tx.total_amount), 0)
   }, [shiftTransactions])
 
   const estimatedCashInDrawer = useMemo(() => {
-    return (activeShift?.starting_balance || 0) + Number(totalCashSalesInShift)
+    const startingBalance = Number(activeShift?.starting_balance || 0)
+    const cashSales = Number(totalCashSalesInShift)
+    return startingBalance + cashSales
   }, [activeShift, totalCashSalesInShift])
+
+  const cashTransactionsInShift = useMemo(() => {
+    return shiftTransactions.filter(
+      (tx) => tx.payment_method === 'cash' && tx.status === 'completed'
+    )
+  }, [shiftTransactions])
 
   const bankTransactionsInShift = useMemo(() => {
     return shiftTransactions.filter(
       (tx) => tx.payment_method === 'transfer' && tx.status === 'completed'
+    )
+  }, [shiftTransactions])
+
+  const cardTransactionsInShift = useMemo(() => {
+    return shiftTransactions.filter(
+      (tx) => tx.payment_method === 'card' && tx.status === 'completed'
+    )
+  }, [shiftTransactions])
+
+  const creditTransactionsInShift = useMemo(() => {
+    return shiftTransactions.filter(
+      (tx) => tx.payment_method === 'credit' && tx.status === 'completed'
     )
   }, [shiftTransactions])
 
@@ -2762,7 +2784,7 @@ export default function POSPage() {
                     {availableBankAccounts.length === 0 &&
                     !loadingBankAccounts ? (
                       <SelectItem
-                        value=''
+                        value='no-accounts'
                         disabled
                         className='text-xs text-muted-foreground'
                       >
@@ -2960,6 +2982,82 @@ export default function POSPage() {
         </Dialog>
 
         <Dialog
+          open={showCashHistoryDialog}
+          onOpenChange={setShowCashHistoryDialog}
+        >
+          <DialogContent className='sm:max-w-2xl'>
+            <DialogHeader>
+              <DialogTitle className='text-base'>
+                Riwayat Transaksi Tunai (Shift Ini)
+              </DialogTitle>
+              <DialogDescription className='text-xs'>
+                Menampilkan semua transaksi dengan metode pembayaran tunai
+                selama shift berjalan.
+              </DialogDescription>
+            </DialogHeader>
+            <ScrollArea className='max-h-[60vh] py-3'>
+              {loadingShiftTransactions ? (
+                <Skeleton className='h-20 w-full' />
+              ) : cashTransactionsInShift.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className='text-xs'>No. Inv</TableHead>
+                      <TableHead className='text-xs'>Tanggal</TableHead>
+                      <TableHead className='text-xs'>Pelanggan</TableHead>
+                      <TableHead className='text-xs text-right'>
+                        Dibayar
+                      </TableHead>
+                      <TableHead className='text-xs text-right'>
+                        Kembalian
+                      </TableHead>
+                      <TableHead className='text-xs text-right'>
+                        Total
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cashTransactionsInShift.map((tx) => (
+                      <TableRow key={tx.id}>
+                        <TableCell className='text-xs py-1.5 font-medium'>
+                          {tx.transaction_number}
+                        </TableCell>
+                        <TableCell className='text-xs py-1.5'>
+                          {formatDateIntlIntl(tx.created_at)}
+                        </TableCell>
+                        <TableCell className='text-xs py-1.5'>
+                          {tx.customer_name || 'Umum'}
+                        </TableCell>
+                        <TableCell className='text-xs text-right py-1.5'>
+                          {formatCurrency(tx.amount_paid || 0)}
+                        </TableCell>
+                        <TableCell className='text-xs text-right py-1.5'>
+                          {formatCurrency(tx.change_given || 0)}
+                        </TableCell>
+                        <TableCell className='text-xs text-right py-1.5'>
+                          {formatCurrency(tx.total_amount)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <p className='text-sm text-muted-foreground text-center py-4'>
+                  Belum ada transaksi tunai pada shift ini.
+                </p>
+              )}
+            </ScrollArea>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type='button' variant='outline' className='text-xs h-8'>
+                  Tutup
+                </Button>
+              </DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
           open={showShiftCashDetailsDialog}
           onOpenChange={setShowShiftCashDetailsDialog}
         >
@@ -2987,11 +3085,25 @@ export default function POSPage() {
                 </span>
               </div>
               <Separator />
-              <div className='flex justify-between p-2'>
+              <div className='flex justify-between items-center p-2'>
                 <span>Total Penjualan Tunai:</span>
-                <span className='font-semibold'>
-                  {formatCurrency(totalCashSalesInShift)}
-                </span>
+                <div className='flex items-center gap-2'>
+                  <span className='font-semibold'>
+                    {formatCurrency(totalCashSalesInShift)}
+                  </span>
+                  <Button
+                    variant='link'
+                    size='sm'
+                    className='h-auto p-0 text-xs'
+                    onClick={() => {
+                      setShowShiftCashDetailsDialog(false)
+                      setShowCashHistoryDialog(true)
+                    }}
+                    disabled={cashTransactionsInShift.length === 0}
+                  >
+                    Detail
+                  </Button>
+                </div>
               </div>
               <div className='flex justify-between p-2 bg-muted/30 rounded-md'>
                 <span>Estimasi Kas di Laci:</span>

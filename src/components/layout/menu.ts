@@ -20,6 +20,8 @@ import {
   Send,
   History as HistoryIconLucide,
   ShieldAlert,
+  UserCheck,
+  DollarSign,
 } from 'lucide-react'
 
 export const navMain = (unreadCount: number) => [
@@ -48,6 +50,7 @@ export const navMain = (unreadCount: number) => [
     subItems: [
       { href: '/customers', label: 'Pelanggan', icon: Users },
       { href: '/suppliers', label: 'Pemasok', icon: Truck },
+      { href: '/employees', label: 'Data Pegawai', icon: UserCheck },
       {
         href: '/inventory',
         label: 'Persediaan',
@@ -93,14 +96,9 @@ export const navMain = (unreadCount: number) => [
         icon: ListChecks,
       },
       { href: '/accounts-payable', label: 'Utang Usaha', icon: Archive },
+      { href: '/expenses', label: 'Operasional', icon: CreditCard },
+      { href: '/payroll/batch', label: 'Payroll', icon: DollarSign },
     ],
-  },
-
-  {
-    href: '/expenses',
-    label: 'Pengeluaran',
-    icon: CreditCard,
-    adminOnly: false,
   },
   {
     label: 'Notifikasi',

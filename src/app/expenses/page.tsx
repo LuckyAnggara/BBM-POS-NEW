@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
@@ -57,6 +58,7 @@ import {
   Trash2,
   DollarSign,
   Activity,
+  Users,
 } from 'lucide-react'
 import { Calendar } from '@/components/ui/calendar'
 import { type DateRange } from 'react-day-picker'
@@ -97,6 +99,7 @@ const expenseFormSchema = z.object({
 type ExpenseFormValues = z.infer<typeof expenseFormSchema>
 
 export default function ExpensesPage() {
+  const router = useRouter()
   const { currentUser } = useAuth()
 
   const { selectedBranch } = useBranches()
@@ -434,6 +437,15 @@ export default function ExpensesPage() {
                 disabled
               >
                 <Download className='mr-1.5 h-3.5 w-3.5' /> Ekspor (Segera)
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
+                className='rounded-md text-xs'
+                onClick={() => router.push('/payroll')}
+                disabled={!selectedBranch}
+              >
+                <Users className='mr-1.5 h-3.5 w-3.5' /> Payroll
               </Button>
               <Button
                 size='sm'

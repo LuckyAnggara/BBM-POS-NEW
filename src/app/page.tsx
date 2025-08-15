@@ -30,7 +30,7 @@ export default function HomePage() {
   }, [])
 
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoadingUserData) {
       setIsRedirecting(true) // Mulai tampilkan pesan pengalihan
       if (currentUser) {
         router.replace('/dashboard')
@@ -40,7 +40,7 @@ export default function HomePage() {
     }
   }, [currentUser, isLoadingUserData, router])
 
-  if (!isLoadingUserData || isRedirecting) {
+  if (isLoadingUserData || isRedirecting) {
     return (
       <div className='flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-4'>
         <Building2 className='h-16 w-16 text-primary animate-pulse mb-4' />

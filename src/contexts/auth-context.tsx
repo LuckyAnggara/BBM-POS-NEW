@@ -54,6 +54,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         } finally {
           setIsLoadingUserData(false)
         }
+      } else {
+        // Tidak ada token, langsung set loading ke false
+        setIsLoadingUserData(false)
       }
     }
     checkUserStatus()

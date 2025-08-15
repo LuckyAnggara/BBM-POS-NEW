@@ -81,3 +81,36 @@ export const listShiftHistory = async (params: {
     throw error
   }
 }
+
+/**
+ * Mengambil detail shift berdasarkan ID.
+ * @param {string} shiftId - ID shift yang akan diambil detailnya.
+ * @returns {Promise<Shift | null>} Objek shift atau null jika tidak ditemukan.
+ */
+export const getShiftById = async (shiftId: string): Promise<Shift | null> => {
+  try {
+    const response = await api.get(`/api/shifts/${shiftId}`)
+    return response.data
+  } catch (error: any) {
+    if (error.response?.status === 404) {
+      return null
+    }
+    console.error('Laravel API Error :: getShiftById :: ', error)
+    throw error
+  }
+}
+
+/**
+ * Mengambil semua transaksi yang terjadi dalam suatu shift.
+ * @param {string} shiftId - ID shift untuk mengambil transaksinya.
+ * @returns {Promise<Sale[]>} Array transaksi dalam shift tersebut.
+ */
+export const getShiftTransactions = async (shiftId: string): Promise<any[]> => {
+  try {
+    const response = await api.get(`/api/shifts/${shiftId}/transactions`)
+    return response.data
+  } catch (error) {
+    console.error('Laravel API Error :: getShiftTransactions :: ', error)
+    throw error
+  }
+}

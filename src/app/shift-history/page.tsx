@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
@@ -33,7 +34,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { Calendar } from '@/components/ui/calendar'
-import { CalendarIcon, Search, FilterX, Filter } from 'lucide-react'
+import { CalendarIcon, Search, FilterX, Filter, Eye, Info } from 'lucide-react'
 import { format, startOfDay, endOfDay } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
@@ -51,6 +52,7 @@ import { useDebounce } from '@uidotdev/usehooks'
 
 export default function ShiftHistoryPage() {
   // Context and state hooks (keep order stable)
+  const router = useRouter()
   const { currentUser } = useAuth()
   const { selectedBranch } = useBranches()
   const { toast } = useToast()
@@ -359,17 +361,30 @@ export default function ShiftHistoryPage() {
                             </span>
                           </TableCell>
                           <TableCell className='text-xs text-center py-2'>
-                            <Button
-                              variant='outline'
-                              size='sm'
-                              className='text-xs'
-                              onClick={() => {
-                                setSelectedShift(shift)
-                                setShowDetailDialog(true)
-                              }}
-                            >
-                              Detail
-                            </Button>
+                            <div className='flex items-center justify-center gap-1'>
+                              <Button
+                                variant='outline'
+                                size='sm'
+                                className='text-xs h-7 px-2'
+                                onClick={() =>
+                                  router.push(`/shift-history/${shift.id}`)
+                                }
+                              >
+                                <Eye className='h-3 w-3 mr-1' />
+                                Detail
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='sm'
+                                className='text-xs h-7 px-2'
+                                onClick={() => {
+                                  setSelectedShift(shift)
+                                  setShowDetailDialog(true)
+                                }}
+                              >
+                                <Info className='h-3 w-3' />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
