@@ -9,6 +9,7 @@ export interface Employee {
   phone?: string
   address?: string
   position: string
+  is_sales: boolean
   employment_type: 'full_time' | 'part_time' | 'contract'
   daily_salary: number
   monthly_salary: number

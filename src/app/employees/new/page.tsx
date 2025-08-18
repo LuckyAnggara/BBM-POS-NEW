@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
@@ -35,6 +36,7 @@ const employeeFormSchema = z.object({
   phone: z.string().optional(),
   address: z.string().optional(),
   position: z.string().min(2, { message: 'Posisi minimal 2 karakter.' }),
+  is_sales: z.boolean().default(false),
   employment_type: z.enum(['full_time', 'part_time', 'contract'], {
     required_error: 'Pilih jenis kepegawaian.',
   }),
@@ -80,6 +82,7 @@ export default function NewEmployeePage() {
       phone: '',
       address: '',
       position: '',
+      is_sales: false,
       employment_type: 'full_time',
       daily_salary: 0,
       monthly_salary: 0,
@@ -262,6 +265,20 @@ export default function NewEmployeePage() {
                       </p>
                     )}
                   </div>
+                </div>
+
+                <div className='space-y-3'>
+                  <div className='flex items-center space-x-2'>
+                    <Checkbox id='is_sales' {...form.register('is_sales')} />
+                    <Label htmlFor='is_sales' className='text-sm'>
+                      Sales (Apakah pegawai ini bertugas sebagai sales?)
+                    </Label>
+                  </div>
+                  {form.formState.errors.is_sales && (
+                    <p className='text-xs text-destructive'>
+                      {form.formState.errors.is_sales.message}
+                    </p>
+                  )}
                 </div>
 
                 <div className='space-y-2'>

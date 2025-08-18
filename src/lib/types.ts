@@ -440,6 +440,7 @@ export interface CreateSalePayload {
   credit_due_date?: string // Opsional, tanggal jatuh tempo (format: 'YYYY-MM-DD')
   outstanding_amount?: number
   customer_id?: number
+  sales_id?: number // ID employee yang berperan sebagai sales
   notes?: string
 }
 

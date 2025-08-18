@@ -32,9 +32,9 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
   DialogClose,
-  DialogDescription,
 } from '@/components/ui/dialog'
 import {
   AlertDialog,
@@ -63,35 +63,33 @@ import { Calendar } from '@/components/ui/calendar'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Search,
-  PlusCircle,
-  MinusCircle,
-  XCircle,
+  Users,
+  Check,
+  Printer,
   CheckCircle,
+  DollarSign,
+  Loader2,
+  PlayCircle,
+  StopCircle,
+  LogOut,
   LayoutGrid,
   List,
   PackagePlus,
-  LogOut,
-  PlayCircle,
-  StopCircle,
-  DollarSign,
-  ShoppingCart,
-  Printer,
-  UserPlus,
-  CreditCard,
-  CalendarIcon,
-  QrCode,
-  Banknote,
-  ChevronsUpDown,
-  Info,
-  Eye,
-  History as HistoryIcon,
-  Percent,
   ChevronLeft,
   ChevronRight,
+  MinusCircle,
+  PlusCircle,
   Edit3,
+  XCircle,
+  ShoppingCart,
+  Banknote,
+  UserPlus,
+  ChevronsUpDown,
+  QrCode,
+  CalendarIcon,
+  History as HistoryIcon,
+  Info,
   Trash2,
-  Loader2,
-  Loader2Icon,
 } from 'lucide-react'
 import Image from 'next/image'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
@@ -152,6 +150,7 @@ import {
 } from '@/lib/helper'
 import { handlePrint } from '@/lib/printHelper'
 import { is } from 'date-fns/locale'
+import { listEmployees } from '@/lib/laravel/employee'
 
 type ViewMode = 'card' | 'table'
 const LOCALSTORAGE_POS_VIEW_MODE_KEY = 'branchwise_posViewMode'
@@ -223,8 +222,18 @@ export default function POSPage() {
   const [creditDueDate, setCreditDueDate] = useState<Date | undefined>(
     undefined
   )
-  const [customerSearchTerm, setCustomerSearchTerm] = useState('')
+  const [selectedCustomer, isSelectedCustomer] = useState<Customer | null>(null)
   const [isCustomerComboboxOpen, setIsCustomerComboboxOpen] = useState(false)
+
+  // Dialog states
+  const [showCustomerDialog, setShowCustomerDialog] = useState(false)
+  const [showSalesDialog, setShowSalesDialog] = useState(false)
+  const [selectedSalesId, setSelectedSalesId] = useState<string | undefined>(
+    undefined
+  )
+  const [salesEmployees, setSalesEmployees] = useState<any[]>([])
+  const [loadingSalesEmployees, setLoadingSalesEmployees] = useState(false)
+  const [salesSearchTerm, setSalesSearchTerm] = useState('')
 
   const [showScanCustomerDialog, setShowScanCustomerDialog] = useState(false)
 
@@ -429,9 +438,59 @@ export default function POSPage() {
     }
   }, [activeShift, selectedBranch])
 
+  // Minimal UI insertion placeholder (actual full POS UI below). We'll inject dialog triggers at top of layout.
+
+  // Customer & Sales filtered lists (reuse fetched arrays if exist)
+  const filteredSalesEmployees = useMemo(() => {
+    if (!salesSearchTerm) return salesEmployees
+    return salesEmployees.filter((s) =>
+      s.name?.toLowerCase().includes(salesSearchTerm.toLowerCase())
+    )
+  }, [salesEmployees, salesSearchTerm])
+
+  // TEMP fetch sales employees when opening dialog (lazy)
+  const ensureSalesEmployees = useCallback(async () => {
+    if (salesEmployees.length || loadingSalesEmployees) return
+    try {
+      setLoadingSalesEmployees(true)
+      // Reuse employee service if exists; fallback simple fetch
+      const res = await fetch('/api/sales-employees').then((r) => r.json())
+      setSalesEmployees(res?.data || res || [])
+    } catch (e) {
+      // silent
+    } finally {
+      setLoadingSalesEmployees(false)
+    }
+  }, [salesEmployees.length, loadingSalesEmployees])
+
+  // Inject at top of JSX later
+
   useEffect(() => {
     fetchShiftTransactions()
   }, [fetchShiftTransactions, lastTransactionId])
+
+  const loadSalesEmployees = useCallback(async () => {
+    if (!currentUser || !selectedBranch) {
+      setSalesEmployees([])
+      return
+    }
+
+    try {
+      const options = {
+        branchId: selectedBranch.id,
+        limit: itemsPerPage,
+        isSales: true, // Hanya ambil pegawai yang bertugas sebagai sales
+      }
+      setLoadingSalesEmployees(true)
+      const result = await listEmployees(options)
+      setSalesEmployees(result.data)
+    } catch (error) {
+      console.error('Error loading sales employees:', error)
+      setSalesEmployees([])
+    } finally {
+      setLoadingSalesEmployees(false)
+    }
+  }, [selectedBranch, currentUser])
 
   const checkForActiveShift = useCallback(async () => {
     if (!currentUser || !selectedBranch) {
@@ -453,6 +512,11 @@ export default function POSPage() {
   useEffect(() => {
     checkForActiveShift()
   }, [checkForActiveShift])
+
+  // Load sales employees
+  useEffect(() => {
+    loadSalesEmployees()
+  }, [selectedBranch])
 
   const handleStartShift = async () => {
     if (!currentUser || !selectedBranch) {
@@ -888,6 +952,7 @@ export default function POSPage() {
         is_credit_sale: false,
         notes: '',
         customer_id: Number(selectedCustomerId),
+        sales_id: selectedSalesId ? Number(selectedSalesId) : undefined,
         items: cartItems,
       }
 
@@ -907,6 +972,8 @@ export default function POSPage() {
       setSelectedPaymentTerms('cash')
       setShippingCostInput('')
       setVoucherCodeInput('')
+      setSelectedSalesId(undefined)
+      isSelectedCustomer(null)
       // ... reset state lainnya
       setCashAmountPaidInput('')
       setcustomer_nameInputCash('')
@@ -971,6 +1038,7 @@ export default function POSPage() {
         is_credit_sale: false,
         notes: '',
         customer_id: Number(selectedCustomerId),
+        sales_id: selectedSalesId ? Number(selectedSalesId) : undefined,
         items: cartItems,
       }
       // 2. Blok `try`: Eksekusi alur sukses
@@ -990,6 +1058,8 @@ export default function POSPage() {
       setShippingCostInput('')
       setVoucherCodeInput('')
       setVoucherDiscountInput('')
+      setSelectedSalesId(undefined)
+      isSelectedCustomer(null)
       setSelectedbank_name('')
       setBankRefNumberInput('')
       setcustomer_nameInputBank('')
@@ -1132,6 +1202,7 @@ export default function POSPage() {
         credit_due_date: creditDueDate?.toISOString(),
         notes: '',
         customer_id: Number(selectedCustomerId),
+        sales_id: selectedSalesId ? Number(selectedSalesId) : undefined,
         items: cartItems,
       }
       const result = await createSale(payload)
@@ -1146,6 +1217,8 @@ export default function POSPage() {
       setVoucherCodeInput('')
       setVoucherDiscountInput('')
       setSelectedCustomerId(undefined)
+      setSelectedSalesId(undefined)
+      isSelectedCustomer(null)
       setCreditDueDate(undefined)
       setSearchCustomerTerm('')
       fetchItemsData(currentPage, debouncedSearchTerm)
@@ -1329,7 +1402,7 @@ export default function POSPage() {
     <ProtectedRoute>
       <MainLayout focusMode={true}>
         <div className='flex flex-col h-screen bg-background'>
-          <header className='grid grid-cols-3 items-center justify-between p-3 border-b bg-card shadow-sm sticky top-0 z-10 gap-3'>
+          <header className='grid grid-cols-4 items-center justify-between p-3 border-b bg-card shadow-sm sticky top-0 z-10 gap-3'>
             <div className='flex items-center gap-2 col-span-1'>
               <DollarSign className='h-6 w-6 text-primary' />
               <h1 className='text-lg font-semibold font-headline'>
@@ -1349,6 +1422,30 @@ export default function POSPage() {
                   </>
                 )}
               </h1>
+            </div>
+
+            <div className='flex items-center justify-center gap-2'>
+              <Button
+                variant='outline'
+                size='sm'
+                className='h-8 text-xs'
+                onClick={() => setShowCustomerDialog(true)}
+                data-testid='customer-dialog-button-header'
+              >
+                Pelanggan
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
+                className='h-8 text-xs'
+                onClick={() => {
+                  setShowSalesDialog(true)
+                  ensureSalesEmployees()
+                }}
+                data-testid='sales-dialog-button-header'
+              >
+                Sales
+              </Button>
             </div>
 
             {activeShift ? (
@@ -1706,23 +1803,23 @@ export default function POSPage() {
                       Penjualan Saat Ini
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className='flex-grow overflow-y-auto p-0'>
+                  <CardContent className='flex-grow overflow-y-auto p-0 bg-gray-100'>
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className='text-xs px-2 py-1.5'>
+                          <TableHead className='text-xs font-semibold text-gray-700 px-2 py-1.5 '>
                             Item
                           </TableHead>
-                          <TableHead className='text-center text-xs px-1 py-1.5 w-[60px]'>
+                          <TableHead className='text-center text-xs px-1 py-1.5 w-[60px] font-semibold text-gray-700'>
                             Quantity
                           </TableHead>
-                          <TableHead className='text-right text-xs px-2 py-1.5'>
+                          <TableHead className='text-right text-xs px-2 py-1.5 font-semibold text-gray-700'>
                             Harga
                           </TableHead>
-                          <TableHead className='text-xs px-1 py-1.5 text-center w-[60px]'>
+                          <TableHead className='text-xs px-1 py-1.5 text-center w-[60px] font-semibold text-gray-700'>
                             Diskon
                           </TableHead>
-                          <TableHead className='text-right text-xs px-2 py-1.5'>
+                          <TableHead className='text-right text-xs px-2 py-1.5 font-semibold text-gray-700'>
                             Total
                           </TableHead>
                           <TableHead className='text-right text-xs px-1 py-1.5 w-[30px]'>
@@ -1840,9 +1937,9 @@ export default function POSPage() {
                       </TableBody>
                     </Table>
                   </CardContent>
-                  <CardFooter className='flex flex-col gap-1.5 border-t p-3'>
+                  <CardFooter className='flex flex-col gap-1.5 border-t p-3 shadow-md'>
                     <div className='flex justify-between text-xs w-full'>
-                      <span>Subtotal (Stlh Diskon Item):</span>
+                      <span>Subtotal (Setelah Diskon Item):</span>
                       <span>{formatCurrency(displaySubtotal)}</span>
                     </div>
                     <div className='flex justify-between text-xs w-full'>
@@ -1905,7 +2002,7 @@ export default function POSPage() {
                           className='h-8 text-xs mt-0.5'
                         />
                       </div>
-                      <div>
+                      {/* <div>
                         <Label
                           htmlFor='voucherCodeInput'
                           className='text-[0.7rem] text-muted-foreground'
@@ -1938,7 +2035,7 @@ export default function POSPage() {
                           placeholder='0'
                           className='h-8 text-xs mt-0.5'
                         />
-                      </div>
+                      </div> */}
                     </div>
 
                     {totalDiscountAmount > 0 && (
@@ -1951,7 +2048,7 @@ export default function POSPage() {
                       </div>
                     )}
 
-                    <div className='flex justify-between text-base font-bold w-full mt-1.5 pt-1.5 border-t'>
+                    <div className='flex justify-between text-xs font-bold w-full mt-1.5 pt-1.5 border-t'>
                       <span>Total:</span>
                       <span>{formatCurrency(total)}</span>
                     </div>
@@ -2070,7 +2167,7 @@ export default function POSPage() {
                                                 ? undefined
                                                 : currentValue
                                             )
-                                            setCustomerSearchTerm(
+                                            setSearchCustomerTerm(
                                               currentValue ===
                                                 selectedCustomerId
                                                 ? ''
@@ -2149,118 +2246,51 @@ export default function POSPage() {
                     )}
                     {selectedPaymentTerms === 'cash' && (
                       <div className='w-full mt-2 space-y-2 p-2 border rounded-md bg-muted/30'>
-                        <Label
-                          htmlFor='customer_nameInputCash'
-                          className='text-xs'
-                        >
-                          Nama Pelanggan (Opsional)
-                        </Label>
-                        <div className='flex-grow'>
-                          <Popover
-                            modal={true}
-                            open={isCustomerComboboxOpen}
-                            onOpenChange={setIsCustomerComboboxOpen}
-                          >
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant='outline'
-                                role='combobox'
-                                aria-expanded={isCustomerComboboxOpen}
-                                className='w-full justify-between h-8 text-xs mt-1 font-normal'
-                              >
-                                {selectedCustomerId
-                                  ? allCustomers.find(
-                                      (customer) =>
-                                        String(customer.id) ===
-                                        selectedCustomerId
-                                    )?.name
-                                  : loadingCustomers
-                                  ? 'Memuat...'
-                                  : allCustomers.length === 0
-                                  ? 'Tidak ada pelanggan'
-                                  : 'Cari Pelanggan'}
-                                {!loadingCustomers ? (
-                                  <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
-                                ) : (
-                                  <Loader2 className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50 animate-spin' />
-                                )}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              asChild
-                              className='w-[--radix-popover-trigger-width] p-0'
+                        <div className='flex gap-2'>
+                          <div className='flex-1'>
+                            <Label className='text-xs'>
+                              Customer (Opsional)
+                            </Label>
+                            <Button
+                              variant='outline'
+                              className='w-full h-8 text-xs mt-1 font-normal justify-start'
+                              onClick={() => setShowCustomerDialog(true)}
+                              data-testid='customer-dialog-button-payment'
                             >
-                              <Command shouldFilter={false}>
-                                <CommandInput
-                                  placeholder='Cari pelanggan (nama/phone)...'
-                                  value={searchCustomerTerm}
-                                  onValueChange={setSearchCustomerTerm}
-                                  className='h-9 text-xs'
-                                />
-                                <CommandEmpty className='p-2 text-xs text-center'>
-                                  {loadingCustomers
-                                    ? 'Memuat...'
-                                    : 'Pelanggan tidak ditemukan.'}
-                                  {!loadingCustomers ? (
-                                    <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
-                                  ) : (
-                                    <Loader2 className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50 animate-spin' />
-                                  )}
-                                </CommandEmpty>
-                                <CommandList>
-                                  <CommandGroup>
-                                    {allCustomers.map((customer) => (
-                                      <CommandItem
-                                        key={customer.id}
-                                        value={String(customer.id)}
-                                        onSelect={(currentValue) => {
-                                          setSelectedCustomerId(
-                                            currentValue === selectedCustomerId
-                                              ? undefined
-                                              : currentValue
-                                          )
-                                          setCustomerSearchTerm(
-                                            currentValue === selectedCustomerId
-                                              ? ''
-                                              : customer.name
-                                          )
-                                          setIsCustomerComboboxOpen(false)
-                                        }}
-                                        className='text-xs'
-                                      >
-                                        <CheckCircle
-                                          className={cn(
-                                            'mr-2 h-3.5 w-3.5',
-                                            selectedCustomerId ===
-                                              String(customer.id)
-                                              ? 'opacity-100'
-                                              : 'opacity-0'
-                                          )}
-                                        />
-                                        {customer.name}
-                                      </CommandItem>
-                                    ))}
-                                  </CommandGroup>
-                                </CommandList>
-                              </Command>
-                            </PopoverContent>
-                          </Popover>
+                              <UserPlus
+                                className='mr-2 h-3.5 w-3.5'
+                                data-testid='user-plus-icon'
+                              />
+                              {selectedCustomerId
+                                ? allCustomers.find(
+                                    (c) => String(c.id) === selectedCustomerId
+                                  )?.name || 'Walk-In Customer'
+                                : 'Walk-In Customer'}
+                            </Button>
+                          </div>
+                          <div className='flex-1'>
+                            <Label className='text-xs'>Sales (Opsional)</Label>
+                            <Button
+                              variant='outline'
+                              className='w-full h-8 text-xs mt-1 font-normal justify-start'
+                              onClick={() => setShowSalesDialog(true)}
+                              data-testid='sales-dialog-button-payment'
+                            >
+                              <Users
+                                className='mr-2 h-3.5 w-3.5'
+                                data-testid='users-icon'
+                              />
+                              {selectedSalesId
+                                ? salesEmployees.find(
+                                    (s) => String(s.id) === selectedSalesId
+                                  )?.name || 'Pilih Sales'
+                                : 'Pilih Sales'}
+                            </Button>
+                          </div>
                         </div>
-                        {/* <div className='flex items-center mt-1'>
-                    <UserPlus className='h-4 w-4 mr-2 text-muted-foreground' />
-                    <Input
-                      id='customer_nameInputCash'
-                      type='text'
-                      value={customer_nameInputCash}
-                      onChange={(e) =>
-                        setcustomer_nameInputCash(e.target.value)
-                      }
-                      placeholder='Masukkan nama pelanggan'
-                      className='h-9 text-sm flex-1'
-                    />
-                  </div> */}
-                        <p className='text-xs text-muted-foreground mt-1'>
-                          Kosongkan jika tidak ada nama pelanggan.
+                        <p className='text-xs text-muted-foreground'>
+                          Tap tombol untuk memilih customer atau sales untuk
+                          transaksi ini.
                         </p>
                       </div>
                     )}
@@ -3204,7 +3234,7 @@ export default function POSPage() {
                 </Button>
               ) : (
                 <Button size='sm' disabled>
-                  <Loader2Icon className='animate-spin' />
+                  <Loader2 className='animate-spin' />
                   Please wait
                 </Button>
               )}
@@ -3332,6 +3362,228 @@ export default function POSPage() {
                 </Button>
               </DialogClose>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Customer Selection Dialog (Redesigned) */}
+        <Dialog open={showCustomerDialog} onOpenChange={setShowCustomerDialog}>
+          <DialogContent className='max-w-md p-0 overflow-hidden rounded-md'>
+            <div className='border-b px-4 py-3 flex items-center justify-between bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60'>
+              <div>
+                <h3 className='text-xs font-semibold tracking-wide'>
+                  Pilih Pelanggan
+                </h3>
+                <p className='text-[10px] text-muted-foreground mt-0.5'>
+                  Gunakan pencarian untuk menemukan pelanggan
+                </p>
+              </div>
+            </div>
+            <div className='p-3 space-y-3'>
+              <div className='relative'>
+                <Search className='absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground' />
+                <Input
+                  placeholder='Cari nama / telepon...'
+                  value={searchCustomerTerm}
+                  onChange={(e) => setSearchCustomerTerm(e.target.value)}
+                  className='pl-8 h-8 text-xs'
+                  autoFocus
+                />
+              </div>
+              <div className='rounded border bg-muted/30 max-h-64 overflow-y-auto slim-scroll'>
+                {loadingCustomers ? (
+                  <div className='p-4 text-center text-[11px] text-muted-foreground'>
+                    Memuat pelanggan...
+                  </div>
+                ) : allCustomers.filter(
+                    (c) =>
+                      c.name
+                        .toLowerCase()
+                        .includes(searchCustomerTerm.toLowerCase()) ||
+                      c.phone
+                        ?.toLowerCase()
+                        .includes(searchCustomerTerm.toLowerCase())
+                  ).length === 0 ? (
+                  <div className='p-6 text-center text-[11px] text-muted-foreground'>
+                    Tidak ada hasil.
+                  </div>
+                ) : (
+                  <ul className='divide-y'>
+                    {allCustomers
+                      .filter(
+                        (c) =>
+                          c.name
+                            .toLowerCase()
+                            .includes(searchCustomerTerm.toLowerCase()) ||
+                          c.phone
+                            ?.toLowerCase()
+                            .includes(searchCustomerTerm.toLowerCase())
+                      )
+                      .map((c) => {
+                        const active = selectedCustomer?.id === c.id
+                        return (
+                          <li key={c.id}>
+                            <button
+                              type='button'
+                              onClick={() => {
+                                isSelectedCustomer(c)
+                                setSelectedCustomerId(String(c.id))
+                                setShowCustomerDialog(false)
+                              }}
+                              className={cn(
+                                'w-full text-left px-3 py-2 hover:bg-accent/60 focus:bg-accent/70 focus:outline-none transition-colors',
+                                'text-xs',
+                                active && 'bg-primary/5'
+                              )}
+                            >
+                              <div className='flex items-center justify-between'>
+                                <span className='font-medium truncate'>
+                                  {c.name}
+                                </span>
+                                {active && (
+                                  <Check className='h-3.5 w-3.5 text-primary' />
+                                )}
+                              </div>
+                              {c.phone && (
+                                <p className='text-[10px] text-muted-foreground mt-0.5'>
+                                  {c.phone}
+                                </p>
+                              )}
+                            </button>
+                          </li>
+                        )
+                      })}
+                  </ul>
+                )}
+              </div>
+              <div className='flex justify-end gap-2 pt-1'>
+                <DialogClose asChild>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    className='h-7 text-[11px] px-3'
+                  >
+                    Tutup
+                  </Button>
+                </DialogClose>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Sales Selection Dialog (Redesigned) */}
+        <Dialog open={showSalesDialog} onOpenChange={setShowSalesDialog}>
+          <DialogContent className='max-w-md p-0 overflow-hidden rounded-md'>
+            <div className='border-b px-4 py-3 flex items-center justify-between bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60'>
+              <div>
+                <h3 className='text-xs font-semibold tracking-wide'>
+                  Pilih Sales
+                </h3>
+                <p className='text-[10px] text-muted-foreground mt-0.5'>
+                  Assign transaksi ke sales (opsional)
+                </p>
+              </div>
+            </div>
+            <div className='p-3 space-y-3'>
+              <div className='relative'>
+                <Search className='absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground' />
+                <Input
+                  placeholder='Cari nama / kode...'
+                  value={salesSearchTerm}
+                  onChange={(e) => setSalesSearchTerm(e.target.value)}
+                  className='pl-8 h-8 text-xs'
+                  autoFocus
+                />
+              </div>
+              <div className='rounded border bg-muted/30 max-h-64 overflow-y-auto slim-scroll'>
+                {loadingSalesEmployees ? (
+                  <div className='p-4 text-center text-[11px] text-muted-foreground'>
+                    Memuat sales...
+                  </div>
+                ) : salesEmployees.filter(
+                    (s) =>
+                      s.name
+                        .toLowerCase()
+                        .includes(salesSearchTerm.toLowerCase()) ||
+                      s.employee_id
+                        ?.toLowerCase()
+                        .includes(salesSearchTerm.toLowerCase())
+                  ).length === 0 ? (
+                  <div className='p-6 text-center text-[11px] text-muted-foreground'>
+                    Tidak ada hasil.
+                  </div>
+                ) : (
+                  <ul className='divide-y'>
+                    {salesEmployees
+                      .filter(
+                        (s) =>
+                          s.name
+                            .toLowerCase()
+                            .includes(salesSearchTerm.toLowerCase()) ||
+                          s.employee_id
+                            ?.toLowerCase()
+                            .includes(salesSearchTerm.toLowerCase())
+                      )
+                      .map((s) => {
+                        const active = selectedSalesId === s.id
+                        return (
+                          <li key={s.id}>
+                            <button
+                              type='button'
+                              onClick={() => {
+                                setSelectedSalesId(s.id)
+                                setShowSalesDialog(false)
+                              }}
+                              className={cn(
+                                'w-full text-left px-3 py-2 hover:bg-accent/60 focus:bg-accent/70 focus:outline-none transition-colors',
+                                'text-xs',
+                                active && 'bg-primary/5'
+                              )}
+                            >
+                              <div className='flex items-center justify-between'>
+                                <span className='font-medium truncate'>
+                                  {s.name}
+                                </span>
+                                {active && (
+                                  <Check className='h-3.5 w-3.5 text-primary' />
+                                )}
+                              </div>
+                              <p className='text-[10px] text-muted-foreground mt-0.5'>
+                                Kode: {s.employee_id || '-'}
+                              </p>
+                              {s.position && (
+                                <p className='text-[10px] text-muted-foreground'>
+                                  {s.position}
+                                </p>
+                              )}
+                            </button>
+                          </li>
+                        )
+                      })}
+                  </ul>
+                )}
+              </div>
+              <div className='flex justify-end gap-2 pt-1'>
+                {selectedSalesId && (
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    className='h-7 text-[11px] px-3'
+                    onClick={() => setSelectedSalesId(undefined)}
+                  >
+                    Hapus Sales
+                  </Button>
+                )}
+                <DialogClose asChild>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    className='h-7 text-[11px] px-3'
+                  >
+                    Tutup
+                  </Button>
+                </DialogClose>
+              </div>
+            </div>
           </DialogContent>
         </Dialog>
       </MainLayout>

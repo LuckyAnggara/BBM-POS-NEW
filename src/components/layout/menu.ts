@@ -22,6 +22,7 @@ import {
   ShieldAlert,
   UserCheck,
   DollarSign,
+  TrendingUp,
 } from 'lucide-react'
 
 export const navMain = (unreadCount: number) => [
@@ -119,6 +120,11 @@ export const navMain = (unreadCount: number) => [
         label: 'Ringkasan Keuangan',
         icon: BarChart3,
         exactMatch: true,
+      },
+      {
+        href: '/reports/sales',
+        label: 'Sales',
+        icon: TrendingUp,
       },
       {
         href: '/reports/stock-mutation',
