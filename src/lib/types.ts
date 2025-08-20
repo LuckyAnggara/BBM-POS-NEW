@@ -388,7 +388,12 @@ export type ProductInput = Omit<Product, 'id' | 'created_at' | 'updated_at'>
 // Tipe ini digunakan saat membuat kategori baru.
 export type CategoryInput = Omit<Category, 'id' | 'created_at' | 'updated_at'>
 
-export type CustomerInput = Omit<Customer, 'id' | 'created_at' | 'updated_at'>
+export type CustomerInput = Omit<
+  Customer,
+  'id' | 'created_at' | 'updated_at' | 'qr_code_id'
+> & {
+  qr_code_id?: string
+}
 
 export type SupplierInput = Omit<Supplier, 'id' | 'created_at' | 'updated_at'>
 

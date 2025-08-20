@@ -25,7 +25,7 @@ test.describe('Product Detail Page', () => {
     await page.waitForLoadState('networkidle')
 
     // Find and click on the first product link
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
 
     // Wait for product detail page to load
@@ -54,7 +54,7 @@ test.describe('Product Detail Page', () => {
     await page.goto('/inventory/products')
     await page.waitForLoadState('networkidle')
 
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
     await page.waitForLoadState('networkidle')
 
@@ -81,7 +81,7 @@ test.describe('Product Detail Page', () => {
     await page.goto('/inventory/products')
     await page.waitForLoadState('networkidle')
 
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
     await page.waitForLoadState('networkidle')
 
@@ -113,7 +113,7 @@ test.describe('Product Detail Page', () => {
     await page.goto('/inventory/products')
     await page.waitForLoadState('networkidle')
 
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
     await page.waitForLoadState('networkidle')
 
@@ -135,7 +135,7 @@ test.describe('Product Detail Page', () => {
     await page.goto('/inventory/products')
     await page.waitForLoadState('networkidle')
 
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
     await page.waitForLoadState('networkidle')
 
@@ -156,7 +156,7 @@ test.describe('Product Detail Page', () => {
     await page.goto('/inventory/products')
     await page.waitForLoadState('networkidle')
 
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
     await page.waitForLoadState('networkidle')
 
@@ -175,7 +175,7 @@ test.describe('Product Detail Page', () => {
     await page.goto('/inventory/products')
     await page.waitForLoadState('networkidle')
 
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
     await page.waitForLoadState('networkidle')
 
@@ -197,7 +197,7 @@ test.describe('Product Detail Page', () => {
     await page.goto('/inventory/products')
     await page.waitForLoadState('networkidle')
 
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
     await page.waitForLoadState('networkidle')
 
@@ -218,7 +218,7 @@ test.describe('Product Detail Page', () => {
     await page.goto('/inventory/products')
     await page.waitForLoadState('networkidle')
 
-    const productLink = page.locator('a[href*="/inventory/products/"]').first()
+    const productLink = page.locator('a[href*="/inventory/"]').first()
     await productLink.click()
     await page.waitForLoadState('networkidle')
 

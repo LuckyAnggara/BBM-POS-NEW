@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
+import Link from 'next/link'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
@@ -16,6 +17,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
 import { useForm, Controller, type SubmitHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -24,7 +33,18 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { Product, ProductInput, Category } from '@/lib/types'
 import { getProductById, updateProduct } from '@/lib/laravel/product'
 import { listCategories } from '@/lib/laravel/category'
-import { Building } from 'lucide-react'
+import {
+  Building,
+  Package,
+  ArrowLeft,
+  Edit3,
+  Save,
+  X,
+  ImageIcon,
+  DollarSign,
+  Package2,
+  Tag,
+} from 'lucide-react'
 
 const itemFormSchema = z.object({
   name: z.string().min(3, { message: 'Nama produk minimal 3 karakter.' }),
@@ -62,7 +82,7 @@ export default function EditInventoryPage() {
     defaultValues: {
       name: '',
       sku: '',
-      category_id: '',
+      category_id: 0,
       quantity: 0,
       price: 0,
       cost_price: 0,
@@ -147,7 +167,7 @@ export default function EditInventoryPage() {
       toast.success('Produk Diperbarui', {
         description: `${result.name} telah diperbarui di inventaris.`,
       })
-      router.push('/inventory')
+      router.push(`/inventory/${itemId}`)
     } catch (error: any) {
       console.error('Gagal menambah produk:', error)
 
@@ -183,40 +203,216 @@ export default function EditInventoryPage() {
 
   if (loadingItem || loadingCategories) {
     return (
-      <MainLayout>
-        <div className='space-y-4 p-4'>
-          <Skeleton className='h-10 w-48' />
-          <Skeleton className='h-96 w-full' />
-        </div>
-      </MainLayout>
+      <ProtectedRoute>
+        <MainLayout>
+          <div className='space-y-6'>
+            {/* Header Skeleton */}
+            <div className='flex items-center gap-3'>
+              <Skeleton className='h-8 w-8' />
+              <Skeleton className='h-7 w-7' />
+              <div className='flex-1 space-y-2'>
+                <Skeleton className='h-6 w-48' />
+                <Skeleton className='h-4 w-64' />
+              </div>
+              <Skeleton className='h-8 w-20' />
+            </div>
+
+            {/* Content Skeleton */}
+            <div className='grid gap-6 lg:grid-cols-3'>
+              <Card className='lg:col-span-1'>
+                <CardHeader>
+                  <Skeleton className='h-5 w-32' />
+                  <Skeleton className='h-4 w-48' />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className='aspect-square w-full mb-4' />
+                  <div className='space-y-2'>
+                    <Skeleton className='h-4 w-24' />
+                    <Skeleton className='h-5 w-32' />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className='lg:col-span-2'>
+                <CardHeader>
+                  <Skeleton className='h-5 w-32' />
+                  <Skeleton className='h-4 w-48' />
+                </CardHeader>
+                <CardContent className='space-y-6'>
+                  <div className='space-y-4'>
+                    <Skeleton className='h-4 w-32' />
+                    <Skeleton className='h-10 w-full' />
+                    <div className='grid grid-cols-2 gap-4'>
+                      <Skeleton className='h-10 w-full' />
+                      <Skeleton className='h-10 w-full' />
+                    </div>
+                  </div>
+                  <div className='space-y-4'>
+                    <Skeleton className='h-4 w-24' />
+                    <div className='grid grid-cols-3 gap-4'>
+                      <Skeleton className='h-10 w-full' />
+                      <Skeleton className='h-10 w-full' />
+                      <Skeleton className='h-10 w-full' />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </MainLayout>
+      </ProtectedRoute>
     )
   }
 
   if (!item) {
     return (
-      <MainLayout>
-        <div className='p-4 text-center text-destructive'>
-          Produk tidak ditemukan atau terjadi kesalahan.
-        </div>
-      </MainLayout>
+      <ProtectedRoute>
+        <MainLayout>
+          <div className='flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4'>
+            <Package className='h-16 w-16 text-muted-foreground' />
+            <div>
+              <h2 className='text-lg font-semibold mb-2'>
+                Produk Tidak Ditemukan
+              </h2>
+              <p className='text-sm text-muted-foreground mb-4'>
+                Produk yang ingin diedit tidak ditemukan atau telah dihapus.
+              </p>
+              <Button asChild variant='outline'>
+                <Link href='/inventory'>
+                  <ArrowLeft className='h-4 w-4 mr-2' />
+                  Kembali ke Daftar Produk
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </MainLayout>
+      </ProtectedRoute>
     )
   }
 
   return (
     <ProtectedRoute>
       <MainLayout>
-        <div className='space-y-4 p-4'>
-          <h1 className='text-xl md:text-2xl font-semibold font-headline'>
-            Edit Produk: {item.name}
-          </h1>
-          <ProductForm
-            itemForm={itemForm}
-            categories={categories}
-            loadingCategories={loadingCategories}
-            onSubmit={onSubmit}
-            isSubmitting={itemForm.formState.isSubmitting}
-            isEdit={true}
-          />
+        <div className='space-y-6'>
+          {/* Header */}
+          <div className='flex items-center gap-3'>
+            <Button variant='outline' size='sm' asChild>
+              <Link href={`/inventory/${itemId}`}>
+                <ArrowLeft className='h-4 w-4' />
+              </Link>
+            </Button>
+            <Edit3 className='h-7 w-7 text-primary' />
+            <div className='flex-1'>
+              <h1 className='text-xl md:text-2xl font-semibold font-headline'>
+                Edit Produk
+              </h1>
+              <p className='text-sm text-muted-foreground'>
+                {item.name} • SKU: {item.sku || 'Tidak ada'}
+              </p>
+            </div>
+            <Button variant='outline' size='sm' asChild>
+              <Link href={`/inventory/${itemId}`}>
+                <X className='h-4 w-4 mr-2' />
+                Batal
+              </Link>
+            </Button>
+          </div>
+
+          {/* Main Edit Form */}
+          <div className='grid gap-6 lg:grid-cols-3'>
+            {/* Product Preview */}
+            <Card className='lg:col-span-1'>
+              <CardHeader>
+                <CardTitle className='text-base font-semibold flex items-center gap-2'>
+                  <Package className='h-5 w-5 text-primary' />
+                  Preview Produk
+                </CardTitle>
+                <CardDescription className='text-xs'>
+                  Pratinjau perubahan produk
+                </CardDescription>
+              </CardHeader>
+              <CardContent className='space-y-4'>
+                <div className='aspect-square rounded-lg border bg-muted/50 flex items-center justify-center overflow-hidden'>
+                  {itemForm.watch('image_url') ? (
+                    <img
+                      src={itemForm.watch('image_url')}
+                      alt={itemForm.watch('name')}
+                      className='w-full h-full object-cover'
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement
+                        target.style.display = 'none'
+                        target.parentElement!.innerHTML = `
+                          <div class="text-center">
+                            <div class="h-16 w-16 text-muted-foreground mx-auto mb-2 flex items-center justify-center">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+                            </div>
+                            <p class="text-sm text-muted-foreground">URL gambar tidak valid</p>
+                          </div>
+                        `
+                      }}
+                    />
+                  ) : (
+                    <div className='text-center'>
+                      <Package className='h-16 w-16 text-muted-foreground mx-auto mb-2' />
+                      <p className='text-sm text-muted-foreground'>
+                        {itemForm.watch('image_hint') ||
+                          itemForm.watch('name') ||
+                          'Produk'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <div className='space-y-2'>
+                  <div>
+                    <p className='text-xs text-muted-foreground'>Nama Produk</p>
+                    <p className='font-medium'>
+                      {itemForm.watch('name') || 'Nama produk'}
+                    </p>
+                  </div>
+                  <div className='grid grid-cols-2 gap-2 text-xs'>
+                    <div>
+                      <p className='text-muted-foreground'>Stok</p>
+                      <p className='font-medium'>
+                        {itemForm.watch('quantity') || 0}
+                      </p>
+                    </div>
+                    <div>
+                      <p className='text-muted-foreground'>Harga</p>
+                      <p className='font-medium'>
+                        Rp{' '}
+                        {Number(itemForm.watch('price') || 0).toLocaleString(
+                          'id-ID'
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Edit Form */}
+            <Card className='lg:col-span-2'>
+              <CardHeader>
+                <CardTitle className='text-base font-semibold flex items-center gap-2'>
+                  <Edit3 className='h-5 w-5 text-primary' />
+                  Form Edit Produk
+                </CardTitle>
+                <CardDescription className='text-xs'>
+                  Ubah informasi produk sesuai kebutuhan
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ProductForm
+                  itemForm={itemForm}
+                  categories={categories}
+                  loadingCategories={loadingCategories}
+                  onSubmit={onSubmit}
+                  isSubmitting={itemForm.formState.isSubmitting}
+                  isEdit={true}
+                />
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </MainLayout>
     </ProtectedRoute>
@@ -248,172 +444,256 @@ const ProductForm: React.FC<ProductFormProps> = ({
   } = itemForm
 
   return (
-    <form
-      onSubmit={itemForm.handleSubmit(onSubmit)}
-      className='space-y-3 p-3 border rounded-lg shadow-sm'
-    >
-      <div>
-        <Label htmlFor='itemName' className='text-xs'>
-          Nama Produk*
-        </Label>
-        <Input id='itemName' {...register('name')} className='h-9 text-xs' />
-        {errors.name && (
-          <p className='text-xs text-destructive mt-1'>{errors.name.message}</p>
-        )}
-      </div>
-      <div>
-        <Label htmlFor='itemSku' className='text-xs'>
-          SKU (Opsional, otomatis jika kosong)
-        </Label>
-        <Input id='itemSku' {...register('sku')} className='h-9 text-xs' />
-      </div>
-      <div>
-        <Label htmlFor='itemCategory' className='text-xs'>
-          Kategori*
-        </Label>
-        <Controller
-          name='category_id'
-          control={control}
-          render={({ field }) => (
-            <Select
-              onValueChange={field.onChange}
-              value={String(field.value)}
-              disabled={loadingCategories}
-            >
-              <SelectTrigger className='h-9 text-xs'>
-                <SelectValue
-                  placeholder={
-                    loadingCategories
-                      ? 'Memuat kategori...'
-                      : categories.length === 0
-                      ? 'Tidak ada kategori'
-                      : 'Pilih kategori'
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.length === 0 && !loadingCategories ? (
-                  <div className='p-2 text-xs text-muted-foreground'>
-                    Belum ada kategori. Tambah dulu via 'Kelola Kategori'.
-                  </div>
-                ) : (
-                  categories.map((cat) => (
-                    <SelectItem
-                      key={cat.id}
-                      value={String(cat.id)}
-                      className='text-xs'
-                    >
-                      {cat.name}
-                    </SelectItem>
-                  ))
+    <form onSubmit={itemForm.handleSubmit(onSubmit)} className='space-y-6'>
+      {/* Basic Information Section */}
+      <div className='space-y-4'>
+        <div className='flex items-center gap-2'>
+          <Tag className='h-4 w-4 text-primary' />
+          <h3 className='font-semibold text-sm'>Informasi Dasar</h3>
+        </div>
+        <Separator />
+
+        <div className='grid gap-4'>
+          <div>
+            <Label htmlFor='itemName' className='text-sm font-medium'>
+              Nama Produk*
+            </Label>
+            <Input
+              id='itemName'
+              {...register('name')}
+              className='mt-1'
+              placeholder='Masukkan nama produk'
+            />
+            {errors.name && (
+              <p className='text-xs text-destructive mt-1'>
+                {errors.name.message}
+              </p>
+            )}
+          </div>
+
+          <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+            <div>
+              <Label htmlFor='itemSku' className='text-sm font-medium'>
+                SKU (Stock Keeping Unit)
+              </Label>
+              <Input
+                id='itemSku'
+                {...register('sku')}
+                className='mt-1'
+                placeholder='Otomatis jika kosong'
+              />
+              <p className='text-xs text-muted-foreground mt-1'>
+                Biarkan kosong untuk generate otomatis
+              </p>
+            </div>
+
+            <div>
+              <Label htmlFor='itemCategory' className='text-sm font-medium'>
+                Kategori*
+              </Label>
+              <Controller
+                name='category_id'
+                control={control}
+                render={({ field }) => (
+                  <Select
+                    onValueChange={(value) => field.onChange(Number(value))}
+                    value={String(field.value)}
+                    disabled={loadingCategories}
+                  >
+                    <SelectTrigger className='mt-1'>
+                      <SelectValue
+                        placeholder={
+                          loadingCategories
+                            ? 'Memuat kategori...'
+                            : categories.length === 0
+                            ? 'Tidak ada kategori'
+                            : 'Pilih kategori'
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categories.length === 0 && !loadingCategories ? (
+                        <div className='p-3 text-sm text-muted-foreground text-center'>
+                          Belum ada kategori.
+                          <br />
+                          Tambah kategori melalui menu Kelola Kategori.
+                        </div>
+                      ) : (
+                        categories.map((cat) => (
+                          <SelectItem key={cat.id} value={String(cat.id)}>
+                            {cat.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
                 )}
-              </SelectContent>
-            </Select>
-          )}
-        />
-        {errors.category_id && (
-          <p className='text-xs text-destructive mt-1'>
-            {errors.category_id.message}
-          </p>
-        )}
-      </div>
-      <div className='grid grid-cols-1 md:grid-cols-3 gap-3'>
-        <div>
-          <Label htmlFor='itemQuantity' className='text-xs'>
-            Stok*
-          </Label>
-          <Input
-            id='itemQuantity'
-            type='number'
-            {...register('quantity')}
-            className='h-9 text-xs'
-          />
-          {errors.quantity && (
-            <p className='text-xs text-destructive mt-1'>
-              {errors.quantity.message}
-            </p>
-          )}
-        </div>
-        <div>
-          <Label htmlFor='itemPrice' className='text-xs'>
-            Harga Jual (Rp)*
-          </Label>
-          <Input
-            id='itemPrice'
-            type='number'
-            {...register('price')}
-            className='h-9 text-xs'
-          />
-          {errors.price && (
-            <p className='text-xs text-destructive mt-1'>
-              {errors.price.message}
-            </p>
-          )}
-        </div>
-        <div>
-          <Label htmlFor='itemCostPrice' className='text-xs'>
-            Harga Pokok (Rp)
-          </Label>
-          <Input
-            id='itemCostPrice'
-            type='number'
-            {...register('cost_price')}
-            className='h-9 text-xs'
-            placeholder='0'
-          />
-          {errors.cost_price && (
-            <p className='text-xs text-destructive mt-1'>
-              {errors.cost_price.message}
-            </p>
-          )}
+              />
+              {errors.category_id && (
+                <p className='text-xs text-destructive mt-1'>
+                  {errors.category_id.message}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       </div>
-      <div>
-        <Label htmlFor='itemImageUrl' className='text-xs'>
-          URL Gambar (Opsional)
-        </Label>
-        <Input
-          id='itemImageUrl'
-          {...register('image_url')}
-          placeholder='https://...'
-          className='h-9 text-xs'
-        />
-        {errors.image_url && (
-          <p className='text-xs text-destructive mt-1'>
-            {errors.image_url.message}
-          </p>
-        )}
+
+      {/* Stock and Pricing Section */}
+      <div className='space-y-4'>
+        <div className='flex items-center gap-2'>
+          <DollarSign className='h-4 w-4 text-primary' />
+          <h3 className='font-semibold text-sm'>Stok & Harga</h3>
+        </div>
+        <Separator />
+
+        <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
+          <div>
+            <Label htmlFor='itemQuantity' className='text-sm font-medium'>
+              Stok Tersedia*
+            </Label>
+            <Input
+              id='itemQuantity'
+              type='number'
+              {...register('quantity')}
+              className='mt-1'
+              placeholder='0'
+              min='0'
+            />
+            {errors.quantity && (
+              <p className='text-xs text-destructive mt-1'>
+                {errors.quantity.message}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor='itemPrice' className='text-sm font-medium'>
+              Harga Jual*
+            </Label>
+            <div className='relative mt-1'>
+              <span className='absolute left-3 top-1/2 transform -translate-y-1/2 text-sm text-muted-foreground'>
+                Rp
+              </span>
+              <Input
+                id='itemPrice'
+                type='number'
+                {...register('price')}
+                className='pl-10'
+                placeholder='0'
+                min='0'
+              />
+            </div>
+            {errors.price && (
+              <p className='text-xs text-destructive mt-1'>
+                {errors.price.message}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor='itemCostPrice' className='text-sm font-medium'>
+              Harga Pokok
+            </Label>
+            <div className='relative mt-1'>
+              <span className='absolute left-3 top-1/2 transform -translate-y-1/2 text-sm text-muted-foreground'>
+                Rp
+              </span>
+              <Input
+                id='itemCostPrice'
+                type='number'
+                {...register('cost_price')}
+                className='pl-10'
+                placeholder='0'
+                min='0'
+              />
+            </div>
+            {errors.cost_price && (
+              <p className='text-xs text-destructive mt-1'>
+                {errors.cost_price.message}
+              </p>
+            )}
+            <p className='text-xs text-muted-foreground mt-1'>
+              Untuk kalkulasi profit margin
+            </p>
+          </div>
+        </div>
       </div>
-      <div>
-        <Label htmlFor='itemImageHint' className='text-xs'>
-          Petunjuk Gambar (Opsional, maks 2 kata untuk placeholder)
-        </Label>
-        <Input
-          id='itemImageHint'
-          {...register('image_hint')}
-          placeholder='Contoh: coffee beans'
-          className='h-9 text-xs'
-        />
+
+      {/* Image Section */}
+      <div className='space-y-4'>
+        <div className='flex items-center gap-2'>
+          <ImageIcon className='h-4 w-4 text-primary' />
+          <h3 className='font-semibold text-sm'>Gambar Produk</h3>
+        </div>
+        <Separator />
+
+        <div className='grid gap-4'>
+          <div>
+            <Label htmlFor='itemImageUrl' className='text-sm font-medium'>
+              URL Gambar
+            </Label>
+            <Input
+              id='itemImageUrl'
+              {...register('image_url')}
+              placeholder='https://example.com/image.jpg'
+              className='mt-1'
+            />
+            {errors.image_url && (
+              <p className='text-xs text-destructive mt-1'>
+                {errors.image_url.message}
+              </p>
+            )}
+            <p className='text-xs text-muted-foreground mt-1'>
+              Link gambar produk (opsional)
+            </p>
+          </div>
+
+          <div>
+            <Label htmlFor='itemImageHint' className='text-sm font-medium'>
+              Petunjuk Gambar
+            </Label>
+            <Input
+              id='itemImageHint'
+              {...register('image_hint')}
+              placeholder='Contoh: coffee beans, laptop gaming'
+              className='mt-1'
+            />
+            <p className='text-xs text-muted-foreground mt-1'>
+              Deskripsi singkat untuk placeholder (maksimal 2 kata)
+            </p>
+          </div>
+        </div>
       </div>
-      <div className='flex justify-end pt-3'>
+
+      {/* Action Buttons */}
+      <div className='flex flex-col sm:flex-row gap-3 pt-6'>
         <Button
           type='button'
           variant='outline'
-          className='text-xs h-8'
-          onClick={() => itemForm.reset()}
+          className='order-2 sm:order-1'
+          onClick={() => window.history.back()}
+          disabled={isSubmitting}
         >
+          <X className='h-4 w-4 mr-2' />
           Batal
         </Button>
         <Button
           type='submit'
-          className='text-xs h-8 ml-2'
+          className='order-1 sm:order-2 flex-1'
           disabled={isSubmitting || categories.length === 0}
         >
-          {isSubmitting
-            ? 'Menyimpan...'
-            : isEdit
-            ? 'Simpan Perubahan'
-            : 'Tambah Produk'}
+          {isSubmitting ? (
+            <>
+              <div className='animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2' />
+              Menyimpan...
+            </>
+          ) : (
+            <>
+              <Save className='h-4 w-4 mr-2' />
+              {isEdit ? 'Simpan Perubahan' : 'Tambah Produk'}
+            </>
+          )}
         </Button>
       </div>
     </form>

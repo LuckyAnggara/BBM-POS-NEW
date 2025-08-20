@@ -62,7 +62,8 @@ import {
   AlertTriangle,
   MoreVertical,
   Copy,
-  ArrowLeft, // Import Copy icon
+  ArrowLeft,
+  LucideEye, // Import Copy icon
 } from 'lucide-react'
 import { useDebounce } from '@uidotdev/usehooks'
 import { useForm, Controller, type SubmitHandler } from 'react-hook-form'
@@ -765,6 +766,15 @@ export default function InventoryPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align='end'>
+                              <DropdownMenuItem
+                                className='text-xs cursor-pointer'
+                                onClick={() =>
+                                  router.push(`/inventory/${product.id}`)
+                                }
+                              >
+                                <LucideEye className='mr-2 h-3.5 w-3.5' />
+                                Detail
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 className='text-xs cursor-pointer'
                                 onClick={() =>
