@@ -21,6 +21,12 @@ interface AuthContextType {
   isLoading: boolean
   isLoadingUserData: boolean
   register: (data: any) => Promise<void>
+  // SaaS specific methods
+  registerTenant: (data: any) => Promise<void>
+  getCurrentTenant: () => Promise<any>
+  isSuperAdmin: () => boolean
+  isTenantAdmin: () => boolean
+  isBranchUser: () => boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -62,6 +68,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     checkUserStatus()
   }, [])
 
+  // Helper functions for user types
+  const isSuperAdmin = () => {
+    return currentUser?.user_type === 'super_admin'
+  }
+
+  const isTenantAdmin = () => {
+    return currentUser?.user_type === 'tenant_admin'
+  }
+
+  const isBranchUser = () => {
+    return currentUser?.user_type === 'branch_user'
+  }
+
   // Fungsi Login
   const login = async (credentials: any) => {
     try {
@@ -80,7 +99,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUserData(userData)
       setCurrentUser(userData)
 
-      router.push('/dashboard') // Arahkan ke dashboard setelah login
+      // Redirect based on user type
+      if (userData.user_type === 'super_admin') {
+        router.push('/saas-admin/dashboard')
+      } else {
+        router.push('/dashboard')
+      }
     } catch (error: any) {
       console.error('Login failed:', error)
       const errorMessage =
@@ -93,7 +117,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   }
 
-  // Fungsi Register
+  // Fungsi Register (legacy - for branch users)
   const register = async (data: any) => {
     try {
       // Asumsi pendaftaran default ke branch pertama
@@ -116,6 +140,50 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         'Registration failed. Please try again.'
       toast.error(errorMessage)
       throw new Error(errorMessage)
+    }
+  }
+
+  // Fungsi Register Tenant (SaaS)
+  const registerTenant = async (data: any) => {
+    try {
+      setIsLoading(true)
+
+      const response = await api.post('/api/tenant/register', data)
+
+      if (response.data) {
+        toast.success('Tenant registered successfully!', {
+          description: 'You can now login with your admin credentials'
+        })
+        
+        // Don't auto-login, redirect to login page
+        router.push('/login?tenant_registered=true')
+      }
+    } catch (error: any) {
+      console.error('Tenant registration failed:', error)
+      const errorMessage =
+        error.response?.data?.message ||
+        'Tenant registration failed. Please try again.'
+      
+      // If there are validation errors, return them for the form to handle
+      if (error.response?.data?.errors) {
+        throw { message: errorMessage, errors: error.response.data.errors }
+      }
+      
+      toast.error(errorMessage)
+      throw new Error(errorMessage)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Get current tenant information
+  const getCurrentTenant = async () => {
+    try {
+      const response = await api.get('/api/tenant/current')
+      return response.data
+    } catch (error: any) {
+      console.error('Failed to get tenant info:', error)
+      throw error
     }
   }
 
@@ -145,6 +213,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         login,
         logout,
         register,
+        registerTenant,
+        getCurrentTenant,
+        isSuperAdmin,
+        isTenantAdmin,
+        isBranchUser,
         isLoading,
       }}
     >

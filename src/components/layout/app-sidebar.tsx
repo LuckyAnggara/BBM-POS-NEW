@@ -18,6 +18,7 @@ import {
   SearchIcon,
   SettingsIcon,
   UsersIcon,
+  CreditCard,
 } from 'lucide-react'
 import { navMain as mainMenu, navAdmin } from './menu'
 import { NavDocuments } from '@/components/layout/nav-documents'
@@ -170,26 +171,66 @@ const data = {
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   // 2. Gunakan hooks di dalam komponen
   const pathname = usePathname() // Mendapatkan path URL saat ini
-  const { currentUser, userData, loadingAuth, loadingUserData } = useAuth()
+  const { currentUser, userData, isLoading, isSuperAdmin, isTenantAdmin } = useAuth()
 
   // Contoh state, ini bisa datang dari context, props, atau state management library
   const isAdmin = userData?.role === 'admin' || false // Ganti 'true' untuk melihat menu admin
   const unreadCount = 5
 
-  // 3. Gunakan useMemo untuk efisiensi
+  // 3. Gunakan useMemo untuk efisiensi berdasarkan role
   const navMainMenu = React.useMemo(() => {
-    // a. Dapatkan konfigurasi menu asli
-    const originalNavItems = mainMenu(unreadCount)
-
-    // b. Filter berdasarkan hak akses
-    const accessibleNavItems = originalNavItems.filter(
-      (item) => !item.adminOnly || isAdmin
-    )
-    // c. Lakukan konversi
-    return convertToNavClouds(accessibleNavItems, pathname)
-  }, [pathname, isAdmin, unreadCount])
+    // Show different menus based on user type
+    if (isSuperAdmin()) {
+      // Super admin sees SaaS management menu
+      const saasMenuItems = [
+        {
+          href: '/saas-admin/dashboard',
+          label: 'SaaS Dashboard',
+          icon: LayoutDashboardIcon,
+          adminOnly: false,
+        },
+        {
+          href: '/support',
+          label: 'Support Center',
+          icon: HelpCircleIcon,
+          adminOnly: false,
+        },
+      ]
+      return convertToNavClouds(saasMenuItems, pathname)
+    } else if (isTenantAdmin() || userData?.user_type === 'tenant_admin') {
+      // Tenant admin sees both tenant-specific and POS menus
+      const tenantMenuItems = [
+        ...mainMenu(unreadCount).filter(item => !item.adminOnly || isAdmin),
+        {
+          href: '/subscription',
+          label: 'Subscription',
+          icon: CreditCard,
+          adminOnly: false,
+        },
+        {
+          href: '/support',
+          label: 'Support',
+          icon: HelpCircleIcon,
+          adminOnly: false,
+        },
+      ]
+      return convertToNavClouds(tenantMenuItems, pathname)
+    } else {
+      // Regular branch users see standard POS menu
+      const originalNavItems = mainMenu(unreadCount)
+      const accessibleNavItems = originalNavItems.filter(
+        (item) => !item.adminOnly || isAdmin
+      )
+      return convertToNavClouds(accessibleNavItems, pathname)
+    }
+  }, [pathname, isAdmin, unreadCount, isSuperAdmin, isTenantAdmin, userData])
 
   const navAdminMenu = React.useMemo(() => {
+    // Only show admin menu for regular POS users
+    if (isSuperAdmin() || isTenantAdmin()) {
+      return []
+    }
+
     // a. Dapatkan konfigurasi menu asli
     const originalNavItems = navAdmin()
 
@@ -199,7 +240,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     )
     // c. Lakukan konversi
     return convertToNavClouds(accessibleNavItems, pathname)
-  }, [pathname, isAdmin, unreadCount])
+  }, [pathname, isAdmin, isSuperAdmin, isTenantAdmin])
 
   return (
     <Sidebar collapsible='offcanvas' {...props}>
@@ -210,10 +251,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               asChild
               className='data-[slot=sidebar-menu-button]:!p-1.5'
             >
-              <a href='#'>
+              <a href={isSuperAdmin() ? '/saas-admin/dashboard' : '/dashboard'}>
                 <ArrowUpCircleIcon className='h-5 w-5' />
                 <span className='text-base font-semibold'>
-                  Berkah Baja Makmur
+                  {isSuperAdmin() ? 'SaaS Admin' : 'Berkah Baja Makmur'}
                 </span>
               </a>
             </SidebarMenuButton>
@@ -222,7 +263,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={navMainMenu} />
-        <NavDocuments items={navAdminMenu} />
+        {navAdminMenu.length > 0 && <NavDocuments items={navAdminMenu} />}
       </SidebarContent>
       <SidebarFooter>
         <NavUser />

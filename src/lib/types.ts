@@ -5,6 +5,13 @@
 // ========================================================================
 
 export type UserRole = 'admin' | 'cashier'
+export type UserType = 'super_admin' | 'tenant_admin' | 'branch_user'
+export type TenantStatus = 'active' | 'suspended' | 'cancelled'
+export type SubscriptionStatus = 'trial' | 'active' | 'cancelled' | 'expired'
+export type SubscriptionPlan = 'basic' | 'premium' | 'enterprise'
+export type SupportTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed'
+export type SupportTicketPriority = 'low' | 'medium' | 'high' | 'urgent'
+
 export type ShiftStatus = 'open' | 'closed'
 export type SaleStatus =
   | 'completed'
@@ -44,6 +51,79 @@ export type PurchaseOrderPaymentTerms = 'cash' | 'credit'
 export const PURCHASE_ORDER_PAYMENT_TERMS = ['all', 'cash', 'credit']
 
 // ========================================================================
+// SaaS Model Interfaces
+// ========================================================================
+
+export interface Tenant {
+  id: number
+  name: string
+  slug: string
+  domain: string | null
+  description: string | null
+  contact_email: string
+  contact_phone: string | null
+  address: string | null
+  logo_url: string | null
+  status: TenantStatus
+  settings: any | null
+  trial_ends_at: string | null
+  created_at: string
+  updated_at: string
+  subscription?: Subscription
+  branches?: Branch[]
+  users?: User[]
+}
+
+export interface Subscription {
+  id: number
+  tenant_id: number
+  plan_name: SubscriptionPlan
+  price: number
+  billing_cycle: 'monthly' | 'yearly'
+  status: SubscriptionStatus
+  max_branches: number
+  max_users: number
+  has_inventory: boolean
+  has_reports: boolean
+  has_employee_management: boolean
+  starts_at: string
+  ends_at: string
+  trial_ends_at: string | null
+  features: string[] | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SupportTicketResponse {
+  id: number
+  ticket_id: number
+  user_id: number
+  user_name: string
+  response: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SupportTicket {
+  id: number
+  tenant_id: number
+  user_id: number
+  ticket_number: string
+  subject: string
+  description: string
+  status: SupportTicketStatus
+  priority: SupportTicketPriority
+  category: string
+  assigned_to: number | null
+  resolved_at: string | null
+  created_at: string
+  updated_at: string
+  user?: User
+  assigned_user?: User
+  responses?: SupportTicketResponse[]
+}
+
+// ========================================================================
 // Definisi Interface Model Utama (sesuai Model Laravel)
 // ========================================================================
 
@@ -52,11 +132,15 @@ export interface User {
   name: string
   email: string
   role: UserRole
+  user_type: UserType
+  tenant_id: number | null
   branch_id: number | string | null
+  is_tenant_owner: boolean
   avatar_url?: string
   created_at: string
   updated_at: string
   branch?: Branch // Relasi
+  tenant?: Tenant // Relasi
 }
 
 // Tipe data ini cocok dengan model BankAccount di Laravel
@@ -78,6 +162,7 @@ export interface BankAccount {
 export interface Branch {
   id: number
   name: string
+  tenant_id: number
   invoice_name: string
   address: string | null
   phone: string | null
@@ -88,6 +173,7 @@ export interface Branch {
   transaction_deletion_password: string | null
   printer_port: string
   intl: string
+  tenant?: Tenant // Relasi
 }
 
 // ================= Stock Opname =================
