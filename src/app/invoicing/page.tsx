@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import MainLayout from '@/components/layout/main-layout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
 import { useAuth } from '@/contexts/auth-context'
@@ -99,6 +100,7 @@ const getStatusLabel = (status: InvoiceStatus) => {
 }
 
 export default function InvoicingPage() {
+  const router = useRouter()
   const { currentUser } = useAuth()
   const { selectedBranch } = useBranches()
   
@@ -198,8 +200,7 @@ export default function InvoicingPage() {
   }, [loadInvoices])
 
   const handleCreateInvoice = () => {
-    // TODO: Navigate to invoice creation page
-    toast.info('Fitur buat invoice sedang dalam pengembangan')
+    router.push('/invoicing/new')
   }
 
   const handleViewInvoice = (invoiceId: number) => {
