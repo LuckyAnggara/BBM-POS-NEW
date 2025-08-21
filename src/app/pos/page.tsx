@@ -208,7 +208,9 @@ export default function POSPage() {
   const [isPrinting, setIsPrinting] = useState(false)
 
   const [showCashPaymentModal, setShowCashPaymentModal] = useState(false)
-  const [cashAmountPaidInput, setCashAmountPaidInput] = useState('')
+  const [cashAmountPaidInput, setCashAmountPaidInput] = useState<number | null>(
+    0
+  )
   const [customer_nameInputCash, setcustomer_nameInputCash] = useState('')
   const [calculatedChange, setCalculatedChange] = useState<number | null>(null)
   const [showCreditConfirmationDialog, setShowCreditConfirmationDialog] =
@@ -542,7 +544,7 @@ export default function POSPage() {
       setActiveShift(result)
       setShowStartShiftModal(false)
       toast.success('Shift Dimulai', {
-        description: `Shift dimulai dengan modal awal ${currencySymbol}${cash.toLocaleString()}`,
+        description: `Shift dimulai dengan modal awal ${formatCurrency(cash)}`,
       })
     } catch (error: any) {
       let errorMessage = 'Terjadi kesalahan pada server. Silakan coba lagi.'
@@ -887,7 +889,11 @@ export default function POSPage() {
   )
 
   const total = useMemo(() => {
-    return subtotalWithTax + shippingCost - voucherDiscount
+    // Ensure operands are numbers to avoid string concatenation (e.g. "1000" + "1000" -> "10001000")
+    const s = Number(subtotalWithTax) || 0
+    const ship = Number(shippingCost) || 0
+    const voucher = Number(voucherDiscount) || 0
+    return s + ship - voucher
   }, [subtotalWithTax, shippingCost, voucherDiscount])
 
   const totalCost = useMemo(
@@ -900,7 +906,7 @@ export default function POSPage() {
   )
 
   const openCashPaymentModal = () => {
-    setCashAmountPaidInput(total.toString())
+    setCashAmountPaidInput(0)
     setcustomer_nameInputCash('')
     setCalculatedChange(0)
     setShowCashPaymentModal(true)
@@ -909,15 +915,16 @@ export default function POSPage() {
   const handleCashAmountPaidChange = (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
-    const paidAmountStr = e.target.value
+    const paidAmountStr = parseFloat(e.target.value)
     setCashAmountPaidInput(paidAmountStr)
-    const paidAmount = parseFloat(paidAmountStr)
+    const paidAmount = Number(paidAmountStr)
     if (!isNaN(paidAmount) && paidAmount >= total) {
       setCalculatedChange(paidAmount - total)
     } else {
       setCalculatedChange(null)
     }
   }
+
   const handleConfirmCashPayment = async () => {
     // 1. Validasi Input (Guard Clauses) - Ini sudah sangat baik, kita pertahankan.
     if (!activeShift || !selectedBranch || !currentUser) {
@@ -927,7 +934,7 @@ export default function POSPage() {
       return
     }
 
-    const amountPaidNum = parseFloat(cashAmountPaidInput)
+    const amountPaidNum = Number(cashAmountPaidInput)
     if (isNaN(amountPaidNum) || amountPaidNum < total) {
       toast.error('Pembayaran Tidak Cukup', {
         description: 'Jumlah yang dibayar kurang dari total belanja.',
@@ -975,7 +982,7 @@ export default function POSPage() {
       setSelectedSalesId(undefined)
       isSelectedCustomer(null)
       // ... reset state lainnya
-      setCashAmountPaidInput('')
+      setCashAmountPaidInput(0)
       setcustomer_nameInputCash('')
       setCalculatedChange(null)
       fetchItemsData(currentPage, debouncedSearchTerm)
@@ -1646,8 +1653,7 @@ export default function POSPage() {
                               {product.name}
                             </h3>
                             <p className='text-primary font-bold text-sm mt-0.5'>
-                              {currencySymbol}
-                              {product.price.toLocaleString('id-ID')}
+                              {formatCurrency(product.price)}
                             </p>
                             <p className='text-xs text-muted-foreground mb-1'>
                               Stok: {product.quantity}
@@ -1949,10 +1955,7 @@ export default function POSPage() {
                           (tax_rate * 100).toFixed(0)}
                         %):
                       </span>
-                      <span>
-                        {currencySymbol}
-                        {tax.toLocaleString('id-ID')}
-                      </span>
+                      <span>{formatCurrency(tax)}</span>
                     </div>
 
                     {/* Pilihan Mode Pajak */}
@@ -2041,10 +2044,7 @@ export default function POSPage() {
                     {totalDiscountAmount > 0 && (
                       <div className='flex justify-between text-xs w-full text-destructive pt-1'>
                         <span>Total Diskon Keseluruhan:</span>
-                        <span>
-                          -{currencySymbol}
-                          {totalDiscountAmount.toLocaleString('id-ID')}
-                        </span>
+                        <span>-{formatCurrency(totalDiscountAmount)}</span>
                       </div>
                     )}
 
@@ -2340,9 +2340,9 @@ export default function POSPage() {
                 Diskon untuk: {selectedItemForDiscount?.product_name}
               </DialogTitle>
               <DialogDescription className='text-xs'>
-                Harga Asli: {currencySymbol}
-                {(selectedItemForDiscount?.original_price || 0).toLocaleString(
-                  'id-ID'
+                Harga Asli:
+                {formatCurrency(
+                  selectedItemForDiscount?.original_price || 0
                 )}{' '}
                 per item
               </DialogDescription>
@@ -2393,15 +2393,13 @@ export default function POSPage() {
                   <p>
                     Diskon Dihitung:{' '}
                     <span className='font-medium'>
-                      {currencySymbol}
-                      {previewActualDiscountAmount.toLocaleString('id-ID')}
+                      {formatCurrency(previewActualDiscountAmount)}
                     </span>
                   </p>
                   <p>
                     Harga Baru per Item:{' '}
                     <span className='font-medium'>
-                      {currencySymbol}
-                      {previewDiscountedPrice.toLocaleString('id-ID')}
+                      {formatCurrency(previewDiscountedPrice)}
                     </span>
                   </p>
                 </div>
@@ -2712,10 +2710,7 @@ export default function POSPage() {
                 </DialogTitle>
                 <DialogDescription className='text-xs'>
                   Total Belanja:{' '}
-                  <span className='font-semibold'>
-                    {currencySymbol}
-                    {total.toLocaleString('id-ID')}
-                  </span>
+                  <span className='font-semibold'>{formatCurrency(total)}</span>
                 </DialogDescription>
               </DialogHeader>
               <div className='py-3 space-y-3'>
@@ -2741,8 +2736,8 @@ export default function POSPage() {
                         : 'text-green-600'
                     )}
                   >
-                    Kembalian: {currencySymbol}
-                    {calculatedChange.toLocaleString('id-ID')}
+                    Kembalian:
+                    {formatCurrency(calculatedChange)}
                   </p>
                 )}
               </div>
@@ -2763,7 +2758,8 @@ export default function POSPage() {
                   disabled={
                     isProcessingSale ||
                     calculatedChange === null ||
-                    calculatedChange < 0
+                    calculatedChange < 0 ||
+                    calculatedChange === 0
                   }
                 >
                   {isProcessingSale ? 'Memproses...' : 'Konfirmasi Pembayaran'}
@@ -2784,10 +2780,7 @@ export default function POSPage() {
               </DialogTitle>
               <DialogDescription className='text-xs'>
                 Total Belanja:{' '}
-                <span className='font-semibold'>
-                  {currencySymbol}
-                  {total.toLocaleString('id-ID')}
-                </span>
+                <span className='font-semibold'>{formatCurrency(total)}</span>
               </DialogDescription>
             </DialogHeader>
             <div className='py-3 space-y-3'>
@@ -3015,7 +3008,7 @@ export default function POSPage() {
           open={showCashHistoryDialog}
           onOpenChange={setShowCashHistoryDialog}
         >
-          <DialogContent className='sm:max-w-2xl'>
+          <DialogContent className='sm:max-w-4xl'>
             <DialogHeader>
               <DialogTitle className='text-base'>
                 Riwayat Transaksi Tunai (Shift Ini)
@@ -3338,8 +3331,8 @@ export default function POSPage() {
             <DialogFooter className='items-center pt-3 border-t'>
               <div className='text-xs text-muted-foreground mr-auto'>
                 <p>
-                  Total Penjualan (Bersih): {currencySymbol}
-                  {totalSalesShift.toLocaleString('id-ID')} (
+                  Total Penjualan (Bersih):
+                  {formatCurrency(totalSalesShift)} (
                   {
                     shiftTransactions.filter((tx) => tx.status === 'completed')
                       .length
@@ -3348,7 +3341,7 @@ export default function POSPage() {
                 </p>
                 <p>
                   Total Retur: {currencySymbol}
-                  {totalReturnsShift.toLocaleString('id-ID')} (
+                  {formatCurrency(totalReturnsShift)} (
                   {
                     shiftTransactions.filter((tx) => tx.status === 'returned')
                       .length
