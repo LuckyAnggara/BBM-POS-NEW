@@ -42,6 +42,18 @@ import { format } from 'date-fns'
 import { id } from 'date-fns/locale'
 import { toast } from 'sonner'
 
+import {
+  listInvoices,
+  getInvoiceSummary,
+  deleteInvoice,
+  downloadInvoicePDF,
+} from '@/lib/laravel/invoiceService'
+import type {
+  Invoice,
+  InvoiceStatus,
+  ListInvoicesParams,
+} from '@/lib/types'
+
 // Helper function to format currency
 const formatCurrency = (amount: number): string => {
   return new Intl.NumberFormat('id-ID', {
@@ -50,38 +62,6 @@ const formatCurrency = (amount: number): string => {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount)
-}
-
-// Invoice types
-export type InvoiceStatus = 'draft' | 'unpaid' | 'partial' | 'paid' | 'overdue'
-
-export interface Invoice {
-  id: number
-  invoice_number: string
-  customer_id: number
-  customer_name: string
-  sales_agent_id?: number
-  sales_agent_name?: string
-  subtotal: number
-  tax_amount: number
-  total_amount: number
-  amount_paid: number
-  outstanding_amount: number
-  status: InvoiceStatus
-  due_date: string
-  created_at: string
-  updated_at: string
-  items?: InvoiceItem[]
-}
-
-export interface InvoiceItem {
-  id: number
-  invoice_id: number
-  product_id: number
-  product_name: string
-  quantity: number
-  price: number
-  total: number
 }
 
 const getStatusColor = (status: InvoiceStatus) => {
@@ -136,8 +116,10 @@ export default function InvoicingPage() {
       customer_name: 'PT. Contoh Indonesia',
       sales_agent_id: 1,
       sales_agent_name: 'John Doe',
+      branch_id: 1,
       subtotal: 1000000,
       tax_amount: 110000,
+      shipping_cost: 0,
       total_amount: 1110000,
       amount_paid: 0,
       outstanding_amount: 1110000,
@@ -153,8 +135,10 @@ export default function InvoicingPage() {
       customer_name: 'CV. Maju Jaya',
       sales_agent_id: 2,
       sales_agent_name: 'Jane Smith',
+      branch_id: 1,
       subtotal: 750000,
       tax_amount: 82500,
+      shipping_cost: 0,
       total_amount: 832500,
       amount_paid: 400000,
       outstanding_amount: 432500,
@@ -165,22 +149,41 @@ export default function InvoicingPage() {
     },
   ]
 
-  useEffect(() => {
-    loadInvoices()
-  }, [selectedBranch])
-
   const loadInvoices = useCallback(async () => {
     if (!selectedBranch) return
 
     setLoading(true)
     try {
-      // TODO: Replace with actual API call
-      // const response = await listInvoices({ branchId: selectedBranch.id })
-      // setInvoices(response)
+      // TODO: Replace with actual API call when backend is ready
+      const params: ListInvoicesParams = {
+        branchId: selectedBranch.id,
+        status: statusFilter === 'all' ? undefined : (statusFilter as InvoiceStatus),
+        searchTerm: searchTerm || undefined,
+      }
+      
+      // Uncomment when backend is ready:
+      // const response = await listInvoices(params)
+      // setInvoices(response.data)
       
       // Using mock data for now
       setTimeout(() => {
-        setInvoices(mockInvoices)
+        let filteredMockData = mockInvoices
+        
+        // Apply search filter
+        if (searchTerm) {
+          filteredMockData = filteredMockData.filter(invoice =>
+            invoice.invoice_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            invoice.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (invoice.sales_agent_name && invoice.sales_agent_name.toLowerCase().includes(searchTerm.toLowerCase()))
+          )
+        }
+        
+        // Apply status filter
+        if (statusFilter !== 'all') {
+          filteredMockData = filteredMockData.filter(invoice => invoice.status === statusFilter)
+        }
+        
+        setInvoices(filteredMockData)
         setLoading(false)
       }, 1000)
     } catch (error) {
@@ -188,18 +191,11 @@ export default function InvoicingPage() {
       toast.error('Gagal memuat data invoice')
       setLoading(false)
     }
-  }, [selectedBranch])
+  }, [selectedBranch, searchTerm, statusFilter])
 
-  const filteredInvoices = invoices.filter((invoice) => {
-    const matchesSearch = 
-      invoice.invoice_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      invoice.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (invoice.sales_agent_name && invoice.sales_agent_name.toLowerCase().includes(searchTerm.toLowerCase()))
-    
-    const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter
-    
-    return matchesSearch && matchesStatus
-  })
+  useEffect(() => {
+    loadInvoices()
+  }, [loadInvoices])
 
   const handleCreateInvoice = () => {
     // TODO: Navigate to invoice creation page
@@ -208,7 +204,7 @@ export default function InvoicingPage() {
 
   const handleViewInvoice = (invoiceId: number) => {
     // TODO: Navigate to invoice detail page
-    toast.info(`Melihat invoice ID: ${invoiceId}`)
+    window.open(`/invoice/${invoiceId}/view`, '_blank')
   }
 
   const handleEditInvoice = (invoiceId: number) => {
@@ -216,16 +212,29 @@ export default function InvoicingPage() {
     toast.info(`Edit invoice ID: ${invoiceId}`)
   }
 
-  const handleDownloadPDF = (invoiceId: number) => {
-    // TODO: Implement PDF download
-    toast.info(`Download PDF invoice ID: ${invoiceId}`)
+  const handleDownloadPDF = async (invoiceId: number) => {
+    try {
+      const blob = await downloadInvoicePDF(invoiceId)
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.style.display = 'none'
+      a.href = url
+      a.download = `invoice-${invoiceId}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      toast.success('PDF berhasil diunduh')
+    } catch (error) {
+      console.error('Error downloading PDF:', error)
+      toast.error('Gagal mengunduh PDF')
+    }
   }
 
   // Calculate summary stats
-  const totalInvoices = filteredInvoices.length
-  const totalAmount = filteredInvoices.reduce((sum, inv) => sum + inv.total_amount, 0)
-  const totalOutstanding = filteredInvoices.reduce((sum, inv) => sum + inv.outstanding_amount, 0)
-  const paidInvoices = filteredInvoices.filter(inv => inv.status === 'paid').length
+  const totalInvoices = invoices.length
+  const totalAmount = invoices.reduce((sum: number, inv: Invoice) => sum + inv.total_amount, 0)
+  const totalOutstanding = invoices.reduce((sum: number, inv: Invoice) => sum + inv.outstanding_amount, 0)
+  const paidInvoices = invoices.filter((inv: Invoice) => inv.status === 'paid').length
 
   return (
     <ProtectedRoute>
@@ -357,7 +366,7 @@ export default function InvoicingPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredInvoices.length === 0 ? (
+                    {invoices.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center py-8">
                           <div className="text-muted-foreground">
@@ -369,7 +378,7 @@ export default function InvoicingPage() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      filteredInvoices.map((invoice) => (
+                      invoices.map((invoice: Invoice) => (
                         <TableRow key={invoice.id}>
                           <TableCell className="font-medium">
                             {invoice.invoice_number}

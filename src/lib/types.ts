@@ -16,6 +16,7 @@ export type SaleStatus =
   | 'returned'
 export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid'
 export type PaymentMethod = 'cash' | 'card' | 'transfer' | 'qris' | 'credit' // Frontend constraint
+export type InvoiceStatus = 'draft' | 'unpaid' | 'partial' | 'paid' | 'overdue'
 export type StockMutationType =
   | 'sale'
   | 'purchase'
@@ -579,6 +580,86 @@ export interface SupplierDetail extends Supplier {
   }
   recent_orders: SupplierPurchaseOrder[]
   outstanding_payments: SupplierPurchaseOrder[]
+}
+
+// ========================================================================
+// Invoice Module Types
+// ========================================================================
+
+export interface Invoice {
+  id: number
+  invoice_number: string
+  customer_id: number
+  customer_name: string
+  sales_agent_id?: number
+  sales_agent_name?: string
+  branch_id: number | string | null
+  subtotal: number
+  tax_amount: number
+  shipping_cost: number
+  total_amount: number
+  amount_paid: number
+  outstanding_amount: number
+  status: InvoiceStatus
+  due_date: string
+  created_at: string
+  updated_at: string
+  items?: InvoiceItem[]
+  customer?: Customer
+  sales_agent?: User
+  notes?: string
+}
+
+export interface InvoiceItem {
+  id: number
+  invoice_id: number
+  product_id: number
+  product_name: string
+  quantity: number
+  price: number
+  total: number
+}
+
+export interface CreateInvoicePayload {
+  customer_id: number
+  sales_agent_id?: number
+  due_date: string
+  items: InvoiceItemInput[]
+  notes?: string
+  shipping_cost?: number
+  tax_amount?: number
+}
+
+export interface InvoiceItemInput {
+  product_id: number
+  quantity: number
+  price: number
+}
+
+export interface UpdateInvoiceStatusPayload {
+  status: InvoiceStatus
+  payment_amount?: number
+  notes?: string
+}
+
+export interface ListInvoicesParams {
+  branchId?: string | number
+  page?: number
+  limit?: number
+  searchTerm?: string
+  status?: InvoiceStatus | 'all'
+  startDate?: string
+  endDate?: string
+  customerId?: number
+  salesAgentId?: number
+}
+
+export interface PaginatedInvoices {
+  data: Invoice[]
+  total: number
+  current_page: number
+  last_page: number
+  per_page: number
 }
 
 // export interface PurchaseOrderInput {
