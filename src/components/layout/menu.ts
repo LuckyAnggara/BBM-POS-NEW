@@ -39,6 +39,12 @@ export const navMain = (unreadCount: number) => [
     adminOnly: false,
   },
   {
+    href: '/invoicing',
+    label: 'Invoicing',
+    icon: Receipt,
+    adminOnly: false,
+  },
+  {
     href: '/purchase-orders',
     label: 'Pembelian',
     icon: ClipboardList,

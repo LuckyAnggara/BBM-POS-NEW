@@ -3,9 +3,9 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import InvoiceTemplate from '@/components/invoice/invoice-template'
-import { getTransactionById } from '@/lib/appwrite/pos' // Updated import
-import { getBranchById } from '@/lib/appwrite/branches' // Updated import
-import type { Branch, TransactionViewModel } from '@/lib/appwrite/types' // Updated import
+import { getSaleById } from '@/lib/laravel/saleService' // Updated import
+import { getBranchById } from '@/lib/laravel/branches' // Updated import
+import type { Branch, Sale } from '@/lib/types' // Updated import
 import { Button } from '@/components/ui/button'
 import { Printer, ArrowLeft } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -17,7 +17,7 @@ export default function InvoiceViewPage() {
   const params = useParams()
   const transactionId = params.transactionId as string
 
-  const [transaction, setTransaction] = useState<TransactionViewModel | null>(
+  const [transaction, setTransaction] = useState<Sale | null>(
     null
   )
   const [branch, setBranch] = useState<Branch | null>(null)
@@ -36,7 +36,7 @@ export default function InvoiceViewPage() {
       }
       try {
         setLoading(true)
-        const txData = await getTransactionById(transactionId)
+        const txData = await getSaleById(Number(transactionId))
         if (!txData) {
           setError('Transaksi tidak ditemukan.')
           setTransaction(null)
@@ -46,8 +46,8 @@ export default function InvoiceViewPage() {
         }
         setTransaction(txData)
 
-        if (txData.branch.id) {
-          const branchData = await getBranchById(txData.branch.id)
+        if (txData.branch_id) {
+          const branchData = await getBranchById(Number(txData.branch_id))
           setBranch(branchData)
         } else {
           setError('ID Cabang tidak ditemukan pada transaksi.')
@@ -82,8 +82,6 @@ export default function InvoiceViewPage() {
         printerType: '58mm',
         branch,
         transaction,
-        isPrinting,
-        setIsPrinting,
       })
       toast.success(result, { id: 'print-loading' })
     } catch (error) {

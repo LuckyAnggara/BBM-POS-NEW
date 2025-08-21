@@ -234,3 +234,73 @@ export const rejectSaleAction = async (id: number): Promise<Sale> => {
     throw error
   }
 }
+
+// ========================================================================
+// Invoice Integration Functions (as per requirements)
+// ========================================================================
+
+/**
+ * Create invoice from existing sale (for converting POS credit sales to formal invoices)
+ * @param {number} saleId - Sale ID to convert to invoice
+ * @returns {Promise<any>} Created invoice object
+ */
+export const createInvoiceFromSale = async (saleId: number): Promise<any> => {
+  try {
+    const response = await api.post(`/api/sales/${saleId}/create-invoice`)
+    return response.data
+  } catch (error) {
+    console.error(
+      `Laravel API Error :: createInvoiceFromSale (Sale ID: ${saleId}) :: `,
+      error
+    )
+    throw error
+  }
+}
+
+/**
+ * Update invoice status for credit sales integration
+ * @param {number} invoiceId - Invoice ID
+ * @param {string} status - New status
+ * @returns {Promise<any>} Updated invoice object
+ */
+export const updateInvoiceStatusFromSales = async (
+  invoiceId: number,
+  status: string
+): Promise<any> => {
+  try {
+    const response = await api.patch(`/api/invoices/${invoiceId}/status`, {
+      status,
+    })
+    return response.data
+  } catch (error) {
+    console.error(
+      `Laravel API Error :: updateInvoiceStatusFromSales (Invoice ID: ${invoiceId}) :: `,
+      error
+    )
+    throw error
+  }
+}
+
+/**
+ * Get invoices with filtering (integrated with sales service)
+ * @param {object} filters - Filter parameters
+ * @returns {Promise<any>} Filtered invoices list
+ */
+export const getInvoicesFromSales = async (filters: {
+  branchId?: string | number
+  status?: string
+  customerId?: number
+  salesAgentId?: number
+  startDate?: string
+  endDate?: string
+  page?: number
+  limit?: number
+}): Promise<any> => {
+  try {
+    const response = await api.get('/api/invoices', { params: filters })
+    return response.data
+  } catch (error) {
+    console.error('Laravel API Error :: getInvoicesFromSales :: ', error)
+    throw error
+  }
+}

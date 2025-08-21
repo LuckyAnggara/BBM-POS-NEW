@@ -199,7 +199,6 @@ export default function POSPage() {
   const [selectedPaymentTerms, setSelectedPaymentTerms] =
     useState<PaymentMethod>('cash')
   const [isProcessingSale, setIsProcessingSale] = useState(false)
-  const [isCreditSaleProcessing, setIsCreditSaleProcessing] = useState(false)
 
   const [lastTransactionId, setLastTransactionId] = useState<number | null>(
     null
@@ -213,29 +212,17 @@ export default function POSPage() {
   )
   const [customer_nameInputCash, setcustomer_nameInputCash] = useState('')
   const [calculatedChange, setCalculatedChange] = useState<number | null>(null)
-  const [showCreditConfirmationDialog, setShowCreditConfirmationDialog] =
-    useState(false)
 
   const [allCustomers, setAllCustomers] = useState<Customer[]>([])
   const [loadingCustomers, setLoadingCustomers] = useState(true)
   const [selectedCustomerId, setSelectedCustomerId] = useState<
     string | undefined
   >(undefined)
-  const [creditDueDate, setCreditDueDate] = useState<Date | undefined>(
-    undefined
-  )
   const [selectedCustomer, isSelectedCustomer] = useState<Customer | null>(null)
   const [isCustomerComboboxOpen, setIsCustomerComboboxOpen] = useState(false)
 
   // Dialog states
   const [showCustomerDialog, setShowCustomerDialog] = useState(false)
-  const [showSalesDialog, setShowSalesDialog] = useState(false)
-  const [selectedSalesId, setSelectedSalesId] = useState<string | undefined>(
-    undefined
-  )
-  const [salesEmployees, setSalesEmployees] = useState<any[]>([])
-  const [loadingSalesEmployees, setLoadingSalesEmployees] = useState(false)
-  const [salesSearchTerm, setSalesSearchTerm] = useState('')
 
   const [showScanCustomerDialog, setShowScanCustomerDialog] = useState(false)
 
@@ -442,57 +429,11 @@ export default function POSPage() {
 
   // Minimal UI insertion placeholder (actual full POS UI below). We'll inject dialog triggers at top of layout.
 
-  // Customer & Sales filtered lists (reuse fetched arrays if exist)
-  const filteredSalesEmployees = useMemo(() => {
-    if (!salesSearchTerm) return salesEmployees
-    return salesEmployees.filter((s) =>
-      s.name?.toLowerCase().includes(salesSearchTerm.toLowerCase())
-    )
-  }, [salesEmployees, salesSearchTerm])
-
-  // TEMP fetch sales employees when opening dialog (lazy)
-  const ensureSalesEmployees = useCallback(async () => {
-    if (salesEmployees.length || loadingSalesEmployees) return
-    try {
-      setLoadingSalesEmployees(true)
-      // Reuse employee service if exists; fallback simple fetch
-      const res = await fetch('/api/sales-employees').then((r) => r.json())
-      setSalesEmployees(res?.data || res || [])
-    } catch (e) {
-      // silent
-    } finally {
-      setLoadingSalesEmployees(false)
-    }
-  }, [salesEmployees.length, loadingSalesEmployees])
-
   // Inject at top of JSX later
 
   useEffect(() => {
     fetchShiftTransactions()
   }, [fetchShiftTransactions, lastTransactionId])
-
-  const loadSalesEmployees = useCallback(async () => {
-    if (!currentUser || !selectedBranch) {
-      setSalesEmployees([])
-      return
-    }
-
-    try {
-      const options = {
-        branchId: selectedBranch.id,
-        limit: itemsPerPage,
-        isSales: true, // Hanya ambil pegawai yang bertugas sebagai sales
-      }
-      setLoadingSalesEmployees(true)
-      const result = await listEmployees(options)
-      setSalesEmployees(result.data)
-    } catch (error) {
-      console.error('Error loading sales employees:', error)
-      setSalesEmployees([])
-    } finally {
-      setLoadingSalesEmployees(false)
-    }
-  }, [selectedBranch, currentUser])
 
   const checkForActiveShift = useCallback(async () => {
     if (!currentUser || !selectedBranch) {
@@ -514,11 +455,6 @@ export default function POSPage() {
   useEffect(() => {
     checkForActiveShift()
   }, [checkForActiveShift])
-
-  // Load sales employees
-  useEffect(() => {
-    loadSalesEmployees()
-  }, [selectedBranch])
 
   const handleStartShift = async () => {
     if (!currentUser || !selectedBranch) {
@@ -959,7 +895,6 @@ export default function POSPage() {
         is_credit_sale: false,
         notes: '',
         customer_id: Number(selectedCustomerId),
-        sales_id: selectedSalesId ? Number(selectedSalesId) : undefined,
         items: cartItems,
       }
 
@@ -979,7 +914,6 @@ export default function POSPage() {
       setSelectedPaymentTerms('cash')
       setShippingCostInput('')
       setVoucherCodeInput('')
-      setSelectedSalesId(undefined)
       isSelectedCustomer(null)
       // ... reset state lainnya
       setCashAmountPaidInput(0)
@@ -1045,7 +979,6 @@ export default function POSPage() {
         is_credit_sale: false,
         notes: '',
         customer_id: Number(selectedCustomerId),
-        sales_id: selectedSalesId ? Number(selectedSalesId) : undefined,
         items: cartItems,
       }
       // 2. Blok `try`: Eksekusi alur sukses
@@ -1065,7 +998,6 @@ export default function POSPage() {
       setShippingCostInput('')
       setVoucherCodeInput('')
       setVoucherDiscountInput('')
-      setSelectedSalesId(undefined)
       isSelectedCustomer(null)
       setSelectedbank_name('')
       setBankRefNumberInput('')
@@ -1124,25 +1056,7 @@ export default function POSPage() {
       return
     }
 
-    // --- Awal dari Logika Asinkron (untuk 'credit' atau metode langsung lainnya) ---
-
-    // Validasi spesifik untuk penjualan kredit
-    if (selectedPaymentTerms === 'credit') {
-      if (!selectedCustomerId) {
-        toast.error('Pelanggan Diperlukan', {
-          description: 'Pilih pelanggan untuk penjualan kredit.',
-        })
-        return
-      }
-      if (!creditDueDate) {
-        toast.error('Tanggal Jatuh Tempo Diperlukan', {
-          description: 'Pilih tanggal jatuh tempo untuk penjualan kredit.',
-        })
-        return
-      }
-      setShowCreditConfirmationDialog(true)
-      return
-    }
+    // --- Awal dari Logika Asinkron (untuk metode langsung lainnya) ---
     // setIsProcessingSale(true)
 
     // try {
@@ -1191,60 +1105,6 @@ export default function POSPage() {
     //   // Jaminan untuk menonaktifkan status loading
     //   setIsProcessingSale(false)
     // }
-  }
-
-  // Handler untuk konfirmasi penjualan kredit
-  const handleConfirmCreditSale = async () => {
-    setIsProcessingSale(true)
-    setIsCreditSaleProcessing(true)
-    try {
-      const payload: CreateSalePayload = {
-        shift_id: activeShift!.id,
-        payment_method: 'credit',
-        amount_paid: 0,
-        tax_amount: tax,
-        shipping_cost: shippingCost,
-        outstanding_amount: total,
-        is_credit_sale: true,
-        credit_due_date: creditDueDate?.toISOString(),
-        notes: '',
-        customer_id: Number(selectedCustomerId),
-        sales_id: selectedSalesId ? Number(selectedSalesId) : undefined,
-        items: cartItems,
-      }
-      const result = await createSale(payload)
-      toast.success('Transaksi Berhasil', {
-        description: 'Penjualan telah direkam.',
-      })
-      setLastTransactionId(result.id)
-      setShowPrintInvoiceDialog(true)
-      setCartItems([])
-      setSelectedPaymentTerms('cash')
-      setShippingCostInput('')
-      setVoucherCodeInput('')
-      setVoucherDiscountInput('')
-      setSelectedCustomerId(undefined)
-      setSelectedSalesId(undefined)
-      isSelectedCustomer(null)
-      setCreditDueDate(undefined)
-      setSearchCustomerTerm('')
-      fetchItemsData(currentPage, debouncedSearchTerm)
-    } catch (error) {
-      console.error('Gagal menyelesaikan penjualan:', error)
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Terjadi kesalahan yang tidak diketahui.'
-      toast.error('Gagal Merekam Transaksi', {
-        description: errorMessage,
-      })
-      setLastTransactionId(null)
-    } finally {
-      setIsProcessingSale(false)
-      setIsCreditSaleProcessing(false)
-
-      setShowCreditConfirmationDialog(false)
-    }
   }
 
   const handlePrintInvoice = async (transactionIdToPrint?: number) => {
@@ -1440,18 +1300,6 @@ export default function POSPage() {
                 data-testid='customer-dialog-button-header'
               >
                 Pelanggan
-              </Button>
-              <Button
-                variant='outline'
-                size='sm'
-                className='h-8 text-xs'
-                onClick={() => {
-                  setShowSalesDialog(true)
-                  ensureSalesEmployees()
-                }}
-                data-testid='sales-dialog-button-header'
-              >
-                Sales
               </Button>
             </div>
 
@@ -2061,11 +1909,6 @@ export default function POSPage() {
                         value={selectedPaymentTerms}
                         onValueChange={(value) => {
                           setSelectedPaymentTerms(value as PaymentMethod)
-                          if (value !== 'credit') {
-                            setSelectedCustomerId(undefined)
-                            setCreditDueDate(undefined)
-                            setSearchCustomerTerm('')
-                          }
                         }}
                         disabled={!activeShift || cartItems.length === 0}
                       >
@@ -2085,165 +1928,10 @@ export default function POSPage() {
                             <Banknote className='inline-block mr-2 h-4 w-4' />
                             Transfer Bank
                           </SelectItem>
-                          <SelectItem value='credit' className='text-xs'>
-                            <UserPlus className='inline-block mr-2 h-4 w-4' />
-                            Kredit
-                          </SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
-                    {selectedPaymentTerms === 'credit' && (
-                      <div className='w-full mt-2 space-y-2 p-2 border rounded-md bg-muted/30'>
-                        <div className='flex items-center gap-2'>
-                          <div className='flex-grow'>
-                            <Label
-                              htmlFor='selectedCustomer'
-                              className='text-xs'
-                            >
-                              Pelanggan
-                            </Label>
-                            <Popover
-                              open={isCustomerComboboxOpen}
-                              onOpenChange={setIsCustomerComboboxOpen}
-                            >
-                              <PopoverTrigger asChild>
-                                <Button
-                                  variant='outline'
-                                  role='combobox'
-                                  aria-expanded={isCustomerComboboxOpen}
-                                  className='w-full justify-between h-8 text-xs mt-1 font-normal'
-                                  disabled={
-                                    loadingCustomers ||
-                                    allCustomers.length === 0
-                                  }
-                                >
-                                  {selectedCustomerId
-                                    ? allCustomers.find(
-                                        (customer) =>
-                                          String(customer.id) ===
-                                          selectedCustomerId
-                                      )?.name
-                                    : loadingCustomers
-                                    ? 'Memuat...'
-                                    : allCustomers.length === 0
-                                    ? 'Tidak ada pelanggan'
-                                    : 'Cari Pelanggan'}
-                                  {!loadingCustomers ? (
-                                    <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
-                                  ) : (
-                                    <Loader2 className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50 animate-spin' />
-                                  )}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent className='w-[--radix-popover-trigger-width] p-0'>
-                                <Command shouldFilter={false}>
-                                  <CommandInput
-                                    placeholder='Cari pelanggan (nama/phone)...'
-                                    value={searchCustomerTerm}
-                                    onValueChange={setSearchCustomerTerm}
-                                    className='h-9 text-xs'
-                                  />
-                                  <CommandEmpty className='p-2 text-xs text-center'>
-                                    {loadingCustomers
-                                      ? 'Memuat...'
-                                      : 'Pelanggan tidak ditemukan.'}
-                                    {!loadingCustomers ? (
-                                      <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
-                                    ) : (
-                                      <Loader2 className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50 animate-spin' />
-                                    )}
-                                  </CommandEmpty>
-                                  <CommandList>
-                                    <CommandGroup>
-                                      {allCustomers.map((customer) => (
-                                        <CommandItem
-                                          key={customer.id}
-                                          value={String(customer.id)}
-                                          onSelect={(currentValue) => {
-                                            setSelectedCustomerId(
-                                              currentValue ===
-                                                selectedCustomerId
-                                                ? undefined
-                                                : currentValue
-                                            )
-                                            setSearchCustomerTerm(
-                                              currentValue ===
-                                                selectedCustomerId
-                                                ? ''
-                                                : customer.name
-                                            )
-                                            setIsCustomerComboboxOpen(false)
-                                          }}
-                                          className='text-xs'
-                                        >
-                                          <CheckCircle
-                                            className={cn(
-                                              'mr-2 h-3.5 w-3.5',
-                                              selectedCustomerId ===
-                                                String(customer.id)
-                                                ? 'opacity-100'
-                                                : 'opacity-0'
-                                            )}
-                                          />
-                                          {customer.name}
-                                        </CommandItem>
-                                      ))}
-                                    </CommandGroup>
-                                  </CommandList>
-                                </Command>
-                              </PopoverContent>
-                            </Popover>
-                          </div>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='icon'
-                            className='h-8 w-8 mt-[18px]'
-                            onClick={() => setShowScanCustomerDialog(true)}
-                            disabled={loadingCustomers}
-                          >
-                            <QrCode className='h-4 w-4' />
-                            <span className='sr-only'>Scan Pelanggan</span>
-                          </Button>
-                        </div>
-                        <div>
-                          <Label htmlFor='creditDueDate' className='text-xs'>
-                            Tgl Jatuh Tempo
-                          </Label>
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant={'outline'}
-                                className={cn(
-                                  'w-full justify-start text-left font-normal h-8 text-xs mt-1',
-                                  !creditDueDate && 'text-muted-foreground'
-                                )}
-                              >
-                                <CalendarIcon className='mr-1.5 h-3.5 w-3.5' />
-                                {creditDueDate ? (
-                                  format(creditDueDate, 'dd MMM yyyy')
-                                ) : (
-                                  <span>Pilih tanggal</span>
-                                )}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className='w-auto p-0'>
-                              <Calendar
-                                mode='single'
-                                selected={creditDueDate}
-                                onSelect={setCreditDueDate}
-                                initialFocus
-                                disabled={(date) =>
-                                  date <
-                                  new Date(new Date().setHours(0, 0, 0, 0))
-                                }
-                              />
-                            </PopoverContent>
-                          </Popover>
-                        </div>
-                      </div>
-                    )}
                     {selectedPaymentTerms === 'cash' && (
                       <div className='w-full mt-2 space-y-2 p-2 border rounded-md bg-muted/30'>
                         <div className='flex gap-2'>
@@ -2268,29 +1956,9 @@ export default function POSPage() {
                                 : 'Walk-In Customer'}
                             </Button>
                           </div>
-                          <div className='flex-1'>
-                            <Label className='text-xs'>Sales (Opsional)</Label>
-                            <Button
-                              variant='outline'
-                              className='w-full h-8 text-xs mt-1 font-normal justify-start'
-                              onClick={() => setShowSalesDialog(true)}
-                              data-testid='sales-dialog-button-payment'
-                            >
-                              <Users
-                                className='mr-2 h-3.5 w-3.5'
-                                data-testid='users-icon'
-                              />
-                              {selectedSalesId
-                                ? salesEmployees.find(
-                                    (s) => String(s.id) === selectedSalesId
-                                  )?.name || 'Pilih Sales'
-                                : 'Pilih Sales'}
-                            </Button>
-                          </div>
                         </div>
                         <p className='text-xs text-muted-foreground'>
-                          Tap tombol untuk memilih customer atau sales untuk
-                          transaksi ini.
+                          Tap tombol untuk memilih customer untuk transaksi ini.
                         </p>
                       </div>
                     )}
@@ -2301,9 +1969,7 @@ export default function POSPage() {
                       disabled={
                         !activeShift ||
                         cartItems.length === 0 ||
-                        isProcessingSale ||
-                        (selectedPaymentTerms === 'credit' &&
-                          (!selectedCustomerId || !creditDueDate))
+                        isProcessingSale
                       }
                       onClick={handleCompleteSale}
                     >
@@ -3178,63 +2844,6 @@ export default function POSPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Credit Confirmation Dialog */}
-        <Dialog
-          open={showCreditConfirmationDialog}
-          onOpenChange={setShowCreditConfirmationDialog}
-        >
-          <DialogContent className='sm:max-w-md'>
-            <DialogHeader>
-              <DialogTitle>Konfirmasi Penjualan Kredit</DialogTitle>
-              <DialogDescription>
-                Apakah Anda yakin ingin memproses penjualan kredit ini?
-              </DialogDescription>
-            </DialogHeader>
-            <div className='py-3 space-y-2'>
-              <div className='flex justify-between text-xs'>
-                <span>Pelanggan:</span>
-                <span className='font-semibold'>
-                  {allCustomers.find((c) => String(c.id) === selectedCustomerId)
-                    ?.name || '-'}
-                </span>
-              </div>
-              <div className='flex justify-between text-xs'>
-                <span>Jatuh Tempo:</span>
-                <span className='font-semibold'>
-                  {creditDueDate ? formatDateIntlIntl(creditDueDate) : '-'}
-                </span>
-              </div>
-              <div className='flex justify-between text-sm font-bold border-t pt-2'>
-                <span>Total:</span>
-                <span>{formatCurrency(total)}</span>
-              </div>
-            </div>
-            <DialogFooter className='flex flex-row gap-2 pt-2'>
-              <Button
-                variant='outline'
-                className='text-xs h-8'
-                onClick={() => setShowCreditConfirmationDialog(false)}
-                disabled={isCreditSaleProcessing}
-              >
-                Batal
-              </Button>
-              {!isCreditSaleProcessing ? (
-                <Button
-                  className='text-xs h-8'
-                  onClick={handleConfirmCreditSale}
-                >
-                  Konfirmasi
-                </Button>
-              ) : (
-                <Button size='sm' disabled>
-                  <Loader2 className='animate-spin' />
-                  Please wait
-                </Button>
-              )}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
         <Dialog
           open={showAllShiftTransactionsDialog}
           onOpenChange={setShowAllShiftTransactionsDialog}
@@ -3463,122 +3072,7 @@ export default function POSPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Sales Selection Dialog (Redesigned) */}
-        <Dialog open={showSalesDialog} onOpenChange={setShowSalesDialog}>
-          <DialogContent className='max-w-md p-0 overflow-hidden rounded-md'>
-            <div className='border-b px-4 py-3 flex items-center justify-between bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60'>
-              <div>
-                <h3 className='text-xs font-semibold tracking-wide'>
-                  Pilih Sales
-                </h3>
-                <p className='text-[10px] text-muted-foreground mt-0.5'>
-                  Assign transaksi ke sales (opsional)
-                </p>
-              </div>
-            </div>
-            <div className='p-3 space-y-3'>
-              <div className='relative'>
-                <Search className='absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground' />
-                <Input
-                  placeholder='Cari nama / kode...'
-                  value={salesSearchTerm}
-                  onChange={(e) => setSalesSearchTerm(e.target.value)}
-                  className='pl-8 h-8 text-xs'
-                  autoFocus
-                />
-              </div>
-              <div className='rounded border bg-muted/30 max-h-64 overflow-y-auto slim-scroll'>
-                {loadingSalesEmployees ? (
-                  <div className='p-4 text-center text-[11px] text-muted-foreground'>
-                    Memuat sales...
-                  </div>
-                ) : salesEmployees.filter(
-                    (s) =>
-                      s.name
-                        .toLowerCase()
-                        .includes(salesSearchTerm.toLowerCase()) ||
-                      s.employee_id
-                        ?.toLowerCase()
-                        .includes(salesSearchTerm.toLowerCase())
-                  ).length === 0 ? (
-                  <div className='p-6 text-center text-[11px] text-muted-foreground'>
-                    Tidak ada hasil.
-                  </div>
-                ) : (
-                  <ul className='divide-y'>
-                    {salesEmployees
-                      .filter(
-                        (s) =>
-                          s.name
-                            .toLowerCase()
-                            .includes(salesSearchTerm.toLowerCase()) ||
-                          s.employee_id
-                            ?.toLowerCase()
-                            .includes(salesSearchTerm.toLowerCase())
-                      )
-                      .map((s) => {
-                        const active = selectedSalesId === s.id
-                        return (
-                          <li key={s.id}>
-                            <button
-                              type='button'
-                              onClick={() => {
-                                setSelectedSalesId(s.id)
-                                setShowSalesDialog(false)
-                              }}
-                              className={cn(
-                                'w-full text-left px-3 py-2 hover:bg-accent/60 focus:bg-accent/70 focus:outline-none transition-colors',
-                                'text-xs',
-                                active && 'bg-primary/5'
-                              )}
-                            >
-                              <div className='flex items-center justify-between'>
-                                <span className='font-medium truncate'>
-                                  {s.name}
-                                </span>
-                                {active && (
-                                  <Check className='h-3.5 w-3.5 text-primary' />
-                                )}
-                              </div>
-                              <p className='text-[10px] text-muted-foreground mt-0.5'>
-                                Kode: {s.employee_id || '-'}
-                              </p>
-                              {s.position && (
-                                <p className='text-[10px] text-muted-foreground'>
-                                  {s.position}
-                                </p>
-                              )}
-                            </button>
-                          </li>
-                        )
-                      })}
-                  </ul>
-                )}
-              </div>
-              <div className='flex justify-end gap-2 pt-1'>
-                {selectedSalesId && (
-                  <Button
-                    variant='ghost'
-                    size='sm'
-                    className='h-7 text-[11px] px-3'
-                    onClick={() => setSelectedSalesId(undefined)}
-                  >
-                    Hapus Sales
-                  </Button>
-                )}
-                <DialogClose asChild>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    className='h-7 text-[11px] px-3'
-                  >
-                    Tutup
-                  </Button>
-                </DialogClose>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+
       </MainLayout>
     </ProtectedRoute>
   )
