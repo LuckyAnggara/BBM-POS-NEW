@@ -46,3 +46,11 @@ firestore-debug.log
 
 # prototyper
 /context/context_backup"
+
+# playwright test results
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
+# temporary files
+/tmp/
