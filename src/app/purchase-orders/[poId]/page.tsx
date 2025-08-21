@@ -522,6 +522,59 @@ export default function PurchaseOrderDetailPage() {
   ) => {
     if (!purchaseOrder || !currentUser) return
 
+    // Intercept statuses that require recording item receipts instead of direct status update
+    if (
+      (values.status === 'partially_received' ||
+        values.status === 'fully_received') &&
+      purchaseOrder.purchase_order_details &&
+      purchaseOrder.purchase_order_details.length > 0
+    ) {
+      const pending = purchaseOrder.purchase_order_details.filter(
+        (d) => d.ordered_quantity > d.received_quantity
+      )
+
+      if (pending.length === 0) {
+        // No pending items; allow normal flow (could already be fully received)
+      } else {
+        // Prepare receive form fields if user wants to mark fully received
+        if (values.status === 'fully_received') {
+          // Prefill each remaining quantity
+          receiveFields.forEach((field, index) => {
+            const remaining =
+              (field.ordered_quantity ?? 0) -
+              (field.already_received_quantity ?? 0)
+            if (remaining > 0) {
+              receiveItemsForm.setValue(
+                `itemsToReceive.${index}.quantity_received_now` as const,
+                remaining
+              )
+            }
+          })
+          toast.info('Lengkapi penerimaan', {
+            description:
+              'Semua jumlah sisa telah diisi otomatis. Simpan penerimaan untuk menyelesaikan PO.',
+          })
+        } else {
+          // Partially received - let user input manually
+          // Clear any previous auto-filled quantities to avoid confusion
+          receiveFields.forEach((field, index) => {
+            receiveItemsForm.setValue(
+              `itemsToReceive.${index}.quantity_received_now` as const,
+              0
+            )
+          })
+          toast.message('Catat Penerimaan Barang', {
+            description:
+              'Masukkan jumlah barang yang diterima untuk memperbarui status.',
+          })
+        }
+        // Close change status modal and open receive items modal instead of direct status update
+        setIsChangeStatusModalOpen(false)
+        setIsReceivingItemsModalOpen(true)
+        return
+      }
+    }
+
     try {
       setIsProcessingChangeStatus(true)
       const result = await updatePurchaseOrderStatus(
@@ -951,7 +1004,7 @@ export default function PurchaseOrderDetailPage() {
                           Dibuat Oleh
                         </p>
                         <p className='font-semibold'>
-                          ID: {purchaseOrder.user?.name}
+                          {purchaseOrder.user?.name}
                         </p>
                       </div>
                     </div>
@@ -1307,41 +1360,39 @@ export default function PurchaseOrderDetailPage() {
               onSubmit={changeStatusForm.handleSubmit(onSubmitChangeStatus)}
               className='space-y-3 p-2 max-h-[70vh] overflow-y-auto pr-1'
             >
-              <div>
-                <Label htmlFor='status' className='text-xs'>
-                  Pilih Status Baru*
-                </Label>
-                <Controller
-                  name='status'
-                  control={changeStatusForm.control}
-                  render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger className='h-9 text-xs mt-1'>
-                        <SelectValue placeholder='Pilih status baru' />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(
-                          [
-                            'draft',
-                            'ordered',
-                            'partially_received',
-                            'fully_received',
-                            'cancelled',
-                          ] as PurchaseOrderStatus[]
-                        ).map((status) => (
-                          <SelectItem
-                            key={status}
-                            value={status}
-                            className='text-xs'
-                          >
-                            {getPOStatusText(status)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-              </div>
+              <Label htmlFor='status' className='text-xs'>
+                Pilih Status Baru*
+              </Label>
+              <Controller
+                name='status'
+                control={changeStatusForm.control}
+                render={({ field }) => (
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <SelectTrigger className='h-9 text-xs mt-1'>
+                      <SelectValue placeholder='Pilih status baru' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(
+                        [
+                          'draft',
+                          'ordered',
+                          'partially_received',
+                          'fully_received',
+                          'cancelled',
+                        ] as PurchaseOrderStatus[]
+                      ).map((status) => (
+                        <SelectItem
+                          key={status}
+                          value={status}
+                          className='text-xs'
+                        >
+                          {getPOStatusText(status)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
               <DialogModalFooter className='pt-3'>
                 <DialogClose asChild>
                   <Button

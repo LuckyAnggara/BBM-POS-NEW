@@ -123,7 +123,7 @@ export const navMain = (unreadCount: number) => [
       },
       {
         href: '/reports/sales',
-        label: 'Sales',
+        label: 'Sales Agent',
         icon: TrendingUp,
       },
       {

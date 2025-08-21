@@ -176,8 +176,29 @@ export interface Supplier {
   address: string | null
   branch_id: number
   notes: string | null
+  // Extended fields for comprehensive supplier management
+  company_type: 'individual' | 'company' | null
+  tax_id: string | null // NPWP/Tax ID
+  credit_limit: number | null
+  payment_terms: string | null // e.g., "NET 30", "COD", etc.
+  bank_name: string | null
+  bank_account_number: string | null
+  bank_account_name: string | null
+  website: string | null
+  industry: string | null
+  rating: number | null // 1-5 rating
+  is_active: boolean
   created_at: string
   updated_at: string
+  // Optional analytics for when loaded from API
+  analytics?: {
+    total_orders: number
+    total_amount: number
+    outstanding_amount: number
+    last_order_date: string | null
+    average_order_value: number
+    payment_reliability: number
+  }
 }
 
 export interface Shift {
@@ -370,6 +391,18 @@ export interface SupplierPayment {
   updated_at: string
 }
 
+export const EXPENSE_CATEGORIES = [
+  'Sewa',
+  'Gaji',
+  'Utilitas',
+  'Perlengkapan',
+  'Pemasaran',
+  'Transportasi',
+  'Perbaikan',
+  'Lain-lain',
+] as const
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number]
+
 // ========================================================================
 // Tipe Data untuk Input & Payload (Form, Request API)
 // ========================================================================
@@ -394,8 +427,6 @@ export type CustomerInput = Omit<
 > & {
   qr_code_id?: string
 }
-
-export type SupplierInput = Omit<Supplier, 'id' | 'created_at' | 'updated_at'>
 
 export type ShiftInput = {
   starting_balance: number
@@ -467,25 +498,25 @@ export interface ReceivedItemData {
   quantity_received: number
 }
 
-export type PurchaseOrderInput = Omit<
-  PurchaseOrder,
-  | 'id'
-  | 'po_number'
-  | 'created_at'
-  | 'user'
-  | 'updated_at'
-  | 'purchase_order_details'
-  | 'supplier'
-  | 'payment_status'
-  | 'subtotal'
-  | 'payments'
-  | 'total_amount'
-  | 'user_id'
-  | 'outstanding_amount'
-> & {
+export type PurchaseOrderInput = {
+  supplier_id: number
+  branch_id: number
+  order_date: string // YYYY-MM-DD
+  expected_delivery_date?: string | null
+  payment_due_date?: string | null
+  notes?: string
+  payment_terms: 'cash' | 'credit'
+  is_credit: boolean
+  supplier_invoice_number?: string
+  tax_discount_amount?: number
+  tax_amount?: number
+  shipping_cost_charged?: number
+  other_costs?: number
   items: PurchaseOrderItemInput[]
-  supplier_name: string | null
+  status?: string
 }
+
+export type SupplierInput = Omit<Supplier, 'id' | 'created_at' | 'updated_at'>
 
 export type SupplierPaymentInput = Omit<
   SupplierPayment,
@@ -496,6 +527,59 @@ export type SupplierPaymentEditInput = Omit<
   SupplierPayment,
   'branch_id' | 'supplier_id' | 'created_at' | 'updated_at'
 >
+
+// Supplier Analytics Types
+export interface SupplierAnalytics {
+  total_purchase_orders: number
+  total_amount_purchased: number
+  total_outstanding_amount: number
+  average_order_value: number
+  last_order_date: string | null
+  payment_reliability_score: number // 0-100
+  most_frequent: Supplier[]
+  highest_spending: Supplier[]
+}
+
+export interface TopSuppliersResponse {
+  most_frequent: Array<
+    Supplier & {
+      total_purchases: number
+      total_spent: number
+    }
+  >
+  highest_spending: Array<
+    Supplier & {
+      total_purchases: number
+      total_spent: number
+    }
+  >
+}
+
+// Purchase Order with supplier details for history
+export interface SupplierPurchaseOrder {
+  id: number
+  po_number: string
+  order_date: string
+  status: string
+  payment_status: string
+  total_amount: number
+  outstanding_amount: number
+  items_count: number
+}
+
+// Supplier detail with full analytics
+export interface SupplierDetail extends Supplier {
+  analytics: {
+    total_orders: number
+    total_amount: number
+    outstanding_amount: number
+    average_order_value: number
+    last_order_date: string | null
+    payment_reliability: number
+  }
+  recent_orders: SupplierPurchaseOrder[]
+  outstanding_payments: SupplierPurchaseOrder[]
+}
 
 // export interface PurchaseOrderInput {
 //   supplier_id: number

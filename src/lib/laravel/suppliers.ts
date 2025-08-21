@@ -1,5 +1,5 @@
 import api from '@/lib/api'
-import type { Supplier, SupplierInput } from '@/lib/types' // Asumsi tipe ini sudah ada di types.ts
+import type { Supplier, SupplierInput, TopSuppliersResponse } from '@/lib/types' // Asumsi tipe ini sudah ada di types.ts
 // Tipe untuk input, hilangkan properti yang dibuat otomatis
 
 // Tipe untuk hasil paginasi dari Laravel
@@ -58,6 +58,21 @@ export const getSupplierById = async (id: number): Promise<Supplier | null> => {
 }
 
 /**
+ * Mengambil satu data supplier berdasarkan ID-nya (alias untuk konsistensi).
+ * @param {string} id - ID supplier.
+ * @returns {Promise<Supplier>}
+ */
+export const getSupplier = async (id: string): Promise<Supplier> => {
+  try {
+    const response = await api.get(`/api/suppliers/${id}`)
+    return response.data
+  } catch (error) {
+    console.error(`Laravel API Error :: getSupplier (ID: ${id}) :: `, error)
+    throw error
+  }
+}
+
+/**
  * Membuat supplier baru.
  * @param {SupplierInput} supplierData - Data supplier.
  * @returns {Promise<Supplier>}
@@ -103,6 +118,52 @@ export const deleteSupplier = async (id: number): Promise<void> => {
     await api.delete(`/api/suppliers/${id}`)
   } catch (error) {
     console.error(`Laravel API Error :: deleteSupplier (ID: ${id}) :: `, error)
+    throw error
+  }
+}
+
+/**
+ * Mengambil supplier teratas berdasarkan kriteria tertentu.
+ * @param {number} branchId - ID cabang.
+ * @param {number} limit - Jumlah supplier yang akan diambil.
+ * @param {number} months - Periode dalam bulan untuk analisis.
+ * @returns {Promise<TopSuppliersResponse>}
+ */
+export const getTopSuppliers = async (
+  branchId: number,
+  limit: number = 5,
+  months: number = 12
+): Promise<TopSuppliersResponse> => {
+  try {
+    const response = await api.get('/api/suppliers/top-suppliers', {
+      params: {
+        branch_id: branchId,
+        limit,
+        months,
+      },
+    })
+    return response.data
+  } catch (error) {
+    console.error('Laravel API Error :: getTopSuppliers :: ', error)
+    throw error
+  }
+}
+
+/**
+ * Mengambil statistik supplier untuk dashboard.
+ * @param {number} branchId - ID cabang.
+ * @returns {Promise<any>}
+ */
+export const getSupplierStats = async (branchId: number): Promise<any> => {
+  try {
+    const response = await api.get('/api/suppliers-stats', {
+      params: {
+        branch_id: branchId,
+      },
+    })
+    return response.data
+  } catch (error) {
+    console.error('Laravel API Error :: getSupplierStats :: ', error)
     throw error
   }
 }

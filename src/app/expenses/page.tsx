@@ -68,7 +68,6 @@ import { z } from 'zod'
 import { toast } from 'sonner'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { EXPENSE_CATEGORIES } from '@/lib/appwrite/expenses'
 import {
   listExpenses,
   createExpense,
@@ -79,7 +78,7 @@ import type { Expense } from '@/lib/types'
 import { format, parseISO, startOfMonth, endOfMonth } from 'date-fns'
 import { cn, formatCurrency } from '@/lib/utils'
 import { useDebounce } from '@uidotdev/usehooks'
-import { ITEMS_PER_PAGE_OPTIONS } from '@/lib/types'
+import { EXPENSE_CATEGORIES, ITEMS_PER_PAGE_OPTIONS } from '@/lib/types'
 
 // Local date formatter for created_at
 const formatDateIntl = (dateInput: string | Date) => {

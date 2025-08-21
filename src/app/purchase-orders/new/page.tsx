@@ -256,48 +256,44 @@ export default function NewPurchaseOrderPage() {
       toast.error('Cabang atau pengguna tidak valid.')
       return
     }
-    // Transformasi data form menjadi struktur yang dibutuhkan oleh `createPurchaseOrder`
+    const formatDate = (d?: Date) => (d ? format(d, 'yyyy-MM-dd') : undefined)
+    const rawSubtotal = values.items.reduce(
+      (acc, item) => acc + Number(item.quantity || 0) * Number(item.cost || 0),
+      0
+    )
+    const discount = Number(values.tax_discount_amount || 0)
+    const taxableBase = Math.max(0, rawSubtotal - discount)
+    const finalTax =
+      (values.tax_type || 'amount') === 'percent'
+        ? Math.max(0, (taxableBase * Number(values.tax_amount || 0)) / 100)
+        : Number(values.tax_amount || 0)
     const poInputData: PurchaseOrderInput = {
       branch_id: selectedBranch.id,
       is_credit: values.payment_terms === 'credit',
       supplier_id: Number(values.supplier_id),
-      order_date: values.order_date.toISOString(),
-      expected_delivery_date:
-        values.expected_delivery_date?.toISOString() ?? null,
-      notes: values.notes ?? '',
+      order_date: formatDate(values.order_date)!,
+      expected_delivery_date: formatDate(values.expected_delivery_date) || null,
+      notes: values.notes || '',
       payment_terms: values.payment_terms,
-      supplier_invoice_number: values.supplier_invoice_number ?? '',
-      payment_due_date: values.payment_due_date?.toISOString() ?? '',
-      tax_discount_amount: values.tax_discount_amount, // discount amount
-      shipping_cost_charged: values.shipping_cost_charged,
-      tax_amount:
-        (values.tax_type || 'amount') === 'percent'
-          ? Math.max(
-              0,
-              ((values.items.reduce(
-                (acc, item) =>
-                  acc + Number(item.quantity || 0) * Number(item.cost || 0),
-                0
-              ) -
-                Number(values.tax_discount_amount || 0)) *
-                Number(values.tax_amount || 0)) /
-                100
-            )
-          : Number(values.tax_amount || 0),
-      other_costs: values.other_costs,
-      // Map item dari form ke struktur yang benar
+      supplier_invoice_number: values.supplier_invoice_number || undefined,
+      payment_due_date:
+        values.payment_terms === 'credit'
+          ? formatDate(values.payment_due_date)
+          : undefined,
+      tax_discount_amount: discount,
+      shipping_cost_charged: Number(values.shipping_cost_charged || 0),
+      tax_amount: finalTax,
+      other_costs: Number(values.other_costs || 0),
       items: values.items.map((item) => ({
         product_id: item.product_id,
         quantity: item.quantity,
         cost: item.cost,
       })),
-      status: 'draft', // or another default status as required by your app
-      supplier_name: selectedSupplier?.name ?? '',
+      status: 'pending',
     }
     try {
       setLoading(true)
       const result = await createPurchaseOrder(poInputData)
-
       toast.success(
         `Pesanan Pembelian Dibuat! PO ${result.po_number} berhasil disimpan.`
       )

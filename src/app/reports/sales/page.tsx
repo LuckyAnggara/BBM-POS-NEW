@@ -193,7 +193,8 @@ export default function SalesReportPage() {
           <div className='flex flex-col sm:flex-row justify-between items-start gap-3'>
             <div>
               <h1 className='text-xl md:text-2xl font-semibold font-headline'>
-                Laporan Sales {selectedBranch ? `- ${selectedBranch.name}` : ''}
+                Laporan Sales Agent{' '}
+                {selectedBranch ? `- ${selectedBranch.name}` : ''}
               </h1>
               <p className='text-sm text-muted-foreground mt-1'>
                 Laporan performa penjualan per sales employee
@@ -207,7 +208,7 @@ export default function SalesReportPage() {
                 Filter Laporan
               </CardTitle>
               <CardDescription className='text-xs'>
-                Pilih periode dan filter untuk membuat laporan sales.
+                Pilih periode dan filter untuk membuat laporan sales agent.
               </CardDescription>
             </CardHeader>
             <CardContent className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end p-4 pt-0'>

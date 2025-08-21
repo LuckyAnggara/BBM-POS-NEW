@@ -34,7 +34,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { CalendarIcon, Download, Info } from 'lucide-react'
+import {
+  CalendarIcon,
+  Download,
+  Info,
+  Search,
+  ChevronsUpDown,
+  CheckCircle,
+  Package,
+} from 'lucide-react'
 import {
   format,
   startOfMonth,
@@ -45,9 +53,20 @@ import {
   isValid,
 } from 'date-fns'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Input } from '@/components/ui/input'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import { cn } from '@/lib/utils'
 import Image from 'next/image'
 import { listProducts } from '@/lib/laravel/product'
 import type { Product } from '@/lib/types'
+import { useDebounce } from '@uidotdev/usehooks'
 import {
   getLiveStockMovement,
   getCachedStockMovement,
@@ -93,36 +112,70 @@ export default function StockMovementReportPage() {
   const [useLive, setUseLive] = useState(true)
   const [fullRows, setFullRows] = useState<ClientStockMovementRow[]>([])
 
+  // State untuk pencarian produk
+  const [searchProductTerm, setSearchProductTerm] = useState('')
+  const debouncedSearchProduct = useDebounce(searchProductTerm, 300)
+  const [openProductPopover, setOpenProductPopover] = useState(false)
+
   useEffect(() => {
     const now = new Date()
     setStartDate(startOfMonth(now))
     setEndDate(endOfMonth(now))
   }, [selectedBranch])
 
-  const fetchInventory = useCallback(async () => {
-    if (!selectedBranch) {
-      setInventoryItems([])
-      setLoadingInventory(false)
-      return
-    }
-    setLoadingInventory(true)
-    try {
-      const res = await listProducts({
-        branchId: selectedBranch.id,
-        page: 1,
-        limit: 200,
-      })
-      setInventoryItems(res.data)
-    } catch (e) {
-      setInventoryItems([])
-    } finally {
-      setLoadingInventory(false)
-    }
-  }, [selectedBranch])
+  const fetchInventory = useCallback(
+    async (searchTerm: string = '') => {
+      if (!selectedBranch) {
+        setInventoryItems([])
+        setLoadingInventory(false)
+        return
+      }
+      setLoadingInventory(true)
+      try {
+        const res = await listProducts({
+          branchId: selectedBranch.id,
+          page: 1,
+          limit: 5,
+          searchTerm: searchTerm,
+        })
+        setInventoryItems(res.data)
+      } catch (e) {
+        setInventoryItems([])
+      } finally {
+        setLoadingInventory(false)
+      }
+    },
+    [selectedBranch]
+  )
 
   useEffect(() => {
     fetchInventory()
   }, [fetchInventory])
+
+  // Effect untuk pencarian produk dengan debounce
+  useEffect(() => {
+    fetchInventory(debouncedSearchProduct)
+  }, [debouncedSearchProduct, fetchInventory])
+
+  // Reset selected product jika tidak ada dalam hasil pencarian
+  useEffect(() => {
+    if (selectedProductId && inventoryItems.length > 0) {
+      const isProductStillAvailable = inventoryItems.some(
+        (item) => String(item.id) === selectedProductId
+      )
+      if (!isProductStillAvailable) {
+        setSelectedProductId(undefined)
+      }
+    }
+  }, [inventoryItems, selectedProductId])
+
+  const handleProductPopoverOpenChange = (open: boolean) => {
+    setOpenProductPopover(open)
+  }
+
+  const selectedProduct = useMemo(() => {
+    return inventoryItems.find((item) => String(item.id) === selectedProductId)
+  }, [inventoryItems, selectedProductId])
 
   const handleGenerateReport = useCallback(async () => {
     if (!selectedBranch) {
@@ -317,7 +370,7 @@ export default function StockMovementReportPage() {
               </CardTitle>
               <CardDescription className='text-xs'>
                 Pilih produk dan rentang tanggal untuk melihat pergerakan
-                stoknya.
+                stoknya. Gunakan pencarian untuk menemukan produk dengan cepat.
               </CardDescription>
             </CardHeader>
             <CardContent className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end p-4 pt-0'>
@@ -326,39 +379,88 @@ export default function StockMovementReportPage() {
                   htmlFor='productSelect'
                   className='block text-xs font-medium mb-1'
                 >
-                  Produk
+                  Pilih Produk
                 </label>
-                <Select
-                  value={selectedProductId}
-                  onValueChange={setSelectedProductId}
-                  disabled={loadingInventory || inventoryItems.length === 0}
+                <Popover
+                  open={openProductPopover}
+                  onOpenChange={handleProductPopoverOpenChange}
                 >
-                  <SelectTrigger
-                    id='productSelect'
-                    className='rounded-md h-9 text-xs'
-                  >
-                    <SelectValue
-                      placeholder={
-                        loadingInventory
-                          ? 'Memuat produk...'
-                          : inventoryItems.length === 0
-                          ? 'Tidak ada produk'
-                          : 'Pilih produk'
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {inventoryItems.map((item) => (
-                      <SelectItem
-                        key={item.id}
-                        value={String(item.id)}
-                        className='text-xs'
-                      >
-                        {item.name} (SKU: {item.sku || '-'})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant='outline'
+                      role='combobox'
+                      aria-expanded={openProductPopover}
+                      className='w-full justify-between h-9 text-xs font-normal'
+                      disabled={loadingInventory}
+                    >
+                      {selectedProduct ? (
+                        <span className='truncate max-w-[calc(100%-20px)]'>
+                          {selectedProduct.name} (SKU:{' '}
+                          {selectedProduct.sku || '-'})
+                        </span>
+                      ) : loadingInventory ? (
+                        'Memuat...'
+                      ) : (
+                        'Cari dan pilih produk...'
+                      )}
+                      <ChevronsUpDown className='ml-2 h-3.5 w-3.5 shrink-0 opacity-50' />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className='w-[--radix-popover-trigger-width] p-0'>
+                    <Command shouldFilter={false}>
+                      <CommandInput
+                        placeholder='Cari produk (nama/SKU)...'
+                        value={searchProductTerm}
+                        onValueChange={(value) => setSearchProductTerm(value)}
+                        className='h-9 text-xs'
+                      />
+                      <CommandEmpty className='p-2 text-xs text-center'>
+                        {loadingInventory
+                          ? 'Memuat...'
+                          : searchProductTerm
+                          ? `Tidak ada produk ditemukan untuk "${searchProductTerm}"`
+                          : 'Ketik untuk mencari produk'}
+                      </CommandEmpty>
+                      <CommandList>
+                        <CommandGroup>
+                          {inventoryItems.map((product) => (
+                            <CommandItem
+                              key={product.id}
+                              value={String(product.id)}
+                              onSelect={(currentValue) => {
+                                setSelectedProductId(currentValue)
+                                handleProductPopoverOpenChange(false)
+                              }}
+                              className='text-xs'
+                            >
+                              <CheckCircle
+                                className={cn(
+                                  'mr-2 h-3.5 w-3.5',
+                                  String(selectedProductId) ===
+                                    String(product.id)
+                                    ? 'opacity-100'
+                                    : 'opacity-0'
+                                )}
+                              />
+                              <div className='flex items-center gap-2 flex-1'>
+                                <Package className='h-3.5 w-3.5 text-muted-foreground' />
+                                <div className='flex flex-col'>
+                                  <span className='truncate'>
+                                    {product.name}
+                                  </span>
+                                  <span className='text-muted-foreground text-xs'>
+                                    SKU: {product.sku || '-'} | Stok:{' '}
+                                    {product.quantity}
+                                  </span>
+                                </div>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
               <div>
                 <label

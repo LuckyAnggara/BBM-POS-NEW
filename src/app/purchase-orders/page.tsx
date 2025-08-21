@@ -161,12 +161,12 @@ export default function PurchaseOrdersPage() {
         const fetchedPOs = await listPurchaseOrders(options)
         setPurchaseOrders(fetchedPOs.data)
         setIsLoading(false)
-        if (fetchedPOs.total === 0) {
-          toast.info('Tidak Ada Pesanan', {
-            description:
-              'Tidak ada pesanan pembelian ditemukan untuk filter tanggal yang dipilih.',
-          })
-        }
+        // if (fetchedPOs.total === 0) {
+        //   toast.info('Tidak Ada Pesanan', {
+        //     description:
+        //       'Tidak ada pesanan pembelian ditemukan untuk filter tanggal yang dipilih.',
+        //   })
+        // }
       } catch (error) {
         toast.error('Gagal Memuat Pesanan', {
           description:
@@ -641,10 +641,19 @@ export default function PurchaseOrdersPage() {
                       <TableCell className='text-right py-2 text-xs'>
                         {formatCurrency(po.total_amount)}
                       </TableCell>
-                      <TableCell className='text-center py-1.5 flex flex-row gap-2 items-center'>
-                        <Link href={`/purchase-orders/${po.id}`}>
-                          <Eye className='mr-2 h-3.5 w-3.5' />
-                        </Link>
+                      <TableCell className='text-center py-1.5 flex flex-row gap-2 items-center '>
+                        <Button
+                          asChild
+                          variant='ghost'
+                          size='icon'
+                          className='text-xs cursor-pointer h-7 w-7 '
+                          disabled={isUpdatingStatus}
+                        >
+                          <Link href={`/purchase-orders/${po.id}`}>
+                            <Eye className='mr-2 h-3.5 w-3.5' />
+                          </Link>
+                        </Button>
+
                         {po.status === 'draft' && (
                           <Button
                             variant='ghost'

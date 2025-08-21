@@ -209,6 +209,10 @@ export const createPurchaseOrder = async (
   poData: PurchaseOrderInput
 ): Promise<any> => {
   try {
+    // Debug log (hapus jika sudah stabil)
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('Submitting PO payload:', poData)
+    }
     const response = await api.post('/api/purchase-orders', poData)
     return response.data
   } catch (error) {
