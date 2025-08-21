@@ -154,6 +154,11 @@ export interface Product {
   category?: Category // Relasi
 }
 
+// Customer types & tiers
+export type CustomerType = 'individual' | 'business'
+export type CustomerTier = 'regular' | 'silver' | 'gold' | 'platinum'
+export type CreditStatus = 'active' | 'suspended' | 'blocked'
+
 export interface Customer {
   id: number
   name: string
@@ -162,9 +167,28 @@ export interface Customer {
   address: string | null
   branch_id: number | string | null
   notes: string | null
+  // Customer Classification
+  customer_type: CustomerType
+  customer_tier: CustomerTier
+  company_name: string | null
+  tax_id: string | null
+  business_type: string | null
+  // Credit Management
+  credit_limit: number
+  payment_terms_days: number
+  credit_status: CreditStatus
+  // Loyalty & Analytics
+  loyalty_points: number
+  total_spent: number
+  total_transactions: number
+  last_purchase_date: string | null
+  // Preferences
+  preferences: Record<string, any> | null
+  is_active: boolean
   created_at: string
   updated_at: string
-  qr_code_id: string
+  // Relations
+  branch?: Branch
 }
 
 export interface Supplier {
@@ -423,10 +447,15 @@ export type CategoryInput = Omit<Category, 'id' | 'created_at' | 'updated_at'>
 
 export type CustomerInput = Omit<
   Customer,
-  'id' | 'created_at' | 'updated_at' | 'qr_code_id'
-> & {
-  qr_code_id?: string
-}
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'loyalty_points'
+  | 'total_spent'
+  | 'total_transactions'
+  | 'last_purchase_date'
+  | 'branch'
+>
 
 export type ShiftInput = {
   starting_balance: number
@@ -592,3 +621,29 @@ export interface SupplierDetail extends Supplier {
 export const ITEMS_PER_PAGE_OPTIONS = [10, 20, 50, 100]
 export const STOCK_OPNAME_PAGE_SIZE_OPTIONS = [10, 25, 50]
 export const ADMIN_REQUEST_SALES_STATUS = ['return', 'void', 'all']
+
+// Customer Classification Constants
+export const CUSTOMER_TYPES = {
+  individual: 'Individual/Personal',
+  business: 'Business/Corporate',
+} as const
+
+export const CUSTOMER_TIERS = {
+  regular: 'Regular',
+  silver: 'Silver',
+  gold: 'Gold',
+  platinum: 'Platinum',
+} as const
+
+export const CREDIT_STATUSES = {
+  active: 'Active',
+  suspended: 'Suspended',
+  blocked: 'Blocked',
+} as const
+
+export const TIER_COLORS = {
+  regular: 'bg-gray-100 text-gray-800',
+  silver: 'bg-slate-100 text-slate-800',
+  gold: 'bg-yellow-100 text-yellow-800',
+  platinum: 'bg-purple-100 text-purple-800',
+} as const
