@@ -13,9 +13,7 @@ import type {
  * @param {CreateInvoicePayload} payload - Invoice data
  * @returns {Promise<Invoice>} Created invoice object
  */
-export const createInvoice = async (
-  payload: CreateInvoicePayload
-): Promise<Invoice> => {
+export const createInvoice = async (payload: CreateInvoicePayload): Promise<Invoice> => {
   try {
     const response = await api.post('/api/invoices', payload)
     return response.data
@@ -30,9 +28,7 @@ export const createInvoice = async (
  * @param {ListInvoicesParams} params - Filter and pagination parameters
  * @returns {Promise<PaginatedInvoices>} Paginated invoices list
  */
-export const listInvoices = async (
-  params: ListInvoicesParams = {}
-): Promise<PaginatedInvoices> => {
+export const listInvoices = async (params: ListInvoicesParams = {}): Promise<PaginatedInvoices> => {
   try {
     const response = await api.get('/api/invoices', { params })
     return response.data
@@ -64,17 +60,14 @@ export const getInvoiceById = async (id: number): Promise<Invoice | null> => {
  * @returns {Promise<Invoice>} Updated invoice object
  */
 export const updateInvoiceStatus = async (
-  id: number,
+  id: number, 
   payload: UpdateInvoiceStatusPayload
 ): Promise<Invoice> => {
   try {
     const response = await api.patch(`/api/invoices/${id}/status`, payload)
     return response.data
   } catch (error) {
-    console.error(
-      `Laravel API Error :: updateInvoiceStatus (ID: ${id}) :: `,
-      error
-    )
+    console.error(`Laravel API Error :: updateInvoiceStatus (ID: ${id}) :: `, error)
     throw error
   }
 }
@@ -86,7 +79,7 @@ export const updateInvoiceStatus = async (
  * @returns {Promise<Invoice>} Updated invoice object
  */
 export const updateInvoice = async (
-  id: number,
+  id: number, 
   payload: Partial<CreateInvoicePayload>
 ): Promise<Invoice> => {
   try {
@@ -124,10 +117,7 @@ export const downloadInvoicePDF = async (id: number): Promise<Blob> => {
     })
     return response.data
   } catch (error) {
-    console.error(
-      `Laravel API Error :: downloadInvoicePDF (ID: ${id}) :: `,
-      error
-    )
+    console.error(`Laravel API Error :: downloadInvoicePDF (ID: ${id}) :: `, error)
     throw error
   }
 }
@@ -142,10 +132,7 @@ export const markInvoiceOverdue = async (id: number): Promise<Invoice> => {
     const response = await api.post(`/api/invoices/${id}/mark-overdue`)
     return response.data
   } catch (error) {
-    console.error(
-      `Laravel API Error :: markInvoiceOverdue (ID: ${id}) :: `,
-      error
-    )
+    console.error(`Laravel API Error :: markInvoiceOverdue (ID: ${id}) :: `, error)
     throw error
   }
 }
@@ -160,20 +147,18 @@ export interface InvoiceSummary {
   total_amount: number
   total_outstanding: number
   total_paid: number
-  paid_count: number
-  unpaid_count: number
-  partial_count: number
   overdue_count: number
   overdue_amount: number
   by_status: Record<InvoiceStatus, number>
+  paid_count: number
+  unpaid_count: number
+  partial_count: number
 }
 
-export const getInvoiceSummary = async (
-  branchId: string | number
-): Promise<InvoiceSummary> => {
+export const getInvoiceSummary = async (branchId: string | number): Promise<InvoiceSummary> => {
   try {
     const response = await api.get(`/api/invoices/summary`, {
-      params: { branch_id: branchId },
+      params: { branch_id: branchId }
     })
     return response.data
   } catch (error) {
@@ -187,12 +172,10 @@ export const getInvoiceSummary = async (
  * @param {string | number} branchId - Branch ID
  * @returns {Promise<string>} Generated invoice number
  */
-export const generateInvoiceNumber = async (
-  branchId: string | number
-): Promise<string> => {
+export const generateInvoiceNumber = async (branchId: string | number): Promise<string> => {
   try {
     const response = await api.post('/api/invoices/generate-number', {
-      branch_id: branchId,
+      branch_id: branchId
     })
     return response.data.invoice_number
   } catch (error) {

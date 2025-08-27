@@ -17,6 +17,16 @@ export type SaleStatus =
 export type PaymentStatus = 'unpaid' | 'partially_paid' | 'paid'
 export type PaymentMethod = 'cash' | 'card' | 'transfer' | 'qris' | 'credit' // Frontend constraint
 export type InvoiceStatus = 'draft' | 'unpaid' | 'partial' | 'paid' | 'overdue'
+export type ExtendedInvoiceStatus =
+  | 'draft'
+  | 'confirmed'
+  | 'preparing'
+  | 'ready_to_ship'
+  | 'shipped'
+  | 'delivered'
+  | 'completed'
+  | 'cancelled'
+  | 'returned'
 export type StockMutationType =
   | 'sale'
   | 'purchase'
@@ -80,13 +90,22 @@ export interface Branch {
   id: number
   name: string
   invoice_name: string
+  invoice_prefix: string | null
+  locale: string | null
+  logo_url: string | null
+  number_format: string | null
+  receipt_footer: string | null
+  timezone: string | null
   address: string | null
   phone: string | null
   tax_rate: number
+  tax_inclusive: boolean | false
+  minimum_stock: number | 0
   currency: string
   created_at: string
   updated_at: string
   transaction_deletion_password: string | null
+  default_report_period: 'thisMonth'
   printer_port: string
   intl: string
 }
@@ -142,7 +161,9 @@ export interface Product {
   id: number
   name: string
   sku: string | null
+  barcode?: string | null
   quantity: number
+  stock?: number
   cost_price: number
   price: number
   branch_id: number | string | null
@@ -618,35 +639,51 @@ export interface SupplierDetail extends Supplier {
 export interface Invoice {
   id: number
   invoice_number: string
+  transaction_number?: string
   customer_id: number
   customer_name: string
   sales_agent_id?: number
   sales_agent_name?: string
   branch_id: number | string | null
   subtotal: number
+  total_discount_amount?: number
   tax_amount: number
   shipping_cost: number
   total_amount: number
   amount_paid: number
   outstanding_amount: number
   status: InvoiceStatus
+  payment_method?: PaymentMethod
+  payment_status?: PaymentStatus
+  change_given?: number
+  credit_due_date?: string
+  is_credit_sale?: boolean
   due_date: string
   created_at: string
   updated_at: string
   items?: InvoiceItem[]
   customer?: Customer
   sales_agent?: User
+  user?: User
+  branch?: Branch
   notes?: string
+  customer_payments?: CustomerPayment[]
 }
 
 export interface InvoiceItem {
   id: number
-  invoice_id: number
+  invoice_id?: number
   product_id: number
   product_name: string
   quantity: number
   price: number
+  price_at_sale?: number
+  cost_at_sale?: number
+  discount_amount?: number
+  discount_percentage?: number
+  subtotal?: number
   total: number
+  sku?: string
 }
 
 export interface CreateInvoicePayload {
@@ -657,12 +694,19 @@ export interface CreateInvoicePayload {
   notes?: string
   shipping_cost?: number
   tax_amount?: number
+  invoice_discount_type?: 'percentage' | 'amount'
+  invoice_discount_value?: number
+  down_payment_amount?: number
+  down_payment_method?: 'cash' | 'transfer'
+  down_payment_notes?: string
 }
 
 export interface InvoiceItemInput {
   product_id: number
   quantity: number
   price: number
+  discount_percentage?: number
+  discount_amount?: number
 }
 
 export interface UpdateInvoiceStatusPayload {

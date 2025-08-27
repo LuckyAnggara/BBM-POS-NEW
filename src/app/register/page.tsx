@@ -146,8 +146,20 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AppwriteException } from 'appwrite'
 import { toast } from 'sonner'
+
+// Stub untuk AppwriteException
+class AppwriteException extends Error {
+  code: number
+  type: string
+
+  constructor(message: string, code = 500, type = 'general_error') {
+    super(message)
+    this.code = code
+    this.type = type
+    this.name = 'AppwriteException'
+  }
+}
 
 export default function RegisterPage() {
   const router = useRouter()

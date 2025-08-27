@@ -4,6 +4,7 @@ import { ReactNode } from 'react'
 import { BranchProvider } from '@/contexts/branch-context'
 import { AuthProvider } from '@/contexts/auth-context' // Import AuthProvider
 import { ThemeProvider } from '@/contexts/theme-context'
+import { ShiftUnloadWarningProvider } from '@/components/providers/ShiftUnloadWarningProvider'
 import { Toaster } from '@/components/ui/sonner'
 
 export const metadata: Metadata = {
@@ -35,7 +36,11 @@ export default function RootLayout({
         >
           <AuthProvider>
             {/* Wrap BranchProvider with AuthProvider */}
-            <BranchProvider>{children}</BranchProvider>
+            <BranchProvider>
+              {/* <ShiftUnloadWarningProvider> */}
+              {children}
+              {/* </ShiftUnloadWarningProvider> */}
+            </BranchProvider>
           </AuthProvider>
         </ThemeProvider>
         <Toaster richColors duration={3000} closeButton={true} />

@@ -1,0 +1,228 @@
+'use client'
+
+import type { Branch, Invoice } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Separator } from '@/components/ui/separator'
+import { format, parseISO, isValid } from 'date-fns'
+import Image from 'next/image'
+
+interface InvoiceTemplateProps {
+  transaction: Invoice
+  branch: Branch
+}
+
+export default function InvoiceTemplate({
+  transaction,
+  branch,
+}: InvoiceTemplateProps) {
+  // Format dates from ISO string
+  const formatDateIntl = (isoString?: string) => {
+    if (!isoString) return 'N/A'
+    const date = parseISO(isoString)
+    if (!isValid(date)) return 'Tanggal tidak valid'
+    return format(date, 'dd MMMM yyyy')
+  }
+
+  const formatCurrency = (amount: number | undefined) => {
+    if (amount === undefined) return `${branch.currency || 'Rp'}0`
+    return `${branch.currency || 'Rp'}${amount.toLocaleString('id-ID')}`
+  }
+
+  // Calculate subtotal, tax, and total
+  const subtotal = transaction.items?.reduce((sum, item) => {
+    const itemTotal = (item.quantity || 0) * (item.price || 0) 
+    const discountAmount = item.discount || 0
+    return sum + itemTotal - discountAmount
+  }, 0) || 0
+  
+  const taxRate = transaction.tax_rate || 10 // Default to 10% if not specified
+  const taxAmount = (subtotal * taxRate) / 100
+  const totalAmount = subtotal + taxAmount
+
+  const invoiceType = transaction.type === 'purchase' ? 'INVOICE PEMBELIAN' : 
+                     (transaction.invoice_type || 'INVOICE TAGIHAN PROYEK')
+
+  return (
+    <Card className='w-full max-w-4xl mx-auto my-4 shadow-lg print:shadow-none print:border-none print:my-0'>
+      <CardHeader className='p-6 border-b print:border-b-2'>
+        {/* Header with invoice title */}
+        <div className='w-full bg-red-100 mb-4 py-2 text-center'>
+          <h1 className='text-xl font-bold uppercase'>{invoiceType}</h1>
+        </div>
+        
+        {/* Company info and logo */}
+        <div className='flex flex-col sm:flex-row justify-between items-start gap-4'>
+          <div>
+            <h2 className='font-bold text-lg'>{branch.invoiceName || branch.name}</h2>
+            <p className='text-sm'>{branch.address || 'Alamat perusahaan'}</p>
+            <p className='text-sm'>Telp: {branch.phone || '000-000-000'}</p>
+            <p className='text-sm'>Email: {branch.email || 'email@perusahaan.com'}</p>
+            {branch.branch_name && (
+              <p className='text-sm'>Cabang: {branch.branch_name}</p>
+            )}
+          </div>
+          
+          <div className='w-32 h-32 relative flex-shrink-0'>
+            {branch.logo ? (
+              <Image 
+                src={branch.logo} 
+                alt="Logo Perusahaan"
+                fill
+                className='object-contain'
+              />
+            ) : (
+              <div className='w-full h-full flex items-center justify-center border border-dashed'>
+                <span className='text-muted-foreground text-sm text-center'>Logo Perusahaan</span>
+              </div>
+            )}
+          </div>
+        </div>
+            {branch.phoneNumber && (
+              <p className='text-xs text-muted-foreground'>
+                Telp: {branch.phoneNumber}
+              </p>
+            )}
+          </div>
+          <div className='mt-2 sm:mt-0 text-left sm:text-right'>
+            <h2 className='text-lg sm:text-xl font-semibold'>INVOICE</h2>
+            <p className='text-xs text-muted-foreground'>
+              No: {transaction.invoiceNumber || transaction.transactionNumber}
+            </p>
+            <p className='text-xs text-muted-foreground'>
+              {/* Menggunakan fungsi format tanggal yang sudah diperbaiki */}
+              Tanggal: {formatDateIntl(transaction.createdAt)}
+            </p>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className='p-4 sm:p-6'>
+        <div className='mb-4 text-xs'>
+          <div className='grid grid-cols-2 gap-x-2'>
+            <div>
+              <p>{cashierName}</p>
+              {transaction.customer?.name && (
+                <p>Pelanggan: {transaction.customer.name}</p>
+              )}
+            </div>
+            <div className='text-right'>
+              <p>
+                Metode Pembayaran:{' '}
+                <span className='capitalize'>{transaction.paymentMethod}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <Table className='text-xs'>
+          <TableHeader>
+            <TableRow>
+              <TableHead className='px-2 py-1.5'>Nama Produk</TableHead>
+              <TableHead className='text-center px-2 py-1.5'>Jml</TableHead>
+              <TableHead className='text-right px-2 py-1.5'>
+                Harga Satuan
+              </TableHead>
+              <TableHead className='text-right px-2 py-1.5'>Subtotal</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {transaction.items.map((item) => {
+              {
+                item
+              }
+              // PERBAIKAN #2: Logika untuk menampilkan detail harga & diskon per item
+              const hasItemDiscount = item.discountAmount > 0
+              // Rekonstruksi harga asli per unit jika ada diskon
+              const originalPricePerUnit = item
+              const discountPerUnit = hasItemDiscount ? item.discountAmount : 0
+
+              return (
+                <TableRow key={item.productId}>
+                  <TableCell className='font-medium px-2 py-1'>
+                    {item.productName}
+                    {/* Tampilkan detail diskon HANYA jika ada */}
+                    {hasItemDiscount && (
+                      <div className='text-[0.7rem] text-muted-foreground pl-2'>
+                        <span className='line-through'>
+                          {formatCurrency(originalPricePerUnit)}
+                        </span>
+                        <span className='ml-1 text-red-600'>
+                          (-{formatCurrency(discountPerUnit)})
+                        </span>
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className='text-center px-2 py-1'>
+                    {item.quantity}
+                  </TableCell>
+                  <TableCell className='text-right px-2 py-1'>
+                    {formatCurrency(item.priceAtSale)}
+                  </TableCell>
+                  <TableCell className='text-right px-2 py-1'>
+                    {formatCurrency(item.subtotal)}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+
+        <Separator className='my-3 sm:my-4' />
+
+        <div className='grid grid-cols-2 gap-x-4 text-xs'>
+          <div className='space-y-0.5 text-right col-start-2'>
+            <div className='flex justify-between'>
+              <span>Subtotal:</span>
+              <span>{formatCurrency(transaction.subtotal)}</span>
+            </div>
+
+            {/* PERBAIKAN #3: Tampilkan total diskon jika ada */}
+            {transaction.totalDiscountAmount > 0 && (
+              <div className='flex justify-between text-destructive'>
+                <span>Diskon:</span>
+                <span>-{formatCurrency(transaction.totalDiscountAmount)}</span>
+              </div>
+            )}
+
+            <div className='flex justify-between'>
+              <span>Pajak ({branch.taxRate || 0}%):</span>
+              <span>{formatCurrency(transaction.taxAmount)}</span>
+            </div>
+
+            <Separator className='my-1' />
+
+            <div className='flex justify-between font-bold text-sm'>
+              <span>Total:</span>
+              <span>{formatCurrency(transaction.totalAmount)}</span>
+            </div>
+
+            {transaction.paymentMethod === 'cash' && (
+              <>
+                <div className='flex justify-between mt-1'>
+                  <span>Bayar:</span>
+                  <span>{formatCurrency(transaction.amountPaid)}</span>
+                </div>
+                <div className='flex justify-between'>
+                  <span>Kembali:</span>
+                  <span>{formatCurrency(transaction.changeGiven)}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </CardContent>
+      <CardFooter className='p-4 sm:p-6 border-t print:border-t-2'>
+        <p className='text-xs text-muted-foreground text-center w-full'>
+          Terima kasih atas kunjungan Anda!
+        </p>
+      </CardFooter>
+    </Card>
+  )
+}

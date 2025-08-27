@@ -173,7 +173,6 @@ export default function ManageBankAccounts({
       if (editingBankAccount) {
         result = await updateBankAccount(editingBankAccount.id, dataInput)
       } else {
-        console.log('Adding new bank account with data:', dataInput)
         result = await createBankAccount(dataInput)
       }
 

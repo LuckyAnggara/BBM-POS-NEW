@@ -71,10 +71,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await api.get('/sanctum/csrf-cookie')
       // 2. Kirim request login
       const response = await api.post('/api/login', credentials)
-
       // 3. Simpan token dan data user
       const { token: authToken, user: userData } = response.data
-
       localStorage.setItem('authToken', authToken)
       setToken(authToken)
       setUserData(userData)
@@ -82,12 +80,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       router.push('/dashboard') // Arahkan ke dashboard setelah login
     } catch (error: any) {
-      console.error('Login failed:', error)
-      const errorMessage =
-        error.response?.data?.message ||
-        'Login failed. Please check your credentials.'
-      toast.error(errorMessage)
-      throw new Error(errorMessage)
+      let description =
+        'Terjadi kesalahan yang tidak diketahui. Silakan coba lagi.'
+      if (error.response) {
+        switch (error.response.status) {
+          case 422: // user_unauthorized / general_unauthorized
+            description =
+              'Kombinasi email dan password salah. Mohon periksa kembali.'
+            break
+          case 429: // rate_limit_exceeded
+            description =
+              'Terlalu banyak percobaan login. Silakan tunggu beberapa saat.'
+            break
+          default:
+            description = error.response.message // Gunakan pesan default dari Appwrite jika ada
+            break
+        }
+      }
+
+      throw new Error(description)
     } finally {
       setIsLoading(false)
     }

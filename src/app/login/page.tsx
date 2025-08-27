@@ -53,29 +53,11 @@ export default function LoginPage() {
   }, [currentUser])
 
   // 3. Fungsi untuk menangani error secara spesifik
-  const handleLoginError = (error: any) => {
+  const handleLoginError = (message: any) => {
     let title = 'Login Gagal'
-    let description =
-      'Terjadi kesalahan yang tidak diketahui. Silakan coba lagi.'
-    if (error.response) {
-      switch (error.response.status) {
-        case 401: // user_unauthorized / general_unauthorized
-          description =
-            'Kombinasi email dan password salah. Mohon periksa kembali.'
-          break
-        case 429: // rate_limit_exceeded
-          description =
-            'Terlalu banyak percobaan login. Silakan tunggu beberapa saat.'
-          break
-        default:
-          description = error.response.message // Gunakan pesan default dari Appwrite jika ada
-          break
-      }
-    }
 
-    // Tampilkan notifikasi toast error
     toast.error(title, {
-      description: description,
+      description: message,
     })
   }
 
@@ -88,11 +70,10 @@ export default function LoginPage() {
       toast.success('Login Berhasil!', {
         description: 'Anda akan diarahkan ke dashboard.',
       })
-
       router.push('/dashboard')
-    } catch (err) {
-      console.error('Login Error:', err)
-      handleLoginError(err) // Panggil fungsi error handler kita
+    } catch (error: any) {
+      console.error('Login error:', error)
+      handleLoginError(error.message)
     }
   }
 

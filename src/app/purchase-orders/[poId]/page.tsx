@@ -286,13 +286,6 @@ export default function PurchaseOrderDetailPage() {
   }, [fetchPurchaseOrder])
 
   const onInvalidReceive = (errors: FieldErrors<ReceiveFormValues>) => {
-    // Debug: log full errors for diagnosis
-    try {
-      console.log('Receive form validation errors:', errors)
-      console.log('Errors JSON:', JSON.stringify(errors, null, 2))
-    } catch (e) {
-      // ignore
-    }
     // Prefer array-level errors (refine messages), otherwise the first field error
     const arrayError = errors.itemsToReceive as any
     const arrayRootMessage = arrayError?.root?.message as string | undefined
@@ -310,7 +303,6 @@ export default function PurchaseOrderDetailPage() {
   const onSubmitReceiveItems: SubmitHandler<ReceiveFormValues> = async (
     values
   ) => {
-    console.log(values)
     if (!purchaseOrder) return
 
     // Validate quantities against remaining using server data

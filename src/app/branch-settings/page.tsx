@@ -112,7 +112,10 @@ export default function BranchSettingsPage() {
         taxRate: (selectedBranch as any).tax_rate || 0,
         taxInclusive: Boolean((selectedBranch as any).tax_inclusive),
         address: selectedBranch.address || '',
-        phoneNumber: (selectedBranch as any).phone || '',
+        phoneNumber:
+          (selectedBranch as any).phone_number ||
+          (selectedBranch as any).phone ||
+          '',
         defaultReportPeriod:
           (selectedBranch as any).default_report_period || 'thisMonth',
         printerPort: (selectedBranch as any).printer_port || 9100,
@@ -122,7 +125,7 @@ export default function BranchSettingsPage() {
         locale: (selectedBranch as any).locale || 'id-ID',
         numberFormat: (selectedBranch as any).number_format || 'dot-decimal',
         receiptFooter: (selectedBranch as any).receipt_footer || '',
-        lowStockThreshold: (selectedBranch as any).low_stock_threshold || 0,
+        lowStockThreshold: (selectedBranch as any).minimum_stock || 0,
         logoUrl: (selectedBranch as any).logo_url || '',
       })
     } else if (
@@ -147,21 +150,21 @@ export default function BranchSettingsPage() {
     setIsSubmitting(true)
     const updates: any = {
       name: values.name,
-      invoiceName: values.invoiceName || values.name,
-      invoicePrefix: values.invoicePrefix,
+      invoice_name: values.invoiceName || values.name,
+      invoice_prefix: values.invoicePrefix,
       currency: values.currency,
-      taxRate: values.taxRate,
-      taxInclusive: values.taxInclusive,
+      tax_rate: values.taxRate,
+      tax_inclusive: values.taxInclusive,
       address: values.address,
-      phoneNumber: values.phoneNumber,
-      defaultReportPeriod: values.defaultReportPeriod,
-      printerPort: values.printerPort,
+      phone_number: values.phoneNumber,
+      default_report_period: values.defaultReportPeriod,
+      printer_port: String(values.printerPort),
       timezone: values.timezone,
       locale: values.locale,
-      numberFormat: values.numberFormat,
-      receiptFooter: values.receiptFooter,
-      lowStockThreshold: values.lowStockThreshold,
-      logoUrl: values.logoUrl,
+      number_format: values.numberFormat,
+      receipt_footer: values.receiptFooter,
+      minimum_stock: values.lowStockThreshold,
+      logo_url: values.logoUrl,
     }
 
     try {
@@ -563,22 +566,74 @@ export default function BranchSettingsPage() {
                         <Label htmlFor='timezoneSettings' className='text-xs'>
                           Zona Waktu
                         </Label>
-                        <Input
-                          id='timezoneSettings'
-                          {...branchSettingsForm.register('timezone')}
-                          className='h-9 text-sm mt-1'
-                          disabled={isSubmitting}
+                        <Controller
+                          name='timezone'
+                          control={branchSettingsForm.control}
+                          render={({ field }) => (
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value}
+                              disabled={isSubmitting}
+                            >
+                              <SelectTrigger className='h-9 text-sm mt-1'>
+                                <SelectValue placeholder='Pilih zona waktu' />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem
+                                  value='Asia/Jakarta'
+                                  className='text-sm'
+                                >
+                                  Asia/Jakarta (WIB)
+                                </SelectItem>
+                                <SelectItem
+                                  value='Asia/Makassar'
+                                  className='text-sm'
+                                >
+                                  Asia/Makassar (WITA)
+                                </SelectItem>
+                                <SelectItem
+                                  value='Asia/Jayapura'
+                                  className='text-sm'
+                                >
+                                  Asia/Jayapura (WIT)
+                                </SelectItem>
+                                <SelectItem value='UTC' className='text-sm'>
+                                  UTC
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
                         />
                       </div>
                       <div>
                         <Label htmlFor='localeSettings' className='text-xs'>
-                          Locale
+                          Bahasa
                         </Label>
-                        <Input
-                          id='localeSettings'
-                          {...branchSettingsForm.register('locale')}
-                          className='h-9 text-sm mt-1'
-                          disabled={isSubmitting}
+                        <Controller
+                          name='locale'
+                          control={branchSettingsForm.control}
+                          render={({ field }) => (
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value}
+                              disabled={isSubmitting}
+                            >
+                              <SelectTrigger className='h-9 text-sm mt-1'>
+                                <SelectValue placeholder='Pilih bahasa' />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value='id-ID' className='text-sm'>
+                                  Indonesia
+                                </SelectItem>
+                                <SelectItem value='en-US' className='text-sm'>
+                                  English (US)
+                                </SelectItem>
+                                <SelectItem value='en-GB' className='text-sm'>
+                                  English (UK)
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
                         />
                       </div>
                       <div>
@@ -696,15 +751,15 @@ export default function BranchSettingsPage() {
                   >
                     Test Printer
                   </Button>
-                  <Button
+                  {/* <Button
                     size='sm'
                     variant='outline'
                     className='h-8 w-full justify-start'
                     disabled
                   >
                     Reset Penomoran Invoice (Coming Soon)
-                  </Button>
-                  <Button
+                  </Button> */}
+                  {/* <Button
                     size='sm'
                     variant='outline'
                     className='h-8 w-full justify-start'
@@ -719,7 +774,7 @@ export default function BranchSettingsPage() {
                     disabled
                   >
                     Sinkron Ulang Cache (Coming Soon)
-                  </Button>
+                  </Button> */}
                 </CardContent>
               </Card>
             </div>

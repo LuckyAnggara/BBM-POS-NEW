@@ -1,6 +1,7 @@
 'use client'
 
 import { type ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 // import AppHeader from "@/components/layout/app-header";
 // import AppSidebarNav from "@/components/layout/app-sidebar-nav";
@@ -23,6 +24,10 @@ export default function MainLayout({
   focusMode?: boolean
 }) {
   const activeTitle = useActiveMenuTitle()
+
+  // Hook sudah dijalankan di ShiftUnloadWarningProvider
+  // Tidak perlu memanggil lagi di sini
+
   if (focusMode) {
     return (
       <div className='min-h-screen bg-background w-full'>

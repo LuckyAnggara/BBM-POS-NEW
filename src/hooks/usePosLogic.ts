@@ -740,12 +740,7 @@ export const usePosLogic = () => {
         toast.error('Transaksi Tidak Ditemukan')
         return
       }
-      // The actual printing logic would be here, likely calling a native module
-      // For now, we simulate it with a success message.
-      console.log('Printing invoice:', {
-        port: selectedBranch.printer_port,
-        transaction,
-      })
+
       toast.success('Mencetak Struk', {
         description: `Struk untuk transaksi #${targetTransactionId} dikirim ke printer.`,
       })

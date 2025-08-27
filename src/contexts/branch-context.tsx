@@ -10,29 +10,37 @@ import React, {
 } from 'react'
 import api from '@/lib/api' // Menggunakan API client kita
 import { toast } from 'sonner'
-import { Branch } from '@/lib/types'
+import { Branch, Shift } from '@/lib/types'
 import { useAuth } from './auth-context'
+import { getActiveShift } from '@/lib/laravel/shiftService'
+import { usePathname } from 'next/navigation'
 
 // Tipe data untuk Context
 interface BranchContextType {
   branches: Branch[]
+  activeShiftSummary: Shift | null
   isLoadingBranches: boolean
   isLoadingBranch: boolean
   fetchBranches: () => Promise<void>
-  getBranchById: (id: string) => Promise<Branch | null>
+  getBranchById: (id: number) => Promise<Branch | null>
   selectedBranch: Branch | null
   createBranch: (data: Omit<Branch, 'id'>) => Promise<void>
   updateBranch: (id: string, data: Partial<Branch>) => Promise<void>
-  deleteBranch: (id: string) => Promise<void>
+  deleteBranch: (id: number) => Promise<void>
   refreshBranches: () => void
 }
 
 const BranchContext = createContext<BranchContextType | undefined>(undefined)
 
 export const BranchProvider = ({ children }: { children: ReactNode }) => {
+  const [activeShiftSummary, setActiveShiftSummary] = useState<Shift | null>(
+    null
+  )
+  const pathname = usePathname()
   const [branches, setBranches] = useState<Branch[]>([])
   const [isLoadingBranches, setIsLoadingBranches] = useState(true)
   const [isLoadingBranch, setIsLoadingBranch] = useState(false)
+  const [loadingActiveShift, setLoadingActiveShift] = useState(false)
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null)
   const { userData, isLoading: isLoadingUser } = useAuth() // Ambil status loadingBranches dari auth
   // Fungsi untuk mengambil semua data cabang dari backend
@@ -49,15 +57,30 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
         setSelectedBranch(foundBranch || null)
       }
     } catch (error) {
-      console.error('Failed to fetch branches:', error)
       toast.error('Failed to load branches.')
     } finally {
       setIsLoadingBranches(false)
     }
   }, [userData])
 
+  const fetchActiveShift = useCallback(async () => {
+    if (selectedBranch) {
+      setLoadingActiveShift(true)
+      try {
+        const shift = await getActiveShift()
+        setActiveShiftSummary(shift)
+      } finally {
+        setLoadingActiveShift(false)
+      }
+    } else {
+      setActiveShiftSummary(null)
+    }
+  }, [selectedBranch, pathname])
+
+  // useEffect untuk fetch branches
   useEffect(() => {
     // Hanya fetch jika proses auth selesai dan ada data user
+    setIsLoadingBranches(true)
     if (!isLoadingUser && userData) {
       fetchBranches()
     } else if (!isLoadingUser && !userData) {
@@ -65,6 +88,11 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
       setIsLoadingBranches(false)
     }
   }, [userData, isLoadingUser, fetchBranches])
+
+  // useEffect terpisah untuk fetch active shift ketika selectedBranch berubah
+  useEffect(() => {
+    fetchActiveShift()
+  }, [fetchActiveShift])
 
   // Fungsi untuk mengambil satu cabang berdasarkan ID
   const getBranchById = async (id: number): Promise<Branch | null> => {
@@ -89,7 +117,6 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
       toast.success('Branch created successfully!')
       await fetchBranches() // Muat ulang data setelah berhasil
     } catch (error: any) {
-      console.error('Failed to create branch:', error)
       const errorMessage =
         error.response?.data?.message || 'Failed to create branch.'
       toast.error(errorMessage)
@@ -107,7 +134,6 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
       toast.success('Branch updated successfully!')
       await fetchBranches() // Muat ulang data setelah berhasil
     } catch (error: any) {
-      console.error(`Failed to update branch ${id}:`, error)
       const errorMessage =
         error.response?.data?.message || 'Failed to update branch.'
       toast.error(errorMessage)
@@ -125,7 +151,6 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
       toast.success('Branch deleted successfully!')
       setBranches((prev) => prev.filter((branch) => branch.id !== id)) // Hapus dari state
     } catch (error: any) {
-      console.error(`Failed to delete branch ${id}:`, error)
       const errorMessage =
         error.response?.data?.message || 'Failed to delete branch.'
       toast.error(errorMessage)
@@ -141,6 +166,7 @@ export const BranchProvider = ({ children }: { children: ReactNode }) => {
 
   const contextValue = {
     branches,
+    activeShiftSummary,
     isLoadingBranches,
     isLoadingBranch,
     selectedBranch,

@@ -56,7 +56,6 @@ import {
 import { getActiveShift } from '@/lib/laravel/shiftService' // TODO: migrate to Laravel shift endpoint later
 import { Shift } from '@/lib/types'
 import { formatCurrency } from '@/lib/helper'
-import { useShiftUnloadWarning } from '@/hooks/useShiftUnloadWarning'
 
 interface DashboardStats {
   grossRevenueBeforeReturns: number
@@ -90,7 +89,7 @@ const chartConfig = {
 type RangePreset = 'today' | 'thisWeek' | 'thisMonth'
 
 export default function DashboardPage() {
-  const { selectedBranch } = useBranches()
+  const { selectedBranch, activeShiftSummary } = useBranches()
   const { currentUser, userData, isLoading, isLoadingUserData } = useAuth()
 
   const [selectedRangePreset, setSelectedRangePreset] =
@@ -105,9 +104,7 @@ export default function DashboardPage() {
   )
   const [inventorySummary, setInventorySummary] =
     useState<InventorySummary | null>(null)
-  const [activeShiftSummary, setActiveShiftSummary] = useState<Shift | null>(
-    null
-  )
+
   const [loadingShift, setLoadingShift] = useState(true)
   const [chartSalesData, setChartSalesData] = useState<ChartDataPoint[]>([])
   const [chartProfitData, setChartProfitData] = useState<ChartDataPoint[]>([])
@@ -127,25 +124,6 @@ export default function DashboardPage() {
 
   // Polling interval (ms) for refreshing active shift info
   const SHIFT_POLL_INTERVAL = 60_000
-
-  const fetchActiveShift = useCallback(async () => {
-    if (currentUser && selectedBranch) {
-      setLoadingActiveShift(true)
-      try {
-        const shift = await getActiveShift()
-        setActiveShiftSummary(shift)
-      } finally {
-        setLoadingActiveShift(false)
-      }
-    }
-  }, [currentUser, selectedBranch])
-
-  // Global unload warning for active shift
-  useShiftUnloadWarning(activeShiftSummary)
-
-  useEffect(() => {
-    fetchActiveShift()
-  }, [fetchActiveShift])
 
   const isCashierWithoutBranch =
     !isLoading &&
@@ -217,6 +195,8 @@ export default function DashboardPage() {
     setLoadingStats(true)
     setLoadingChartSales(true)
     setLoadingInventorySummary(true)
+    setSelectedRangePreset(selectedBranch.default_report_period)
+
     try {
       const { start, end } = currentDisplayRange
       const summary = await getDashboardSummary({
@@ -265,7 +245,7 @@ export default function DashboardPage() {
     } else if (!selectedBranch && !isCashierWithoutBranch) {
       setDashboardStats(null)
       setInventorySummary(null)
-      setActiveShiftSummary(null)
+      // setActiveShiftSummary(null)
       setChartSalesData([])
       setLoadingStats(false)
       setLoadingInventorySummary(false)
@@ -295,7 +275,7 @@ export default function DashboardPage() {
                     setSelectedRangePreset(value as RangePreset)
                   }
                 >
-                  <SelectTrigger className='w-[180px] h-9 text-xs rounded-md'>
+                  <SelectTrigger className='w-[180px] h-9 text-xs rounded-md '>
                     <SelectValue placeholder='Pilih Periode' />
                   </SelectTrigger>
                   <SelectContent>
@@ -449,36 +429,31 @@ export default function DashboardPage() {
                 </Card>
               </div>
 
-              {loadingActiveShift ? (
-                <Skeleton className='h-28 w-full' />
-              ) : (
-                activeShiftSummary && (
-                  <Card className='bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-700/40'>
-                    <CardHeader className='pb-2 pt-3 px-4'>
-                      <CardTitle className='text-sm font-semibold text-blue-700 dark:text-blue-300'>
-                        Informasi Kas Shift Saat Ini
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className='grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5 px-4 pb-3 text-xs'>
-                      <div>
-                        <p className='text-blue-600 dark:text-blue-400'>
-                          Modal Awal:
-                        </p>
-                        <p className='font-medium text-blue-700 dark:text-blue-200'>
-                          {formatCurrency(activeShiftSummary.starting_balance)}
-                        </p>
-                      </div>
-                      {/* <div>
-                        <p className='text-blue-600 dark:text-blue-400'>
-                          Kas Seharusnya:
-                        </p>
-                        <p className='font-medium text-blue-700 dark:text-blue-200'>
-                          {formatCurrency(
-                            activeShiftSummary.estimatedCashInDrawer
-                          )}
-                        </p>
-                      </div>
-                      <div>
+              {activeShiftSummary && (
+                <Card className='bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-700/40'>
+                  <CardHeader className='pb-2 pt-3 px-4'>
+                    <CardTitle className='text-sm font-semibold text-blue-700 dark:text-blue-300'>
+                      Informasi Kas Shift Saat Ini
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className='grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5 px-4 pb-3 text-xs'>
+                    <div>
+                      <p className='text-blue-600 dark:text-blue-400'>
+                        Modal Awal:
+                      </p>
+                      <p className='font-medium text-blue-700 dark:text-blue-200'>
+                        {formatCurrency(activeShiftSummary.starting_balance)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className='text-blue-600 dark:text-blue-400'>
+                        Kas Seharusnya:
+                      </p>
+                      <p className='font-medium text-blue-700 dark:text-blue-200'>
+                        {formatCurrency(activeShiftSummary.actual_balance || 0)}
+                      </p>
+                    </div>
+                    {/*<div>
                         <p className='text-blue-600 dark:text-blue-400'>
                           Total Tunai (Shift):
                         </p>
@@ -498,7 +473,7 @@ export default function DashboardPage() {
                           )}
                         </p>
                       </div> */}
-                      {/* <div>
+                    {/* <div>
                         <p className='text-blue-600 dark:text-blue-400'>
                           Total Transfer (Shift):
                         </p>
@@ -508,9 +483,8 @@ export default function DashboardPage() {
                           )}
                         </p>
                       </div> */}
-                    </CardContent>
-                  </Card>
-                )
+                  </CardContent>
+                </Card>
               )}
 
               <div className='grid gap-4 lg:grid-cols-2'>
